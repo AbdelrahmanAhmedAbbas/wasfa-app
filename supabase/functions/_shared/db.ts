@@ -257,6 +257,8 @@ export async function confirmRecipeFromDraft(
   params: {
     job: ImportJobRow;
     payload: RecipeDraft;
+    sourceThumbnailUrl?: string | null;
+    sourceReelUrl?: string | null;
   }
 ) {
   const { data, error } = await adminClient
@@ -267,6 +269,8 @@ export async function confirmRecipeFromDraft(
         draft_job_id: params.job.id,
         source_platform: params.job.source_platform,
         source_url: params.job.source_url,
+        source_reel_url: params.sourceReelUrl ?? params.job.source_url,
+        source_thumbnail_url: params.sourceThumbnailUrl ?? null,
         title: params.payload.title,
         description: params.payload.description ?? null,
         servings: params.payload.servings ?? null,

@@ -8,7 +8,13 @@ import { useLanguage } from "@/lib/i18n/LanguageProvider";
 
 export default function ShareImportEntryScreen() {
   const { isRTL } = useLanguage();
-  const params = useLocalSearchParams<{ url?: string; text?: string; share_id?: string }>();
+  const params = useLocalSearchParams<{
+    url?: string;
+    text?: string;
+    share_id?: string;
+    media_uri?: string;
+    media_mime?: string;
+  }>();
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [manualUrl, setManualUrl] = useState("");
@@ -25,6 +31,14 @@ export default function ShareImportEntryScreen() {
   const shareId = useMemo(
     () => (typeof params.share_id === "string" ? params.share_id : undefined),
     [params.share_id]
+  );
+  const mediaUri = useMemo(
+    () => (typeof params.media_uri === "string" ? params.media_uri : undefined),
+    [params.media_uri]
+  );
+  const mediaMime = useMemo(
+    () => (typeof params.media_mime === "string" ? params.media_mime : undefined),
+    [params.media_mime]
   );
 
   useEffect(() => {
@@ -108,8 +122,16 @@ export default function ShareImportEntryScreen() {
       {!sourceUrl && !sharedText ? (
         <>
           <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
-            Paste a recipe video URL to start import.
+            {mediaUri
+              ? "Media was shared without a reel URL. Copy the reel link from Instagram/TikTok and paste it below."
+              : "Paste a recipe video URL to start import."}
           </Text>
+          {mediaUri ? (
+            <Text style={[styles.caption, { textAlign: isRTL ? "right" : "left" }]}>
+              Received media share
+              {mediaMime ? ` (${mediaMime})` : ""}
+            </Text>
+          ) : null}
           <TextInput
             value={manualUrl}
             onChangeText={setManualUrl}
@@ -159,6 +181,11 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#4f5347",
     lineHeight: 24,
+  },
+  caption: {
+    fontSize: 13,
+    color: "#5f6f58",
+    marginTop: -4,
   },
   input: {
     width: "100%",

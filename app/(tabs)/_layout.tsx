@@ -7,6 +7,7 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useLanguage } from '@/lib/i18n/LanguageProvider';
+import { onboardingColors } from '@/lib/theme/onboarding';
 
 // You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
 function TabBarIcon(props: {
@@ -23,7 +24,20 @@ export default function TabLayout() {
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: onboardingColors.primary,
+        tabBarInactiveTintColor: onboardingColors.textMuted,
+        tabBarStyle: {
+          backgroundColor: onboardingColors.card,
+          borderTopColor: onboardingColors.border,
+          borderTopWidth: 1,
+          height: 66,
+          paddingBottom: 8,
+          paddingTop: 8,
+        },
+        tabBarLabelStyle: {
+          fontSize: 12,
+          fontWeight: "700",
+        },
         // Disable the static render of the header on web
         // to prevent a hydration error in React Navigation v6.
         headerShown: useClientOnlyValue(false, true),
@@ -32,7 +46,7 @@ export default function TabLayout() {
         name="index"
         options={{
           title: t('tabHome'),
-          tabBarIcon: ({ color }) => <TabBarIcon name="home" color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="compass" color={color} />,
           headerRight: () => (
             <Link href="/modal" asChild>
               <Pressable>
@@ -53,28 +67,28 @@ export default function TabLayout() {
         name="meals"
         options={{
           title: t('tabMeals'),
-          tabBarIcon: ({ color }) => <TabBarIcon name="cutlery" color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="book" color={color} />,
         }}
       />
       <Tabs.Screen
         name="planner"
         options={{
           title: t('tabPlanner'),
-          tabBarIcon: ({ color }) => <TabBarIcon name="calendar" color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="calendar-check-o" color={color} />,
         }}
       />
       <Tabs.Screen
         name="grocery"
         options={{
           title: t('tabGrocery'),
-          tabBarIcon: ({ color }) => <TabBarIcon name="shopping-basket" color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="shopping-cart" color={color} />,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
           title: t('tabProfile'),
-          tabBarIcon: ({ color }) => <TabBarIcon name="user" color={color} />,
+          tabBarIcon: ({ color }) => <TabBarIcon name="user-circle-o" color={color} />,
         }}
       />
     </Tabs>

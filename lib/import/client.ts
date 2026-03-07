@@ -28,15 +28,22 @@ async function getClientId(): Promise<string> {
   return generated;
 }
 
-async function getHeaders() {
+async function getHeaders(options: { includeAuth?: boolean } = {}) {
+  const includeAuth = options.includeAuth ?? true;
   const { data } = await supabase.auth.getSession();
   const authToken = data.session?.access_token;
   const apikey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
   return {
     "Content-Type": "application/json",
     ...(apikey ? { apikey } : {}),
-    ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    ...(includeAuth && authToken ? { Authorization: `Bearer ${authToken}` } : {}),
   };
+}
+
+function isInvalidJwtResponse(status: number, payload: string): boolean {
+  if (status !== 401) return false;
+  const lowered = payload.toLowerCase();
+  return lowered.includes("invalid jwt");
 }
 
 async function callEdge<T>(
@@ -54,13 +61,16 @@ async function callEdge<T>(
       if (value) url.searchParams.set(key, value);
     }
   }
-  let response: Response;
-  try {
-    response = await fetch(url.toString(), {
+  const executeRequest = async (includeAuth: boolean): Promise<Response> =>
+    fetch(url.toString(), {
       method: options.method ?? "GET",
-      headers: await getHeaders(),
+      headers: await getHeaders({ includeAuth }),
       body: options.body ? JSON.stringify(options.body) : undefined,
     });
+
+  let response: Response;
+  try {
+    response = await executeRequest(true);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -68,12 +78,31 @@ async function callEdge<T>(
         "Check Supabase function deployment and project auth/link."
     );
   }
+  let payload = response.ok ? "" : await response.text();
+
+  // Recover from stale/wrong Supabase access tokens by retrying without auth.
+  if (!response.ok && isInvalidJwtResponse(response.status, payload)) {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Ignore sign-out failure and still retry without auth header.
+    }
+    try {
+      response = await executeRequest(false);
+      payload = response.ok ? "" : await response.text();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Edge function request failed (${path}) after JWT recovery. ${message}.`
+      );
+    }
+  }
+
   if (!response.ok) {
-    const payload = await response.text();
     let parsedError: string | null = null;
     try {
-      const parsed = JSON.parse(payload) as { error?: string };
-      parsedError = parsed?.error ?? null;
+      const parsed = JSON.parse(payload) as { error?: string; message?: string };
+      parsedError = parsed?.error ?? parsed?.message ?? null;
     } catch {
       // Ignore parse errors and fall back to raw payload.
     }
@@ -124,7 +153,7 @@ async function confirmRecipeFallback(
 
   const { data: draftRecord, error: draftError } = await supabase
     .from("recipe_drafts")
-    .select("payload_json")
+    .select("payload_json,confidence_json")
     .eq("job_id", jobId)
     .single();
   if (draftError || !draftRecord?.payload_json) {
@@ -132,6 +161,13 @@ async function confirmRecipeFallback(
   }
 
   const merged = mergeDraft(draftRecord.payload_json as RecipeDraft, edits);
+  const sourceMetadata = (draftRecord.confidence_json as Record<string, unknown> | null)?.source_metadata as
+    | Record<string, unknown>
+    | undefined;
+  const sourceThumbnailUrl =
+    sourceMetadata && typeof sourceMetadata.thumbnail_url === "string"
+      ? sourceMetadata.thumbnail_url
+      : null;
   if (!Array.isArray(merged.ingredients) || merged.ingredients.length < 2) {
     throw new Error("Recipe must include at least 2 ingredients.");
   }
@@ -147,6 +183,8 @@ async function confirmRecipeFallback(
         draft_job_id: jobId,
         source_platform: job.source_platform,
         source_url: job.source_url,
+        source_reel_url: job.source_url,
+        source_thumbnail_url: sourceThumbnailUrl,
         title: merged.title,
         description: merged.description ?? null,
         servings: merged.servings ?? null,

@@ -5,6 +5,7 @@ import { router } from "expo-router";
 
 import { createImportJob } from "@/lib/import/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { onboardingColors } from "@/lib/theme/onboarding";
 
 export default function HomeScreen() {
   const { isRTL, t } = useLanguage();
@@ -99,7 +100,7 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#E8DCCB",
+    backgroundColor: onboardingColors.backgroundBase,
   },
   contentContainer: {
     padding: 16,
@@ -107,64 +108,64 @@ const styles = StyleSheet.create({
     paddingBottom: 40,
   },
   card: {
-    backgroundColor: "#F6F1E9",
+    backgroundColor: onboardingColors.card,
     borderRadius: 24,
     borderWidth: 1,
-    borderColor: "#d2c8b8",
+    borderColor: onboardingColors.border,
     padding: 20,
     marginBottom: 16,
   },
   label: {
     fontSize: 14,
     fontWeight: "600",
-    color: "#7d7468",
+    color: onboardingColors.textMuted,
   },
   title: {
     marginTop: 8,
     fontSize: 40,
     fontWeight: "800",
     lineHeight: 46,
-    color: "#252821",
+    color: onboardingColors.primaryDark,
   },
   subtitle: {
     marginTop: 12,
     fontSize: 18,
     lineHeight: 28,
-    color: "#4a5142",
+    color: onboardingColors.textSecondary,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: "700",
-    color: "#4b4c43",
+    color: onboardingColors.text,
   },
   input: {
     marginTop: 12,
     height: 48,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#c6cfba",
-    backgroundColor: "#fcfbf8",
+    borderColor: onboardingColors.border,
+    backgroundColor: onboardingColors.cardSoft,
     paddingHorizontal: 16,
     fontSize: 16,
-    color: "#2f2f2a",
+    color: onboardingColors.text,
   },
   primaryButton: {
     marginTop: 12,
     borderRadius: 14,
-    backgroundColor: "#9CAF88",
+    backgroundColor: onboardingColors.primary,
     paddingVertical: 14,
     alignItems: "center",
   },
   primaryButtonText: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#1f2719",
+    color: onboardingColors.textOnDark,
   },
   secondaryButton: {
     marginTop: 12,
     borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#c6cfba",
+    borderColor: onboardingColors.border,
     backgroundColor: "transparent",
     paddingVertical: 14,
     alignItems: "center",
@@ -172,12 +173,12 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     fontSize: 18,
     fontWeight: "700",
-    color: "#4b4c43",
+    color: onboardingColors.text,
   },
   message: {
     marginTop: 12,
     fontSize: 14,
-    color: "#59614e",
+    color: onboardingColors.textMuted,
   },
   textRTL: {
     textAlign: "right",

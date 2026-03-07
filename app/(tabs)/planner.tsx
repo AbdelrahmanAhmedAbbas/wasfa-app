@@ -1,12 +1,14 @@
-import { StyleSheet, View } from "react-native";
+import { Image, StyleSheet, View } from "react-native";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
 
 export default function PlannerScreen() {
   const { isRTL, t } = useLanguage();
   return (
     <View style={styles.container}>
+      <Image source={onboardingImages.mascotTyping} resizeMode="contain" style={styles.image} />
       <Text style={[styles.title, { textAlign: isRTL ? "right" : "left" }]}>
         {t("screenComingSoonTitle")}
       </Text>
@@ -22,17 +24,22 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "#E8DCCB",
+    backgroundColor: onboardingColors.backgroundBase,
     paddingHorizontal: 24,
+  },
+  image: {
+    width: 150,
+    height: 150,
+    marginBottom: 6,
   },
   title: {
     fontSize: 28,
-    fontWeight: "700",
-    color: "#252821",
+    fontWeight: "800",
+    color: onboardingColors.primaryDark,
   },
   subtitle: {
     marginTop: 8,
     fontSize: 16,
-    color: "#4f5347",
+    color: onboardingColors.textSecondary,
   },
 });

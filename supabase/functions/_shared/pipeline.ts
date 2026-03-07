@@ -2,9 +2,10 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 
 import { estimateNutrition, extractRecipe } from "./ai.ts";
 import {
-    logJobEvent,
-    updateJobStatus,
-    upsertRecipeDraft,
+  confirmRecipeFromDraft,
+  logJobEvent,
+  updateJobStatus,
+  upsertRecipeDraft,
 } from "./db.ts";
 import type { ImportJobRow } from "./types.ts";
 
@@ -33,6 +34,7 @@ type SourceMetadata = {
   videoPlayCount?: number;
   mediaUrl?: string;
   mediaType?: string;
+  thumbnailUrl?: string;
   mediaOrigin?: "opengraph" | "apify";
 };
 
@@ -203,6 +205,9 @@ async function fetchOpenGraphMetadata(sourceUrl: string): Promise<Partial<Source
   const ogVideoSecure = extractMetaContent(html, "og:video:secure_url");
   const ogVideo = extractMetaContent(html, "og:video");
   const twitterStream = extractMetaContent(html, "twitter:player:stream");
+  const ogImageSecure = extractMetaContent(html, "og:image:secure_url");
+  const ogImage = extractMetaContent(html, "og:image");
+  const twitterImage = extractMetaContent(html, "twitter:image");
   const mediaType =
     extractMetaContent(html, "og:video:type") ||
     extractMetaContent(html, "twitter:player:stream:content_type") ||
@@ -214,6 +219,7 @@ async function fetchOpenGraphMetadata(sourceUrl: string): Promise<Partial<Source
     caption: ogDescription || twitterDescription || description || undefined,
     mediaUrl: ogVideoSecure || ogVideo || twitterStream || undefined,
     mediaType,
+    thumbnailUrl: ogImageSecure || ogImage || twitterImage || undefined,
   };
 }
 
@@ -351,6 +357,17 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
   const commentsCount = asNumber(record?.commentsCount);
   const videoViewCount = asNumber(record?.videoViewCount);
   const videoPlayCount = asNumber(record?.videoPlayCount);
+  const thumbnailUrl =
+    sanitizeHttpUrl(asString(record?.thumbnailUrl)) ||
+    sanitizeHttpUrl(asString(record?.displayUrl)) ||
+    sanitizeHttpUrl(asString(record?.coverUrl)) ||
+    sanitizeHttpUrl(asString(record?.coverImageUrl)) ||
+    sanitizeHttpUrl(
+      findFirstStringByKeys(
+        payload,
+        new Set(["thumbnailurl", "displayurl", "coverurl", "coverimageurl", "imageurl"])
+      )
+    );
 
   console.log("[import][apify] parsed metadata", {
     hasRecord: !!record,
@@ -358,6 +375,7 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
     hasVideoUrl: !!videoUrl,
     hasAudioUrl: !!audioUrl,
     hasCaption: !!caption,
+    hasThumbnailUrl: !!thumbnailUrl,
     hasFirstComment: !!firstComment,
     hashtagsCount: hashtags?.length ?? 0,
     sourceUrl,
@@ -382,6 +400,7 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
     videoPlayCount,
     mediaUrl,
     mediaType: videoUrl ? "video/mp4" : audioUrl ? "audio/mp4" : undefined,
+    thumbnailUrl,
     mediaOrigin: mediaUrl ? "apify" : undefined,
   };
 }
@@ -645,6 +664,13 @@ function mapPipelineError(error: unknown): { code: string; message: string } {
       message: "Media file is too large for transcription upload limits.",
     };
   }
+  if (raw.includes("TRANSCRIPTION_REQUIRED")) {
+    return {
+      code: "TRANSCRIPTION_FAILED",
+      message:
+        "Could not produce a transcript for this media. Transcript is required for extraction.",
+    };
+  }
   if (raw.includes("INSUFFICIENT_CONTEXT_AFTER_TRANSCRIPTION_SKIP")) {
     return {
       code: "TRANSCRIPTION_FAILED",
@@ -720,6 +746,7 @@ export async function runImportPipeline(params: {
           videoPlayCount: metadata.videoPlayCount || apifyMetadata.videoPlayCount,
           mediaUrl: metadata.mediaUrl || apifyMetadata.mediaUrl,
           mediaType: metadata.mediaType || apifyMetadata.mediaType,
+          thumbnailUrl: metadata.thumbnailUrl || apifyMetadata.thumbnailUrl,
           mediaOrigin: metadata.mediaOrigin || apifyMetadata.mediaOrigin,
         };
         apifyUsed = !!apifyMetadata.mediaUrl;
@@ -734,6 +761,7 @@ export async function runImportPipeline(params: {
       has_first_comment: !!metadata.firstComment,
       hashtags_count: metadata.hashtags?.length ?? 0,
       media_origin: metadata.mediaOrigin ?? null,
+      has_thumbnail: !!metadata.thumbnailUrl,
       apify_used: apifyUsed,
     });
 
@@ -786,6 +814,10 @@ export async function runImportPipeline(params: {
         model: OPENROUTER_TRANSCRIBE_MODEL,
         details: truncateForLog(String(error), 1200),
       });
+    }
+
+    if (!transcript?.trim()) {
+      throw new Error("TRANSCRIPTION_REQUIRED");
     }
 
     if (
@@ -858,6 +890,7 @@ export async function runImportPipeline(params: {
           video_play_count: metadata.videoPlayCount ?? null,
           hashtags_count: metadata.hashtags?.length ?? 0,
           media_origin: metadata.mediaOrigin ?? null,
+          thumbnail_url: metadata.thumbnailUrl ?? null,
           has_caption: !!metadata.caption,
           has_first_comment: !!metadata.firstComment,
         },
@@ -865,11 +898,23 @@ export async function runImportPipeline(params: {
       language: extraction.draft.source.language ?? null,
     });
 
+    const recipeId = await confirmRecipeFromDraft(params.adminClient, {
+      job: params.job,
+      payload: enrichedDraft,
+      sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
+      sourceReelUrl: params.job.source_url,
+    });
+
     await updateJobStatus(params.adminClient, {
       jobId: params.job.id,
-      status: "awaiting_user_review",
+      status: "confirmed",
       errorCode: null,
       errorMessage: null,
+    });
+
+    await logJobEvent(params.adminClient, params.job.id, "confirmed", {
+      recipe_id: recipeId,
+      auto_confirmed: true,
     });
 
     await logJobEvent(params.adminClient, params.job.id, "ai_extracted", {
@@ -879,6 +924,7 @@ export async function runImportPipeline(params: {
       step_count: enrichedDraft.steps.length,
       has_localized_ar: !!enrichedDraft.localized?.ar,
       has_localized_en: !!enrichedDraft.localized?.en,
+      recipe_id: recipeId,
     });
   } catch (error) {
     const mapped = mapPipelineError(error);

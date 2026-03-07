@@ -1,0 +1,11 @@
+[functions.import-create]
+verify_jwt = false
+
+[functions.import-share]
+verify_jwt = false
+
+[functions.import-status]
+verify_jwt = false
+
+[functions.import-confirm]
+verify_jwt = false

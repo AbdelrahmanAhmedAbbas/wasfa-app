@@ -2,9 +2,10 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, LocaleDirContext, ThemeProvider } from '@react-navigation/native';
 import * as ExpoFont from 'expo-font';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { useEffect, useState } from 'react';
+import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
+import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import 'react-native-reanimated';
 
@@ -71,11 +72,13 @@ export default function RootLayout() {
   }
 
   return (
-    <LanguageProvider>
-      <AuthProvider>
-        <RootLayoutNav />
-      </AuthProvider>
-    </LanguageProvider>
+    <ShareIntentProvider options={{ scheme: 'mealplanner' }}>
+      <LanguageProvider>
+        <AuthProvider>
+          <RootLayoutNav />
+        </AuthProvider>
+      </LanguageProvider>
+    </ShareIntentProvider>
   );
 }
 
@@ -83,6 +86,26 @@ function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const { isRTL } = useLanguage();
   const direction = isRTL ? "rtl" : "ltr";
+  const router = useRouter();
+  const { isReady, hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
+  const hasRedirected = useRef(false);
+
+  useEffect(() => {
+    if (!isReady || !hasShareIntent || hasRedirected.current) return;
+    hasRedirected.current = true;
+    const url = shareIntent.webUrl ?? undefined;
+    const text = shareIntent.text ?? undefined;
+    const firstFile = shareIntent.files?.[0];
+    const mediaUri = firstFile?.path;
+    const mediaMime = firstFile?.mimeType;
+    const params: Record<string, string> = {};
+    if (url) params.url = url;
+    if (text) params.text = text;
+    if (mediaUri) params.media_uri = mediaUri;
+    if (mediaMime) params.media_mime = mediaMime;
+    resetShareIntent(true);
+    router.replace({ pathname: "/import", params });
+  }, [isReady, hasShareIntent, shareIntent, resetShareIntent, router]);
 
   return (
     <View style={{ flex: 1, direction }}>
@@ -95,6 +118,7 @@ function RootLayoutNav() {
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="import/index" options={{ headerShown: false }} />
             <Stack.Screen name="import/[jobId]" options={{ headerShown: false }} />
+            <Stack.Screen name="recipe/[id]" options={{ headerShown: false }} />
             <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
           </Stack>
         </ThemeProvider>

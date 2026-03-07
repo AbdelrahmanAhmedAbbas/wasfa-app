@@ -14,7 +14,7 @@ fi
 
 for name in "${FUNCTIONS[@]}"; do
   echo "Deploying $name to project $PROJECT_REF..."
-  supabase functions deploy "$name" --use-api --project-ref "$PROJECT_REF"
+  supabase functions deploy "$name" --use-api --no-verify-jwt --project-ref "$PROJECT_REF"
   echo "Done: $name"
 done
 echo "All functions deployed."

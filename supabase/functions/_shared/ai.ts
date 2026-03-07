@@ -79,6 +79,12 @@ const localizedTextSchema = z.object({
   ),
 });
 
+const missingDetailsSchema = z.object({
+  description: z.string().nullable().optional(),
+  prep_minutes: z.number().nullable().optional(),
+  cook_minutes: z.number().nullable().optional(),
+});
+
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`Missing env variable: ${name}`);
@@ -132,6 +138,30 @@ ${draft.ingredients
 Steps:
 ${draft.steps.map((step) => `${step.order}. ${step.text}`).join("\n")}
 `;
+}
+
+function buildMissingDetailsPrompt(params: {
+  draft: RecipeDraft;
+  sourceText: string;
+}): string {
+  return `Fill missing recipe metadata using the provided recipe draft plus source context.
+Rules:
+- Keep recipe meaning accurate. No new ingredients or steps.
+- If a value is already present in the draft, keep it unchanged.
+- For missing prep_minutes/cook_minutes, estimate realistic positive minutes from step complexity and durations.
+- For missing description, write 1-2 concise sentences.
+- If a field is impossible to estimate confidently, return null.
+Current draft:
+Title: ${params.draft.title}
+Description: ${params.draft.description ?? "null"}
+Prep minutes: ${params.draft.prep_minutes ?? "null"}
+Cook minutes: ${params.draft.cook_minutes ?? "null"}
+Ingredients count: ${params.draft.ingredients.length}
+Steps:
+${params.draft.steps.map((step) => `${step.order}. ${step.text}`).join("\n")}
+
+Source context:
+${params.sourceText}`;
 }
 
 function createOpenRouterClient() {
@@ -300,6 +330,69 @@ async function buildBilingualLocalization(
   return localized;
 }
 
+async function fillMissingRecipeDetails(
+  draft: RecipeDraft,
+  input: RecipeInput
+): Promise<{
+  draft: RecipeDraft;
+  filledDescription: boolean;
+  filledPrepMinutes: boolean;
+  filledCookMinutes: boolean;
+}> {
+  const needsDescription = !optionalString(draft.description);
+  const needsPrep = typeof draft.prep_minutes !== "number";
+  const needsCook = typeof draft.cook_minutes !== "number";
+
+  if (!needsDescription && !needsPrep && !needsCook) {
+    return {
+      draft,
+      filledDescription: false,
+      filledPrepMinutes: false,
+      filledCookMinutes: false,
+    };
+  }
+
+  try {
+    const providerClient = createOpenRouterClient();
+    const model = providerClient(GEMINI_PARSER_MODEL);
+
+    const { object } = await generateObject({
+      model,
+      schema: missingDetailsSchema,
+      temperature: 0.2,
+      system:
+        "You complete missing recipe metadata conservatively and never modify ingredients or steps.",
+      prompt: buildMissingDetailsPrompt({
+        draft,
+        sourceText: input.sourceText,
+      }),
+    });
+
+    const description = optionalString(object.description);
+    const prepMinutes = optionalPositiveInt(object.prep_minutes);
+    const cookMinutes = optionalPositiveInt(object.cook_minutes);
+
+    return {
+      draft: {
+        ...draft,
+        description: needsDescription ? description ?? draft.description : draft.description,
+        prep_minutes: needsPrep ? prepMinutes ?? draft.prep_minutes : draft.prep_minutes,
+        cook_minutes: needsCook ? cookMinutes ?? draft.cook_minutes : draft.cook_minutes,
+      },
+      filledDescription: needsDescription && !!description,
+      filledPrepMinutes: needsPrep && typeof prepMinutes === "number",
+      filledCookMinutes: needsCook && typeof cookMinutes === "number",
+    };
+  } catch {
+    return {
+      draft,
+      filledDescription: false,
+      filledPrepMinutes: false,
+      filledCookMinutes: false,
+    };
+  }
+}
+
 export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> {
   const providerClient = createOpenRouterClient();
   const model = providerClient(GEMINI_PARSER_MODEL);
@@ -316,14 +409,21 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
   const draft = normalizeRecipeCandidate(object, input);
   if (!draft) throw new Error("Generated recipe did not pass validation constraints.");
 
-  draft.localized = await buildBilingualLocalization(draft);
+  const completion = await fillMissingRecipeDetails(draft, input);
+  const finalDraft = completion.draft;
+  finalDraft.localized = await buildBilingualLocalization(finalDraft);
 
   return {
-    draft,
+    draft: finalDraft,
     confidence: {
       provider: "openrouter",
       model: GEMINI_PARSER_MODEL,
       extraction_mode: "schema",
+      missing_fields_completed: {
+        description: completion.filledDescription,
+        prep_minutes: completion.filledPrepMinutes,
+        cook_minutes: completion.filledCookMinutes,
+      },
     },
     provider: "openrouter",
     model: GEMINI_PARSER_MODEL,
