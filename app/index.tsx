@@ -44,7 +44,11 @@ export default function IndexScreen() {
     );
   }
 
-  if (user || hasCompletedOnboarding) {
+  if (user && !hasCompletedOnboarding) {
+    return <Redirect href="/(onboarding)/welcome" />;
+  }
+
+  if (user && hasCompletedOnboarding) {
     return <Redirect href="/(tabs)" />;
   }
 

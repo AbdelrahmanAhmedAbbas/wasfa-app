@@ -19,6 +19,7 @@ export const onboardingColors = {
   textPlaceholder: "#9AAD9A",
   textOnDark: "#FFFFFF",
   shadow: "rgba(90,138,90,0.15)",
+  teal: "#2BA88A",
 };
 
 export const launchScreenColors = {
@@ -42,4 +43,13 @@ export const onboardingImages = {
   mascot: require("../../assets/images/mascot.png"),
   mascotReading: require("../../assets/images/mascot-reading.png"),
   mascotTyping: require("../../assets/images/mascot-typing.png"),
+};
+
+export const dietImages: Record<string, number> = {
+  halal: require("../../assets/images/mascot.png"),
+  omnivore: require("../../assets/images/mascot.png"),
+  vegetarian: require("../../assets/images/mascot.png"),
+  vegan: require("../../assets/images/mascot.png"),
+  keto: require("../../assets/images/mascot.png"),
+  pescatarian: require("../../assets/images/mascot.png"),
 };

@@ -24,25 +24,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     Promise.all([supabase.auth.getSession(), getOnboardingDone()]).then(
       ([{ data: { session } }, onboardingDone]) => {
-      setState((prev) => ({
-        ...prev,
-        session,
-        user: session?.user ?? null,
-        loading: false,
-        hasCompletedOnboarding: onboardingDone || !!session,
-      }));
-    }
+        setState((prev) => ({
+          ...prev,
+          session,
+          user: session?.user ?? null,
+          loading: false,
+          hasCompletedOnboarding: onboardingDone,
+        }));
+      }
     );
 
-    // Listen for auth changes
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      const onboardingDone = session ? await getOnboardingDone() : false;
       setState((prev) => ({
         ...prev,
         session,
         user: session?.user ?? null,
-        hasCompletedOnboarding: !!session ? true : prev.hasCompletedOnboarding,
+        hasCompletedOnboarding: onboardingDone,
       }));
     });
 
@@ -109,6 +109,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const signInWithApple = async () => {
+    console.log("Apple Sign-In not yet configured");
+  };
+
   const completeOnboarding = async () => {
     await setOnboardingDone(true);
     setState((prev) => ({
@@ -120,6 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value: AuthContextValue = {
     ...state,
     signInWithGoogle,
+    signInWithApple,
     signOut,
     completeOnboarding,
   };
