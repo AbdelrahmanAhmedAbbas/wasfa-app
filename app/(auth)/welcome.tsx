@@ -160,7 +160,7 @@ export default function WelcomeAuthScreen() {
   const isArabic = language === "ar";
   const languageFontStyle =
     language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
-      ? { fontFamily: brandFontFamily.arabic }
+      ? { fontFamily: brandFontFamily.arabic, fontWeight: "600" as const }
       : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
         ? { fontFamily: brandFontFamily.english }
         : null;
