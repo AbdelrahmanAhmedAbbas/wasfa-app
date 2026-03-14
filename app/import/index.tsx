@@ -7,7 +7,7 @@ import { createShareImport } from "@/lib/import/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 
 export default function ShareImportEntryScreen() {
-  const { isRTL } = useLanguage();
+  const { isRTL, t } = useLanguage();
   const params = useLocalSearchParams<{
     url?: string;
     text?: string;
@@ -81,7 +81,7 @@ export default function ShareImportEntryScreen() {
   async function onManualImportPress() {
     const trimmed = manualUrl.trim();
     if (!trimmed) {
-      setError("Please paste an Instagram or TikTok URL.");
+      setError(t("pasteInstagramUrl"));
       return;
     }
 
@@ -110,7 +110,7 @@ export default function ShareImportEntryScreen() {
       <View style={styles.container}>
         <ActivityIndicator color="#2c5f37" />
         <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
-          Creating import job...
+          {t("creatingImportJob")}
         </Text>
       </View>
     );
@@ -118,17 +118,17 @@ export default function ShareImportEntryScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={[styles.title, { textAlign: isRTL ? "right" : "left" }]}>Share Import</Text>
+      <Text style={[styles.title, { textAlign: isRTL ? "right" : "left" }]}>{t("shareImportTitle")}</Text>
       {!sourceUrl && !sharedText ? (
         <>
           <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
             {mediaUri
-              ? "Media was shared without a reel URL. Copy the reel link from Instagram/TikTok and paste it below."
-              : "Paste a recipe video URL to start import."}
+              ? t("mediaSharedWithoutUrl")
+              : t("pasteVideoUrl")}
           </Text>
           {mediaUri ? (
             <Text style={[styles.caption, { textAlign: isRTL ? "right" : "left" }]}>
-              Received media share
+              {t("receivedMediaShare")}
               {mediaMime ? ` (${mediaMime})` : ""}
             </Text>
           ) : null}
@@ -149,16 +149,16 @@ export default function ShareImportEntryScreen() {
             {submittingManual ? (
               <ActivityIndicator color="#f5f8f3" />
             ) : (
-              <Text style={styles.buttonText}>Import URL</Text>
+              <Text style={styles.buttonText}>{t("importUrl")}</Text>
             )}
           </Pressable>
         </>
       ) : null}
       <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
-        {error ?? (!sourceUrl && !sharedText ? "Awaiting URL input." : "Could not initialize share import.")}
+        {error ?? (!sourceUrl && !sharedText ? t("awaitingUrlInput") : t("couldNotInitShare"))}
       </Text>
       <Pressable style={styles.button} onPress={() => router.replace("/(tabs)")}>
-        <Text style={styles.buttonText}>Back to home</Text>
+        <Text style={styles.buttonText}>{t("backToHome")}</Text>
       </Pressable>
     </View>
   );

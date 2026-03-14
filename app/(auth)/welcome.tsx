@@ -1,10 +1,11 @@
-import { router } from "expo-router";
-import * as ExpoFont from "expo-font";
+import { LocalizedText as Text } from "@/components/LocalizedText";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
+import * as ExpoFont from "expo-font";
+import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, Animated, Easing, Image, Linking, Modal, Pressable, SafeAreaView, StyleSheet, View } from "react-native";
-import { LocalizedText as Text } from "@/components/LocalizedText";
+  ActivityIndicator, Alert, Animated, Easing, Image, Linking, Modal, Pressable, SafeAreaView, StyleSheet, View
+} from "react-native";
 
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
@@ -159,7 +160,9 @@ export default function WelcomeAuthScreen() {
   const languageFontStyle =
     language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
       ? { fontFamily: brandFontFamily.arabic }
-      : null;
+      : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
+        ? { fontFamily: brandFontFamily.english }
+        : null;
 
   return (
     <Animated.View style={[styles.container, { backgroundColor }]}>

@@ -8,7 +8,7 @@ import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { onboardingImages } from "@/lib/theme/onboarding";
 
 export default function ProfileScreen() {
-  const { isRTL, t } = useLanguage();
+  const { language, isRTL, setLanguage, t } = useLanguage();
   const { user, signInWithGoogle, signOut } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
 
@@ -101,6 +101,29 @@ export default function ProfileScreen() {
             )}
           </Pressable>
         )}
+      </View>
+
+      {/* Language Settings */}
+      <View style={styles.languageSection}>
+        <Text style={[styles.sectionTitle, { textAlign }]}>{t("language")}</Text>
+        <View style={styles.pillSelector}>
+          <Pressable
+            style={[styles.pill, language === "en" && styles.pillActive]}
+            onPress={() => setLanguage("en")}
+          >
+            <Text style={[styles.pillText, language === "en" && styles.pillTextActive]}>
+              {t("english")}
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.pill, language === "ar" && styles.pillActive]}
+            onPress={() => setLanguage("ar")}
+          >
+            <Text style={[styles.pillText, language === "ar" && styles.pillTextActive]}>
+              {t("arabic")}
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* Placeholder for future settings */}
@@ -220,5 +243,45 @@ const styles = StyleSheet.create({
   placeholderSubtext: {
     fontSize: 16,
     color: "#4f5347",
+  },
+  languageSection: {
+    marginBottom: 32,
+    padding: 24,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#e2e2e2",
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#252821",
+    marginBottom: 16,
+  },
+  pillSelector: {
+    flexDirection: "row",
+    gap: 12,
+  },
+  pill: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 999,
+    backgroundColor: "#f5f5f5",
+    alignItems: "center",
+    borderWidth: 2,
+    borderColor: "transparent",
+  },
+  pillActive: {
+    backgroundColor: "#1e9f92",
+    borderColor: "#1e9f92",
+  },
+  pillText: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: "#4f5347",
+  },
+  pillTextActive: {
+    color: "#ffffff",
   },
 });

@@ -9,7 +9,9 @@ export function LocalizedText({ style, ...props }: TextProps) {
   const fontStyle =
     language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
       ? { fontFamily: brandFontFamily.arabic }
-      : null;
+      : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
+        ? { fontFamily: brandFontFamily.english }
+        : null;
 
   return <RNText style={[fontStyle, style]} {...props} />;
 }

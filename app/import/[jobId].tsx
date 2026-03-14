@@ -2,15 +2,16 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator, Pressable, ScrollView, StyleSheet, TextInput, View
+  ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, TextInput, View
 } from "react-native";
 
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import {
-    confirmRecipe,
-    getImportJob,
+  confirmRecipe,
+  getImportJob,
 } from "@/lib/import/client";
 import type { IngredientItem, LocalizedRecipeText, RecipeDraft, StepItem } from "@/lib/import/types";
+import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -158,6 +159,25 @@ export default function ImportJobScreen() {
     }
   }, []);
 
+
+  const [typingIndex, setTypingIndex] = useState(0);
+  const typingTexts = [
+    "Reading recipe from the link...",
+    "Scanning for ingredients...",
+    "Calculating macros...",
+    "Analyzing number of servings...",
+    "Estimating cooking times...",
+    "Putting it all together...",
+  ];
+
+  useEffect(() => {
+    if (!loading && !["queued", "processing"].includes(status)) return;
+    const interval = setInterval(() => {
+      setTypingIndex((prev) => (prev + 1) % typingTexts.length);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, [loading, status]);
+
   const load = useCallback(
     async (silent = false) => {
       if (!jobId) return;
@@ -227,6 +247,13 @@ export default function ImportJobScreen() {
     return () => clearInterval(handle);
   }, [status, load]);
 
+  // Hook to instantly auto-confirm when loading finishes and it moves to awaiting_user_review setup
+  useEffect(() => {
+    if (status === "awaiting_user_review" && title && !saving) {
+      void onConfirmDraft();
+    }
+  }, [status, title]);
+
   async function onConfirmDraft() {
     if (!jobId) return;
     const edits: Partial<RecipeDraft> = {
@@ -244,27 +271,37 @@ export default function ImportJobScreen() {
     try {
       await confirmRecipe(jobId, edits, accessToken);
       setStatus("confirmed");
-      await load(false);
+      // Add small delay to ensure database finishes triggering any hooks
+      setTimeout(() => {
+        router.replace({ pathname: "/recipe/[id]", params: { id: jobId } });
+      }, 500);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to confirm recipe.");
-    } finally {
       setSaving(false);
     }
+  }
+
+  const isCurrentlyProcessing = loading || ["queued", "processing"].includes(status) || (status === "awaiting_user_review" && title);
+
+  if (isCurrentlyProcessing) {
+    return (
+      <View style={styles.fullscreenLoading}>
+        <Image
+          source={onboardingImages.mascotTyping}
+          style={styles.loadingMascot}
+          resizeMode="contain"
+        />
+        <Text style={[styles.loadingTypingText, isRTL && styles.textRtl]}>
+          {typingTexts[typingIndex]}
+        </Text>
+      </View>
+    );
   }
 
   if (!jobId) {
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.errorText}>Missing import job id.</Text>
-      </View>
-    );
-  }
-
-  if (loading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator color="#2c5f37" />
-        <Text style={styles.statusText}>Loading import job...</Text>
       </View>
     );
   }
@@ -373,7 +410,7 @@ export default function ImportJobScreen() {
               style={[
                 styles.button,
                 (saving || parseIngredients(ingredientsText).length < 2 || parseSteps(stepsText).length < 2) &&
-                  styles.buttonDisabled,
+                styles.buttonDisabled,
               ]}
               onPress={() => void onConfirmDraft()}
               disabled={
@@ -528,5 +565,24 @@ const styles = StyleSheet.create({
     color: "#2a5a24",
     fontWeight: "600",
     fontSize: 14,
+  },
+  fullscreenLoading: {
+    flex: 1,
+    backgroundColor: onboardingColors.backgroundBase,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  loadingMascot: {
+    width: 250,
+    height: 250,
+    marginBottom: 24,
+  },
+  loadingTypingText: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: onboardingColors.primaryDark,
+    textAlign: "center",
+    letterSpacing: 0.5,
   },
 });
