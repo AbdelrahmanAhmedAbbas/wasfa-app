@@ -98,10 +98,18 @@
             "NSExtensionActivationSupportsImageWithMaxCount": 1,
             "NSExtensionActivationSupportsMovieWithMaxCount": 1
           },
-          "androidIntentFilters": ["text/*", "video/*", "image/*"],
-          "androidMultiIntentFilters": ["video/*", "image/*"]
+          "androidIntentFilters": [
+            "text/*",
+            "video/*",
+            "image/*"
+          ],
+          "androidMultiIntentFilters": [
+            "video/*",
+            "image/*"
+          ]
         }
-      ]
+      ],
+      "expo-localization"
     ],
     "extra": {
       "supportsRTL": true

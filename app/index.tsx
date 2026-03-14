@@ -6,7 +6,7 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { launchScreenColors, onboardingImages } from "@/lib/theme/onboarding";
 
 export default function IndexScreen() {
-  const { loading } = useAuth();
+  const { loading, user, hasCompletedOnboarding } = useAuth();
   const mascotFloat = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -42,6 +42,10 @@ export default function IndexScreen() {
         </Animated.View>
       </View>
     );
+  }
+
+  if (user || hasCompletedOnboarding) {
+    return <Redirect href="/(tabs)" />;
   }
 
   return <Redirect href="/(auth)/welcome" />;

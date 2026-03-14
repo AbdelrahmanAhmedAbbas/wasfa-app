@@ -1,5 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { AppState, NativeModules, Platform } from "react-native";
+import { AppState } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Localization from "expo-localization";
 
 import { AppLanguage, isLanguageRTL, t as translate } from "@/lib/i18n/translations";
 
@@ -13,26 +15,11 @@ type LanguageContextValue = {
 const LanguageContext = createContext<LanguageContextValue | null>(null);
 
 function detectDeviceLanguage(): AppLanguage {
-  const intlLocale = Intl.DateTimeFormat().resolvedOptions().locale;
-  if (intlLocale) {
-    const normalized = intlLocale.toLowerCase();
-    return normalized.startsWith("ar") ? "ar" : "en";
+  const locales = Localization.getLocales();
+  if (locales.length > 0 && locales[0]?.languageCode) {
+    const code = locales[0].languageCode.toLowerCase();
+    return code.startsWith("ar") ? "ar" : "en";
   }
-
-  if (Platform.OS === "ios") {
-    const iosLocale =
-      NativeModules.SettingsManager?.settings?.AppleLocale ||
-      NativeModules.SettingsManager?.settings?.AppleLanguages?.[0];
-    const normalized = String(iosLocale || "").toLowerCase();
-    return normalized.startsWith("ar") ? "ar" : "en";
-  }
-
-  if (Platform.OS === "android") {
-    const androidLocale = NativeModules.I18nManager?.localeIdentifier;
-    const normalized = String(androidLocale || "").toLowerCase();
-    return normalized.startsWith("ar") ? "ar" : "en";
-  }
-
   return "en";
 }
 
@@ -41,12 +28,33 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [isReady, setIsReady] = useState(false);
 
   useEffect(() => {
-    setLanguageState(detectDeviceLanguage());
-    setIsReady(true);
-
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "active") {
+    const initializeLanguage = async () => {
+      try {
+        const saved = await AsyncStorage.getItem("@wasfa/language");
+        if (saved === "en" || saved === "ar") {
+          setLanguageState(saved);
+        } else {
+          setLanguageState(detectDeviceLanguage());
+        }
+      } catch {
         setLanguageState(detectDeviceLanguage());
+      }
+      setIsReady(true);
+    };
+
+    initializeLanguage();
+
+    const subscription = AppState.addEventListener("change", async (nextState) => {
+      if (nextState === "active") {
+        try {
+          const saved = await AsyncStorage.getItem("@wasfa/language");
+          if (saved === "en" || saved === "ar") {
+            return;
+          }
+          setLanguageState(detectDeviceLanguage());
+        } catch {
+          setLanguageState(detectDeviceLanguage());
+        }
       }
     });
 
@@ -55,13 +63,17 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const setLanguage = async (lang: AppLanguage) => {
+    await AsyncStorage.setItem("@wasfa/language", lang);
+    setLanguageState(lang);
+  };
+
   const value = useMemo<LanguageContextValue>(
     () => ({
       language,
       isRTL: isLanguageRTL(language),
       t: (key) => translate(language, key),
-      // Language is controlled by device settings on iOS/Android.
-      setLanguage: async () => Promise.resolve(),
+      setLanguage,
     }),
     [language]
   );
