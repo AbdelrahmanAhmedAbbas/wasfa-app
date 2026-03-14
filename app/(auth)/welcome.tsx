@@ -13,7 +13,7 @@ import { brandFontFamily } from "@/lib/theme/fonts";
 import { launchScreenColors, onboardingImages } from "@/lib/theme/onboarding";
 
 export default function WelcomeAuthScreen() {
-  const { signInWithGoogle } = useAuth();
+  const { signInWithGoogle, user, hasCompletedOnboarding, loading } = useAuth();
   const { language, t, setLanguage } = useLanguage();
   const [isLoading, setIsLoading] = useState(false);
   const [isIntroComplete, setIsIntroComplete] = useState(false);
@@ -22,6 +22,17 @@ export default function WelcomeAuthScreen() {
   const transition = useRef(new Animated.Value(0)).current;
   const mascotFloat = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(380)).current;
+
+  useEffect(() => {
+    if (!loading && user) {
+      closeAuthSheet();
+      if (hasCompletedOnboarding) {
+        router.replace("/(tabs)");
+      } else {
+        router.replace("/(onboarding)/welcome");
+      }
+    }
+  }, [loading, user, hasCompletedOnboarding]);
 
   useEffect(() => {
     const introAnimation = Animated.sequence([
@@ -106,8 +117,6 @@ export default function WelcomeAuthScreen() {
     try {
       setIsLoading(true);
       await signInWithGoogle();
-      closeAuthSheet();
-      router.replace("/(tabs)");
     } catch (error) {
       console.error("Failed to sign in with Google:", error);
       Alert.alert(t("authErrorTitle"), t("authErrorMessage"));
@@ -225,7 +234,7 @@ export default function WelcomeAuthScreen() {
           </Text>
 
           <View style={styles.buttonStack}>
-            <Pressable style={[styles.button, styles.getStartedButton]} onPress={() => router.push("/(onboarding)/welcome")} disabled={isLoading}>
+            <Pressable style={[styles.button, styles.getStartedButton]} onPress={() => router.push("/(auth)/register")} disabled={isLoading}>
               <Text style={[styles.buttonText, styles.getStartedButtonText, languageFontStyle]}>{t("authGetStarted")}</Text>
             </Pressable>
           </View>

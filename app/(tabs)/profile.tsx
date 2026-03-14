@@ -1,11 +1,14 @@
 import { router } from "expo-router";
 import { useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 
+import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { onboardingImages } from "@/lib/theme/onboarding";
+import { setOnboardingDone, clearOnboardingStep } from "@/lib/onboarding/storage";
+import { clearOnboardingAnswers } from "@/lib/onboarding/answers";
 
 export default function ProfileScreen() {
   const { language, isRTL, setLanguage, t } = useLanguage();
@@ -35,6 +38,44 @@ export default function ProfileScreen() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleDeleteAccount = () => {
+    Alert.alert(
+      t("profileDeleteConfirmTitle" as any),
+      t("profileDeleteConfirmMessage" as any),
+      [
+        {
+          text: t("profileDeleteCancel" as any),
+          style: "cancel",
+        },
+        {
+          text: t("profileDeleteConfirmAction" as any),
+          style: "destructive",
+          onPress: async () => {
+            try {
+              setIsLoading(true);
+              const { error } = await supabase.rpc("delete_user_account");
+              if (error) {
+                console.error("Failed to delete account from Supabase:", error);
+                Alert.alert("Error", error.message);
+                return;
+              }
+              await setOnboardingDone(false);
+              await clearOnboardingStep();
+              await clearOnboardingAnswers();
+              await signOut();
+              router.replace("/(auth)/welcome");
+            } catch (error: any) {
+              console.error("Failed to delete account:", error);
+              Alert.alert("Error", error.message);
+            } finally {
+              setIsLoading(false);
+            }
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -74,17 +115,26 @@ export default function ProfileScreen() {
       {/* Actions */}
       <View style={styles.actions}>
         {user ? (
-          <Pressable
-            style={[styles.button, styles.signOutButton]}
-            onPress={handleSignOut}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
+          <>
+            <Pressable
+              style={[styles.button, styles.signOutButton]}
+              onPress={handleSignOut}
+              disabled={isLoading}
+            >
               <Text style={styles.buttonText}>{t("profileSignOut")}</Text>
-            )}
-          </Pressable>
+            </Pressable>
+            <Pressable
+              style={[styles.button, styles.deleteButton]}
+              onPress={handleDeleteAccount}
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <ActivityIndicator color="#d64545" />
+              ) : (
+                <Text style={styles.deleteButtonText}>{t("profileDeleteAccount" as any)}</Text>
+              )}
+            </Pressable>
+          </>
         ) : (
           <Pressable
             style={[styles.button, styles.signInButton]}
@@ -210,6 +260,16 @@ const styles = StyleSheet.create({
   },
   signOutButton: {
     backgroundColor: "#d64545",
+  },
+  deleteButton: {
+    backgroundColor: "transparent",
+    borderWidth: 1,
+    borderColor: "#d64545",
+  },
+  deleteButtonText: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#d64545",
   },
   buttonText: {
     fontSize: 18,
