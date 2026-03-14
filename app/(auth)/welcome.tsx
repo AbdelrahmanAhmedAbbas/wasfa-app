@@ -14,10 +14,11 @@ import { launchScreenColors, onboardingImages } from "@/lib/theme/onboarding";
 
 export default function WelcomeAuthScreen() {
   const { signInWithGoogle } = useAuth();
-  const { language, t } = useLanguage();
+  const { language, t, setLanguage } = useLanguage();
   const [isLoading, setIsLoading] = useState(false);
   const [isIntroComplete, setIsIntroComplete] = useState(false);
   const [authSheetVisible, setAuthSheetVisible] = useState(false);
+  const [langOpen, setLangOpen] = useState(false);
   const transition = useRef(new Animated.Value(0)).current;
   const mascotFloat = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(380)).current;
@@ -170,6 +171,27 @@ export default function WelcomeAuthScreen() {
       <View pointerEvents="none" style={styles.waveBottom} />
 
       <SafeAreaView style={styles.safeArea}>
+        {/* ── Language picker pill ── */}
+        <Animated.View pointerEvents={isIntroComplete ? "auto" : "none"} style={[styles.langRow, { opacity: contentOpacity }]}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.langPill,
+              pressed && styles.langPillPressed,
+            ]}
+            onPress={() => setLangOpen(true)}
+          >
+            <Text style={styles.langFlag}>{isArabic ? "🇸🇦" : "🇬🇧"}</Text>
+            <Text style={[styles.langLabel, languageFontStyle]}>
+              {isArabic ? "العربية" : "English"}
+            </Text>
+            <FontAwesome
+              name="chevron-down"
+              size={9}
+              color={launchScreenColors.textSecondary}
+            />
+          </Pressable>
+        </Animated.View>
+
         <View pointerEvents="none" style={styles.heroSection}>
           <Animated.View
             style={[
@@ -212,21 +234,53 @@ export default function WelcomeAuthScreen() {
             <Text style={[styles.alreadyAccountText, languageFontStyle]}>{t("authAlreadyAccount")}</Text>
           </Pressable>
 
-          <View style={styles.legalContainer}>
-            <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>{t("authLegalPrefix")}</Text>
-            <View style={styles.legalLinksRow}>
-              <Pressable hitSlop={8} onPress={() => openLegalUrl("https://wasfa.life/terms-and-conditions")}>
-                <Text style={[styles.legalLink, languageFontStyle]}>{t("authLegalTerms")}</Text>
-              </Pressable>
-              <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>{t("authLegalAnd")}</Text>
-              <Pressable hitSlop={8} onPress={() => openLegalUrl("https://wasfa.life/privacy-policy")}>
-                <Text style={[styles.legalLink, languageFontStyle]}>{t("authLegalPrivacy")}</Text>
-              </Pressable>
-              <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>{t("authLegalSuffix")}</Text>
-            </View>
-          </View>
         </Animated.View>
       </SafeAreaView>
+
+      {/* ── Language picker bottom sheet drawer ── */}
+      <Modal transparent visible={langOpen} animationType="slide" statusBarTranslucent>
+        <View style={styles.sheetRoot}>
+          <Pressable style={styles.sheetBackdrop} onPress={() => setLangOpen(false)} />
+          <View style={styles.sheetCard}>
+            <View style={styles.sheetHandle} />
+            <Text style={[styles.sheetTitle, languageFontStyle, { marginBottom: 16 }]}>
+              {language === "ar" ? "اختر اللغة" : "Select Language"}
+            </Text>
+
+            {(["en", "ar"] as const).map((lang, i) => (
+              <View key={lang}>
+                {i > 0 && <View style={styles.langDivider} />}
+                <Pressable
+                  style={[
+                    styles.langOption,
+                    language === lang && styles.langOptionActive,
+                  ]}
+                  onPress={async () => {
+                    await setLanguage(lang);
+                    setLangOpen(false);
+                  }}
+                >
+                  <Text style={styles.langOptionFlag}>
+                    {lang === "ar" ? "🇸🇦" : "🇬🇧"}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.langOptionText,
+                      language === lang && styles.langOptionTextActive,
+                    ]}
+                  >
+                    {lang === "ar" ? "العربية" : "English"}
+                  </Text>
+                  {language === lang && (
+                    <FontAwesome name="check" size={16} color={launchScreenColors.primaryDark} />
+                  )}
+                </Pressable>
+              </View>
+            ))}
+            <View style={{ height: 16 }} />
+          </View>
+        </View>
+      </Modal>
 
       <Modal transparent visible={authSheetVisible} animationType="none" statusBarTranslucent>
         <View style={styles.sheetRoot}>
@@ -248,6 +302,26 @@ export default function WelcomeAuthScreen() {
                 </View>
               )}
             </Pressable>
+
+            {/* Legal */}
+            <View style={styles.legalBox}>
+              <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>
+                {t("authLegalPrefix")}
+              </Text>
+              <View style={styles.legalLinksRow}>
+                <Pressable hitSlop={8} onPress={() => openLegalUrl("https://wasfa.life/terms-and-conditions")}>
+                  <Text style={[styles.legalLink, languageFontStyle]}>{t("authLegalTerms")}</Text>
+                </Pressable>
+                <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>
+                  {t("authLegalAnd")}
+                </Text>
+                <Pressable hitSlop={8} onPress={() => openLegalUrl("https://wasfa.life/privacy-policy")}>
+                  <Text style={[styles.legalLink, languageFontStyle]}>{t("authLegalPrivacy")}</Text>
+                </Pressable>
+                <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>
+                  {t("authLegalSuffix")}</Text>
+              </View>
+            </View>
 
             <Pressable style={styles.sheetCancelButton} onPress={closeAuthSheet}>
               <Text style={[styles.sheetCancelText, languageFontStyle]}>{t("commonBack")}</Text>
@@ -467,10 +541,70 @@ const styles = StyleSheet.create({
   loginButtonText: {
     color: launchScreenColors.surface,
   },
-  legalContainer: {
-    marginTop: 16,
+  langRow: {
     alignItems: "center",
-    paddingHorizontal: 12,
+    paddingTop: 8,
+    zIndex: 10,
+  },
+  langPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: launchScreenColors.surface,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    gap: 7,
+    shadowColor: launchScreenColors.text,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  langPillPressed: {
+    backgroundColor: launchScreenColors.accentWarm,
+  },
+  langFlag: {
+    fontSize: 17,
+    lineHeight: 21,
+  },
+  langLabel: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: launchScreenColors.text,
+  },
+  langDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: launchScreenColors.divider,
+    marginHorizontal: 14,
+  },
+  langOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 10,
+  },
+  langOptionActive: {
+    backgroundColor: launchScreenColors.accentWarm,
+    borderRadius: 16,
+  },
+  langOptionFlag: {
+    fontSize: 19,
+  },
+  langOptionText: {
+    flex: 1,
+    fontSize: 15,
+    color: launchScreenColors.text,
+  },
+  langOptionTextActive: {
+    fontWeight: "600",
+    color: launchScreenColors.primaryDark,
+  },
+  legalBox: {
+    alignItems: "center",
+    paddingHorizontal: 8,
+    marginTop: 16,
+    marginBottom: 8,
   },
   legal: {
     fontSize: 12,
