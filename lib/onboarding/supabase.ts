@@ -7,6 +7,8 @@ export async function saveOnboardingProfile(
 ): Promise<void> {
   const { error } = await supabase.from("onboarding_profiles").upsert({
     user_id: userId,
+    goal: answers.goal,
+    pain_points: answers.painPoints,
     diet: answers.diet,
     allergies: answers.allergies,
     referral_source: answers.referralSource,
@@ -42,6 +44,8 @@ export async function getOnboardingProfile(
   }
 
   return {
+    goal: data.goal,
+    painPoints: data.pain_points || [],
     diet: data.diet || [],
     allergies: data.allergies || [],
     referralSource: data.referral_source,

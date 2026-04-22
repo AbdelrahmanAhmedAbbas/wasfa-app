@@ -1,12 +1,18 @@
 import { Redirect } from "expo-router";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Animated, Easing, Image, StyleSheet, View } from "react-native";
 
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { getPaywallSeen, getQuestionnaireComplete } from "@/lib/onboarding/storage";
 import { launchScreenColors, onboardingImages } from "@/lib/theme/onboarding";
 
 export default function IndexScreen() {
   const { loading, user, hasCompletedOnboarding } = useAuth();
+  const [flowState, setFlowState] = useState({
+    loading: true,
+    questionnaireDone: false,
+    paywallSeen: false,
+  });
   const mascotFloat = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -31,7 +37,28 @@ export default function IndexScreen() {
     return () => floatingAnimation.stop();
   }, [mascotFloat]);
 
-  if (loading) {
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadFlowState() {
+      const [questionnaireDone, paywallSeen] = await Promise.all([
+        getQuestionnaireComplete(),
+        getPaywallSeen(),
+      ]);
+
+      if (isMounted) {
+        setFlowState({ loading: false, questionnaireDone, paywallSeen });
+      }
+    }
+
+    void loadFlowState();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  if (loading || flowState.loading) {
     return (
       <View style={styles.loadingContainer}>
         <View pointerEvents="none" style={styles.logoContainer}>
@@ -44,15 +71,27 @@ export default function IndexScreen() {
     );
   }
 
-  if (user && !hasCompletedOnboarding) {
-    return <Redirect href="/(onboarding)/welcome" />;
-  }
-
   if (user && hasCompletedOnboarding) {
     return <Redirect href="/(tabs)" />;
   }
 
-  return <Redirect href="/(auth)/welcome" />;
+  if (!user && !flowState.questionnaireDone) {
+    return <Redirect href="/(questionnaire)/welcome" />;
+  }
+
+  if (!user && flowState.questionnaireDone) {
+    return <Redirect href="/(auth)/signup" />;
+  }
+
+  if (user && !flowState.questionnaireDone) {
+    return <Redirect href="/(questionnaire)/setup" />;
+  }
+
+  if (user && !flowState.paywallSeen) {
+    return <Redirect href="/(paywall)/offer" />;
+  }
+
+  return <Redirect href="/(questionnaire)/setup" />;
 }
 
 const styles = StyleSheet.create({

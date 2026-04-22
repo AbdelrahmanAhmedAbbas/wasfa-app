@@ -1,0 +1,25 @@
+diff --git a/node_modules/expo-router/build/link/linking.js b/node_modules/expo-router/build/link/linking.js
+index 0cbb8dd..f0e8b2a 100644
+--- a/node_modules/expo-router/build/link/linking.js
++++ b/node_modules/expo-router/build/link/linking.js
+@@ -76,7 +76,7 @@ let _rootURL;
+ function getRootURL() {
+     if (_rootURL === undefined) {
+-        _rootURL = Linking.createURL('/');
++        _rootURL = Linking.createURL('/', { scheme: 'mealplanner' });
+         if (isExpoGo) {
+             _rootURL = (0, extractPathFromURL_1.parsePathFromExpoGoLink)(_rootURL);
+         }
+diff --git a/node_modules/expo-router/build/views/Unmatched.js b/node_modules/expo-router/build/views/Unmatched.js
+index 67129ae..f29adf1 100644
+--- a/node_modules/expo-router/build/views/Unmatched.js
++++ b/node_modules/expo-router/build/views/Unmatched.js
+@@ -35,7 +35,7 @@ function UnmatchedInner() {
+     const route = (0, native_1.useRoute)();
+     const navigation = (0, useNavigation_1.useNavigation)();
+     const pathname = (0, hooks_1.usePathname)();
+-    const url = (0, expo_linking_1.createURL)(pathname);
++    const url = (0, expo_linking_1.createURL)(pathname, { scheme: 'mealplanner' });
+     react_1.default.useEffect(() => {
+         setRender(true);
+     }, []);

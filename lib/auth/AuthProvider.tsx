@@ -1,4 +1,3 @@
-import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
 import { createContext, useContext, useEffect, useState } from "react";
 import { Platform } from "react-native";
@@ -12,6 +11,17 @@ import { AuthContextValue, AuthState } from "./types";
 WebBrowser.maybeCompleteAuthSession();
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+const AUTH_CALLBACK_PATH = "auth/callback";
+const APP_SCHEME = "mealplanner";
+
+function getOAuthRedirectUrl() {
+  if (Platform.OS === "web") {
+    const origin = (globalThis as typeof globalThis & { location?: { origin?: string } }).location?.origin;
+    return origin ? `${origin}/${AUTH_CALLBACK_PATH}` : `${APP_SCHEME}://${AUTH_CALLBACK_PATH}`;
+  }
+
+  return `${APP_SCHEME}://${AUTH_CALLBACK_PATH}`;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({
@@ -51,10 +61,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithGoogle = async () => {
     try {
-      const redirectUrl = AuthSession.makeRedirectUri({
-        scheme: "mealplanner",
-        path: "auth/callback",
-      });
+      const redirectUrl = getOAuthRedirectUrl();
 
       const { data, error } = await supabase.auth.signInWithOAuth({
         provider: "google",

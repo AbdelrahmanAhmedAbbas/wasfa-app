@@ -1,0 +1,55 @@
+diff --git a/node_modules/expo-linking/build/Schemes.js b/node_modules/expo-linking/build/Schemes.js
+index 7b01a58..2cb4478 100644
+--- a/node_modules/expo-linking/build/Schemes.js
++++ b/node_modules/expo-linking/build/Schemes.js
+@@ -80,6 +80,9 @@ export function hasConstantsManifest() {
+ }
+ // @docsMissing
+ export function resolveScheme(options) {
++    if (options.scheme) {
++        return options.scheme;
++    }
+     if (Constants.executionEnvironment !== ExecutionEnvironment.StoreClient &&
+         !hasConstantsManifest()) {
+         throw new Error(`expo-linking needs access to the expo-constants manifest (app.json or app.config.js) to determine what URI scheme to use. Setup the manifest and rebuild: https://github.com/expo/expo/blob/main/packages/expo-constants/README.md`);
+diff --git a/node_modules/expo-linking/build/createURL.js b/node_modules/expo-linking/build/createURL.js
+index 91ad55c..2de6baf 100644
+--- a/node_modules/expo-linking/build/createURL.js
++++ b/node_modules/expo-linking/build/createURL.js
+@@ -66,7 +66,7 @@ import { validateURL } from './validateURL';
+  * @param namedParameters Additional options object.
+  * @return A URL string which points to your app with the given deep link information.
+  */
+-export function createURL(path, { scheme, queryParams = {}, isTripleSlashed = false } = {}) {
++export function createURL(path, { scheme = 'mealplanner', queryParams = {}, isTripleSlashed = false } = {}) {
+     const resolvedScheme = resolveScheme({ scheme });
+     let hostUri = getHostUri() || '';
+     if (hasCustomScheme() && isExpoHosted()) {
+diff --git a/node_modules/expo-linking/src/Schemes.ts b/node_modules/expo-linking/src/Schemes.ts
+index 19bbd0f..006b627 100644
+--- a/node_modules/expo-linking/src/Schemes.ts
++++ b/node_modules/expo-linking/src/Schemes.ts
+@@ -94,6 +94,10 @@ export function hasConstantsManifest(): boolean {
+ 
+ // @docsMissing
+ export function resolveScheme(options: { scheme?: string; isSilent?: boolean }): string {
++  if (options.scheme) {
++    return options.scheme;
++  }
++
+   if (
+     Constants.executionEnvironment !== ExecutionEnvironment.StoreClient &&
+     !hasConstantsManifest()
+diff --git a/node_modules/expo-linking/src/createURL.ts b/node_modules/expo-linking/src/createURL.ts
+index e153496..5592d50 100644
+--- a/node_modules/expo-linking/src/createURL.ts
++++ b/node_modules/expo-linking/src/createURL.ts
+@@ -66,7 +66,7 @@ function ensureLeadingSlash(input: string, shouldAppend: boolean): string {
+  */
+ export function createURL(
+   path: string,
+-  { scheme, queryParams = {}, isTripleSlashed = false }: CreateURLOptions = {}
++  { scheme = 'mealplanner', queryParams = {}, isTripleSlashed = false }: CreateURLOptions = {}
+ ): string {
+   const resolvedScheme = resolveScheme({ scheme });
+ 
