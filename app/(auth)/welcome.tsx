@@ -1,10 +1,22 @@
-import { LocalizedText as Text } from "@/components/LocalizedText";
+import Feather from "@expo/vector-icons/Feather";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import * as ExpoFont from "expo-font";
 import { router } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, Animated, Easing, Image, Linking, Modal, Pressable, SafeAreaView, StyleSheet, View
+  ActivityIndicator,
+  Alert,
+  Animated,
+  Easing,
+  Image,
+  Linking,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -12,16 +24,37 @@ import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { brandFontFamily } from "@/lib/theme/fonts";
 import { launchScreenColors, onboardingImages } from "@/lib/theme/onboarding";
 
+const COLORS = {
+  bg: "#E8F5E0",
+  primary: "#3D6B3D",
+  text: "#1C2B1C",
+  textMuted: "#6B7C6B",
+  chipBg: "#FFFFFF",
+  ctaOutline: "#a3d48f",
+  white: "#FFFFFF",
+} as const;
+
+const CHIPS: Array<{ icon: React.ComponentProps<typeof Feather>["name"]; labelKey: "authChipPlan" | "authChipRecipes" | "authChipShop" }> = [
+  { icon: "calendar", labelKey: "authChipPlan" },
+  { icon: "link", labelKey: "authChipRecipes" },
+  { icon: "shopping-cart", labelKey: "authChipShop" },
+];
+
 export default function WelcomeAuthScreen() {
   const { signInWithGoogle, user, hasCompletedOnboarding, loading } = useAuth();
   const { language, t, setLanguage } = useLanguage();
   const [isLoading, setIsLoading] = useState(false);
-  const [isIntroComplete, setIsIntroComplete] = useState(false);
   const [authSheetVisible, setAuthSheetVisible] = useState(false);
   const [langOpen, setLangOpen] = useState(false);
-  const transition = useRef(new Animated.Value(0)).current;
-  const mascotFloat = useRef(new Animated.Value(0)).current;
   const sheetTranslateY = useRef(new Animated.Value(380)).current;
+
+  const isRTL = language === "ar";
+  const languageFontStyle =
+    language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
+      ? { fontFamily: brandFontFamily.arabic, fontWeight: "600" as const }
+      : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
+        ? { fontFamily: brandFontFamily.english }
+        : null;
 
   useEffect(() => {
     if (!loading && user) {
@@ -33,48 +66,6 @@ export default function WelcomeAuthScreen() {
       }
     }
   }, [loading, user, hasCompletedOnboarding]);
-
-  useEffect(() => {
-    const introAnimation = Animated.sequence([
-      Animated.delay(3400),
-      Animated.timing(transition, {
-        toValue: 1,
-        duration: 940,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }),
-    ]);
-
-    introAnimation.start(({ finished }) => {
-      if (finished) {
-        setIsIntroComplete(true);
-      }
-    });
-
-    return () => introAnimation.stop();
-  }, [transition]);
-
-  useEffect(() => {
-    const floatingAnimation = Animated.loop(
-      Animated.sequence([
-        Animated.timing(mascotFloat, {
-          toValue: -18,
-          duration: 1200,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: false,
-        }),
-        Animated.timing(mascotFloat, {
-          toValue: 18,
-          duration: 1200,
-          easing: Easing.inOut(Easing.sin),
-          useNativeDriver: false,
-        }),
-      ])
-    );
-
-    floatingAnimation.start();
-    return () => floatingAnimation.stop();
-  }, [mascotFloat]);
 
   const openAuthSheet = () => {
     setAuthSheetVisible(true);
@@ -94,9 +85,7 @@ export default function WelcomeAuthScreen() {
       easing: Easing.in(Easing.cubic),
       useNativeDriver: true,
     }).start(({ finished }) => {
-      if (finished) {
-        setAuthSheetVisible(false);
-      }
+      if (finished) setAuthSheetVisible(false);
     });
   };
 
@@ -134,54 +123,20 @@ export default function WelcomeAuthScreen() {
     }
   };
 
-  const backgroundColor = transition.interpolate({
-    inputRange: [0, 1],
-    outputRange: [launchScreenColors.bgLight, launchScreenColors.bgWarm],
-  });
-  const mascotTranslateY = transition.interpolate({
-    inputRange: [0, 1],
-    outputRange: [0, -96],
-  });
-  const mascotOpacity = transition.interpolate({
-    inputRange: [0, 0.7, 1],
-    outputRange: [1, 1, 0],
-  });
-  const mascotScale = transition.interpolate({
-    inputRange: [0, 1],
-    outputRange: [1, 0.9],
-  });
-  const logoOpacity = transition.interpolate({
-    inputRange: [0.45, 1],
-    outputRange: [0, 1],
-  });
-  const logoScale = transition.interpolate({
-    inputRange: [0.45, 1],
-    outputRange: [0.82, 1],
-  });
-  const contentOpacity = transition.interpolate({
-    inputRange: [0.36, 1],
-    outputRange: [0, 1],
-  });
-  const contentTranslateY = transition.interpolate({
-    inputRange: [0.36, 1],
-    outputRange: [44, 0],
-  });
-  const isArabic = language === "ar";
-  const languageFontStyle =
-    language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
-      ? { fontFamily: brandFontFamily.arabic, fontWeight: "600" as const }
-      : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
-        ? { fontFamily: brandFontFamily.english }
-        : null;
-
   return (
-    <Animated.View style={[styles.container, { backgroundColor }]}>
-      <View pointerEvents="none" style={styles.waveTop} />
-      <View pointerEvents="none" style={styles.waveBottom} />
-
-      <SafeAreaView style={styles.safeArea}>
-        {/* ── Language picker pill ── */}
-        <Animated.View pointerEvents={isIntroComplete ? "auto" : "none"} style={[styles.langRow, { opacity: contentOpacity }]}>
+    <SafeAreaView style={styles.safeArea}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
+        {/* Logo area with language picker overlay */}
+        <View style={styles.logoArea}>
+          <Image
+            source={onboardingImages.logo}
+            style={styles.logo}
+            resizeMode="contain"
+          />
           <Pressable
             style={({ pressed }) => [
               styles.langPill,
@@ -189,64 +144,86 @@ export default function WelcomeAuthScreen() {
             ]}
             onPress={() => setLangOpen(true)}
           >
-            <Text style={styles.langFlag}>{isArabic ? "🇸🇦" : "🇬🇧"}</Text>
+            <Text style={styles.langFlag}>{isRTL ? "🇸🇦" : "🇬🇧"}</Text>
             <Text style={[styles.langLabel, languageFontStyle]}>
-              {isArabic ? "العربية" : "English"}
+              {isRTL ? "العربية" : "English"}
             </Text>
-            <FontAwesome
-              name="chevron-down"
-              size={9}
-              color={launchScreenColors.textSecondary}
-            />
+            <FontAwesome name="chevron-down" size={9} color={COLORS.textMuted} />
           </Pressable>
-        </Animated.View>
-
-        <View pointerEvents="none" style={styles.heroSection}>
-          <Animated.View
-            style={[
-              styles.mascotWrapper,
-              {
-                opacity: mascotOpacity,
-                transform: [{ translateY: Animated.add(mascotTranslateY, mascotFloat) }, { scale: mascotScale }],
-              },
-            ]}
-          >
-            <Image source={onboardingImages.mascot} style={styles.mascot} resizeMode="contain" />
-          </Animated.View>
-
-          <Animated.View pointerEvents="none" style={[styles.logoContainer, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
-            <Image source={onboardingImages.logo} style={styles.logo} resizeMode="contain" />
-          </Animated.View>
         </View>
 
-        <Animated.View
-          pointerEvents={isIntroComplete ? "auto" : "none"}
-          style={[
-            styles.contentSection,
-            { opacity: contentOpacity, transform: [{ translateY: contentTranslateY }] },
-          ]}
-        >
-          <Text allowFontScaling={false} style={[styles.title, !isArabic && styles.titleEnglish, isArabic && styles.titleArabic, languageFontStyle]}>
-            {t("authHeroTitle")}
+        {/* Title & subtitle */}
+        <View style={styles.textSection}>
+          <Text
+            allowFontScaling={false}
+            style={[
+              styles.title,
+              { textAlign: "center" },
+              languageFontStyle,
+            ]}
+          >
+            {t("authWelcomeTitle")}
           </Text>
-          <Text allowFontScaling={false} style={[styles.subtitle, isArabic && styles.subtitleArabic, languageFontStyle]}>
-            {t("authHeroSubtitle")}
+          <Text
+            allowFontScaling={false}
+            style={[
+              styles.subtitle,
+              { textAlign: "center" },
+              languageFontStyle,
+            ]}
+          >
+            {t("authWelcomeSub")}
           </Text>
+        </View>
 
-          <View style={styles.buttonStack}>
-            <Pressable style={[styles.button, styles.getStartedButton]} onPress={() => router.push("/(auth)/register")} disabled={isLoading}>
-              <Text style={[styles.buttonText, styles.getStartedButtonText, languageFontStyle]}>{t("authGetStarted")}</Text>
-            </Pressable>
-          </View>
+        {/* Feature chips */}
+        <View style={styles.chipsRow}>
+          {CHIPS.map(({ icon, labelKey }) => (
+            <View key={labelKey} style={styles.chip}>
+              <Feather name={icon} size={22} color={COLORS.primary} />
+              <Text
+                allowFontScaling={false}
+                style={[styles.chipLabel, languageFontStyle]}
+              >
+                {t(labelKey)}
+              </Text>
+            </View>
+          ))}
+        </View>
 
-          <Pressable style={styles.alreadyAccountButton} onPress={openAuthSheet} disabled={isLoading}>
-            <Text style={[styles.alreadyAccountText, languageFontStyle]}>{t("authAlreadyAccount")}</Text>
+        {/* CTA buttons */}
+        <View style={styles.buttonsSection}>
+          <Pressable
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnPrimary,
+              pressed && styles.btnPrimaryPressed,
+            ]}
+            onPress={openAuthSheet}
+            disabled={isLoading}
+          >
+            <Text style={[styles.btnTextPrimary, languageFontStyle]}>
+              {t("authWelcomeStart")}
+            </Text>
           </Pressable>
 
-        </Animated.View>
-      </SafeAreaView>
+          <Pressable
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnOutline,
+              pressed && styles.btnOutlinePressed,
+            ]}
+            onPress={openAuthSheet}
+            disabled={isLoading}
+          >
+            <Text style={[styles.btnTextOutline, languageFontStyle]}>
+              {t("authWelcomeSignIn")}
+            </Text>
+          </Pressable>
+        </View>
+      </ScrollView>
 
-      {/* ── Language picker bottom sheet drawer ── */}
+      {/* Language picker bottom sheet */}
       <Modal transparent visible={langOpen} animationType="slide" statusBarTranslucent>
         <View style={styles.sheetRoot}>
           <Pressable style={styles.sheetBackdrop} onPress={() => setLangOpen(false)} />
@@ -255,33 +232,22 @@ export default function WelcomeAuthScreen() {
             <Text style={[styles.sheetTitle, languageFontStyle, { marginBottom: 16 }]}>
               {language === "ar" ? "اختر اللغة" : "Select Language"}
             </Text>
-
             {(["en", "ar"] as const).map((lang, i) => (
               <View key={lang}>
                 {i > 0 && <View style={styles.langDivider} />}
                 <Pressable
-                  style={[
-                    styles.langOption,
-                    language === lang && styles.langOptionActive,
-                  ]}
+                  style={[styles.langOption, language === lang && styles.langOptionActive]}
                   onPress={async () => {
                     await setLanguage(lang);
                     setLangOpen(false);
                   }}
                 >
-                  <Text style={styles.langOptionFlag}>
-                    {lang === "ar" ? "🇸🇦" : "🇬🇧"}
-                  </Text>
-                  <Text
-                    style={[
-                      styles.langOptionText,
-                      language === lang && styles.langOptionTextActive,
-                    ]}
-                  >
+                  <Text style={styles.langOptionFlag}>{lang === "ar" ? "🇸🇦" : "🇬🇧"}</Text>
+                  <Text style={[styles.langOptionText, language === lang && styles.langOptionTextActive]}>
                     {lang === "ar" ? "العربية" : "English"}
                   </Text>
                   {language === lang && (
-                    <FontAwesome name="check" size={16} color={launchScreenColors.primaryDark} />
+                    <FontAwesome name="check" size={16} color={COLORS.primary} />
                   )}
                 </Pressable>
               </View>
@@ -291,6 +257,7 @@ export default function WelcomeAuthScreen() {
         </View>
       </Modal>
 
+      {/* Auth bottom sheet */}
       <Modal transparent visible={authSheetVisible} animationType="none" statusBarTranslucent>
         <View style={styles.sheetRoot}>
           <Pressable style={styles.sheetBackdrop} onPress={closeAuthSheet} />
@@ -299,36 +266,36 @@ export default function WelcomeAuthScreen() {
             <Text style={[styles.sheetTitle, languageFontStyle]}>{t("authSheetTitle")}</Text>
             <Text style={[styles.sheetSubtitle, languageFontStyle]}>{t("authSheetSubtitle")}</Text>
 
-            <Pressable style={[styles.button, styles.sheetGoogleButton]} onPress={handleGoogleAuth} disabled={isLoading}>
+            <Pressable style={[styles.btn, styles.sheetGoogleButton]} onPress={handleGoogleAuth} disabled={isLoading}>
               {isLoading ? (
-                <ActivityIndicator color={launchScreenColors.surface} />
+                <ActivityIndicator color={COLORS.white} />
               ) : (
                 <View style={styles.buttonContent}>
                   <View style={styles.googleBadge}>
-                    <FontAwesome name="google" size={15} color={launchScreenColors.primaryDark} />
+                    <FontAwesome name="google" size={15} color={COLORS.primary} />
                   </View>
-                  <Text style={[styles.buttonText, styles.loginButtonText, languageFontStyle]}>{t("authContinueGoogle")}</Text>
+                  <Text style={[styles.btnTextPrimary, languageFontStyle]}>{t("authContinueGoogle")}</Text>
                 </View>
               )}
             </Pressable>
 
-            {/* Legal */}
             <View style={styles.legalBox}>
-              <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>
+              <Text style={[styles.legal, isRTL && styles.legalArabic, languageFontStyle]}>
                 {t("authLegalPrefix")}
               </Text>
               <View style={styles.legalLinksRow}>
                 <Pressable hitSlop={8} onPress={() => openLegalUrl("https://wasfa.life/terms-and-conditions")}>
                   <Text style={[styles.legalLink, languageFontStyle]}>{t("authLegalTerms")}</Text>
                 </Pressable>
-                <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>
+                <Text style={[styles.legal, isRTL && styles.legalArabic, languageFontStyle]}>
                   {t("authLegalAnd")}
                 </Text>
                 <Pressable hitSlop={8} onPress={() => openLegalUrl("https://wasfa.life/privacy-policy")}>
                   <Text style={[styles.legalLink, languageFontStyle]}>{t("authLegalPrivacy")}</Text>
                 </Pressable>
-                <Text style={[styles.legal, isArabic && styles.legalArabic, languageFontStyle]}>
-                  {t("authLegalSuffix")}</Text>
+                <Text style={[styles.legal, isRTL && styles.legalArabic, languageFontStyle]}>
+                  {t("authLegalSuffix")}
+                </Text>
               </View>
             </View>
 
@@ -338,174 +305,148 @@ export default function WelcomeAuthScreen() {
           </Animated.View>
         </View>
       </Modal>
-    </Animated.View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    direction: "ltr",
-  },
   safeArea: {
     flex: 1,
-    paddingHorizontal: 22,
-    direction: "ltr",
+    backgroundColor: COLORS.bg,
   },
-  waveTop: {
-    position: "absolute",
-    top: -130,
-    right: -90,
-    width: 320,
-    height: 320,
-    borderRadius: 160,
-    backgroundColor: launchScreenColors.accent,
+  scrollContent: {
+    flexGrow: 1,
+    paddingTop: 32,
+    paddingHorizontal: 24,
+    paddingBottom: 48,
+    gap: 24,
   },
-  waveBottom: {
-    position: "absolute",
-    bottom: -180,
-    left: -110,
-    width: 380,
-    height: 380,
-    borderRadius: 190,
-    backgroundColor: launchScreenColors.accentWarm,
-  },
-  languageSection: {
+
+  // Logo area
+  logoArea: {
+    height: 210,
+    alignItems: "center",
+    justifyContent: "center",
     position: "relative",
-    zIndex: 40,
-    alignItems: "center",
-    marginTop: 6,
-    height: 70,
-    justifyContent: "space-between",
-  },
-  languageLabel: {
-    fontSize: 13,
-    lineHeight: 16,
-    height: 16,
-    color: launchScreenColors.textSecondary,
-    fontWeight: "400",
-    letterSpacing: 0.2,
-    textAlign: "center",
-  },
-  languageToggle: {
-    width: 220,
-    height: 43,
-    flexDirection: "row",
-    direction: "ltr",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: launchScreenColors.divider,
-    backgroundColor: launchScreenColors.surface,
-    padding: 3,
-    alignItems: "center",
-  },
-  languageActiveBackground: {
-    position: "absolute",
-    left: 3,
-    top: 3,
-    width: 105,
-    height: 37,
-    borderRadius: 999,
-    backgroundColor: launchScreenColors.primary,
-  },
-  languageOption: {
-    width: 105,
-    height: 37,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 999,
-  },
-  languageOptionText: {
-    fontSize: 13,
-    fontWeight: "400",
-    color: launchScreenColors.textSecondary,
-    textAlign: "center",
-    textAlignVertical: "center",
-    includeFontPadding: false,
-  },
-  languageOptionTextActive: {
-    color: launchScreenColors.surface,
-  },
-  heroSection: {
-    position: "relative",
-    zIndex: 10,
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    marginBottom: 30,
-  },
-  logoContainer: {
-    position: "absolute",
-    zIndex: 5,
-    top: 120,
-    width: 340,
-    height: 180,
-    alignItems: "center",
-    justifyContent: "center",
   },
   logo: {
-    width: 300,
-    height: 150,
+    width: 250,
+    height: 122,
   },
-  mascotWrapper: {
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  mascot: {
-    width: 220,
-    height: 220,
-  },
-  contentSection: {
+  langPill: {
     position: "absolute",
-    zIndex: 30,
-    left: 22,
-    right: 22,
-    bottom: 100,
+    top: 0,
+    alignSelf: "center",
+    flexDirection: "row",
     alignItems: "center",
+    backgroundColor: COLORS.chipBg,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 999,
+    gap: 7,
+    shadowColor: COLORS.text,
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 3,
+  },
+  langPillPressed: {
+    backgroundColor: launchScreenColors.accentWarm,
+  },
+  langFlag: {
+    fontSize: 17,
+    lineHeight: 21,
+  },
+  langLabel: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: COLORS.text,
+  },
+
+  // Text section
+  textSection: {
+    gap: 12,
   },
   title: {
-    marginTop: 20,
-    fontSize: 33,
-    lineHeight: 41,
-    fontWeight: "400",
-    color: launchScreenColors.primaryDark,
-    textAlign: "center",
+    fontSize: 32,
+    fontWeight: "700",
+    color: COLORS.text,
     letterSpacing: -1,
-  },
-  titleArabic: {
-    lineHeight: 43,
-    letterSpacing: 0,
-  },
-  titleEnglish: {
-    marginTop: 40,
+    lineHeight: 38,
   },
   subtitle: {
-    marginTop: 10,
-    fontSize: 20,
-    lineHeight: 30,
-    color: launchScreenColors.textSecondary,
+    fontSize: 15,
+    color: COLORS.textMuted,
+    lineHeight: 23,
+  },
+
+  // Chips
+  chipsRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  chip: {
+    flex: 1,
+    backgroundColor: COLORS.chipBg,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    alignItems: "center",
+    gap: 8,
+    shadowColor: COLORS.text,
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  chipLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    color: COLORS.primary,
     textAlign: "center",
-    maxWidth: 360,
-    fontWeight: "400",
+    lineHeight: 15,
   },
-  subtitleArabic: {
-    lineHeight: 32,
+
+  // Buttons
+  buttonsSection: {
+    gap: 12,
   },
-  buttonStack: {
-    width: "100%",
-    marginTop: 32,
-  },
-  button: {
-    minHeight: 58,
-    borderRadius: 999,
+  btn: {
+    height: 56,
+    borderRadius: 100,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 1,
-    overflow: "hidden",
   },
-  buttonText: {
-    fontSize: 18,
-    fontWeight: "400",
+  btnPrimary: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  btnPrimaryPressed: {
+    backgroundColor: "#2E5530",
+  },
+  btnOutline: {
+    backgroundColor: "transparent",
+    borderColor: COLORS.ctaOutline,
+  },
+  btnOutlinePressed: {
+    backgroundColor: launchScreenColors.accentWarm,
+  },
+  btnTextPrimary: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.white,
+    letterSpacing: 0.2,
+  },
+  btnTextOutline: {
+    fontSize: 16,
+    fontWeight: "600",
+    color: COLORS.primary,
     letterSpacing: 0.2,
   },
   buttonContent: {
@@ -522,65 +463,76 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  getStartedButton: {
-    backgroundColor: launchScreenColors.accent,
-    borderColor: launchScreenColors.primaryLight,
-    shadowColor: launchScreenColors.primary,
-    shadowOpacity: 0.11,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
+
+  // Sheet shared
+  sheetRoot: {
+    flex: 1,
+    justifyContent: "flex-end",
   },
-  getStartedButtonText: {
-    color: launchScreenColors.primaryDark,
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(28,43,28,0.28)",
   },
-  alreadyAccountButton: {
-    marginTop: 18,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
+  sheetCard: {
+    backgroundColor: COLORS.chipBg,
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 12,
+    paddingBottom: 30,
+    borderTopWidth: 1,
+    borderColor: launchScreenColors.divider,
+  },
+  sheetHandle: {
+    alignSelf: "center",
+    width: 48,
+    height: 5,
     borderRadius: 999,
+    backgroundColor: launchScreenColors.divider,
+    marginBottom: 14,
   },
-  alreadyAccountText: {
-    fontSize: 18,
-    lineHeight: 22,
-    color: launchScreenColors.text,
-    textDecorationLine: "underline",
+  sheetTitle: {
+    fontSize: 24,
+    lineHeight: 30,
+    color: COLORS.text,
+    textAlign: "center",
+    fontWeight: "500",
+  },
+  sheetSubtitle: {
+    marginTop: 4,
+    marginBottom: 18,
+    fontSize: 14,
+    lineHeight: 20,
+    color: COLORS.textMuted,
+    textAlign: "center",
+  },
+  sheetGoogleButton: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.22,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 4,
+  },
+  sheetCancelButton: {
+    marginTop: 12,
+    minHeight: 44,
+    borderRadius: 999,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 1,
+    borderColor: launchScreenColors.divider,
+    backgroundColor: launchScreenColors.bgLight,
+  },
+  sheetCancelText: {
+    fontSize: 15,
+    lineHeight: 20,
+    color: COLORS.textMuted,
     fontWeight: "400",
   },
-  loginButtonText: {
-    color: launchScreenColors.surface,
-  },
-  langRow: {
-    alignItems: "center",
-    paddingTop: 8,
-    zIndex: 10,
-  },
-  langPill: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: launchScreenColors.surface,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 999,
-    gap: 7,
-    shadowColor: launchScreenColors.text,
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 3 },
-    elevation: 3,
-  },
-  langPillPressed: {
-    backgroundColor: launchScreenColors.accentWarm,
-  },
-  langFlag: {
-    fontSize: 17,
-    lineHeight: 21,
-  },
-  langLabel: {
-    fontSize: 14,
-    fontWeight: "500",
-    color: launchScreenColors.text,
-  },
+
+  // Language sheet
   langDivider: {
     height: StyleSheet.hairlineWidth,
     backgroundColor: launchScreenColors.divider,
@@ -603,12 +555,14 @@ const styles = StyleSheet.create({
   langOptionText: {
     flex: 1,
     fontSize: 15,
-    color: launchScreenColors.text,
+    color: COLORS.text,
   },
   langOptionTextActive: {
     fontWeight: "600",
-    color: launchScreenColors.primaryDark,
+    color: COLORS.primary,
   },
+
+  // Legal
   legalBox: {
     alignItems: "center",
     paddingHorizontal: 8,
@@ -618,8 +572,11 @@ const styles = StyleSheet.create({
   legal: {
     fontSize: 12,
     lineHeight: 18,
-    color: launchScreenColors.textSecondary,
+    color: COLORS.textMuted,
     textAlign: "center",
+  },
+  legalArabic: {
+    lineHeight: 18,
   },
   legalLinksRow: {
     flexDirection: "row",
@@ -628,77 +585,9 @@ const styles = StyleSheet.create({
     flexWrap: "wrap",
     gap: 4,
   },
-  legalArabic: {
-    lineHeight: 18,
-  },
   legalLink: {
-    color: launchScreenColors.primaryDark,
+    fontSize: 12,
+    color: COLORS.primary,
     textDecorationLine: "underline",
-  },
-  sheetRoot: {
-    flex: 1,
-    justifyContent: "flex-end",
-  },
-  sheetBackdrop: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(28,43,28,0.28)",
-  },
-  sheetCard: {
-    backgroundColor: launchScreenColors.surface,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 30,
-    borderTopWidth: 1,
-    borderColor: launchScreenColors.divider,
-  },
-  sheetHandle: {
-    alignSelf: "center",
-    width: 48,
-    height: 5,
-    borderRadius: 999,
-    backgroundColor: launchScreenColors.divider,
-    marginBottom: 14,
-  },
-  sheetTitle: {
-    fontSize: 24,
-    lineHeight: 30,
-    color: launchScreenColors.text,
-    textAlign: "center",
-    fontWeight: "500",
-  },
-  sheetSubtitle: {
-    marginTop: 4,
-    marginBottom: 18,
-    fontSize: 14,
-    lineHeight: 20,
-    color: launchScreenColors.textSecondary,
-    textAlign: "center",
-  },
-  sheetGoogleButton: {
-    backgroundColor: launchScreenColors.primaryDark,
-    borderColor: launchScreenColors.primaryDark,
-    shadowColor: launchScreenColors.primary,
-    shadowOpacity: 0.22,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
-  sheetCancelButton: {
-    marginTop: 12,
-    minHeight: 44,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: launchScreenColors.divider,
-    backgroundColor: launchScreenColors.bgLight,
-  },
-  sheetCancelText: {
-    fontSize: 15,
-    lineHeight: 20,
-    color: launchScreenColors.textSecondary,
-    fontWeight: "400",
   },
 });

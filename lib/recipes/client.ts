@@ -25,6 +25,13 @@ export type RecipeDetail = RecipeSummary & {
     quantity?: string;
     unit?: string;
     notes?: string;
+    preparation?: string;
+    size?: string;
+    source?: "caption" | "transcript" | "video_ocr" | "web_research" | "user_edit";
+    confidence?: number;
+    evidence_text?: string;
+    citation_url?: string;
+    needs_review?: boolean;
   }>;
   steps_json: Array<{
     order: number;
@@ -108,6 +115,42 @@ export async function assignRecipeToFolder(
 export async function deleteRecipeById(recipeId: string): Promise<void> {
   const { error } = await supabase.from("recipes").delete().eq("id", recipeId);
   if (error) throw error;
+}
+
+export async function updateRecipeFolder(
+  folderId: string,
+  name: string
+): Promise<RecipeFolder> {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Folder name is required.");
+
+  const { data, error } = await supabase
+    .from("recipe_folders")
+    .update({ name: trimmed })
+    .eq("id", folderId)
+    .select("id,name,created_at")
+    .single();
+
+  if (error || !data) throw error ?? new Error("Failed to update folder.");
+  return data as RecipeFolder;
+}
+
+export async function deleteRecipeFolder(folderId: string): Promise<void> {
+  // 1. Uncategorize recipes first (set folder_id = null)
+  const { error: updateError } = await supabase
+    .from("recipes")
+    .update({ folder_id: null })
+    .eq("folder_id", folderId);
+
+  if (updateError) throw updateError;
+
+  // 2. Delete the folder
+  const { error: deleteError } = await supabase
+    .from("recipe_folders")
+    .delete()
+    .eq("id", folderId);
+
+  if (deleteError) throw deleteError;
 }
 
 export async function getRecipeById(id: string): Promise<RecipeDetail | null> {

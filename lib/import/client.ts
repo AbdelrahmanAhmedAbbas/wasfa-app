@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { randomUUID } from "expo-crypto";
 
 import { supabase } from "@/lib/supabase/client";
+import { hasIngredientsNeedingReview } from "@/lib/import/ingredient-details";
 
 import type {
   ImportCreateInput,
@@ -170,6 +171,9 @@ async function confirmRecipeFallback(
       : null;
   if (!Array.isArray(merged.ingredients) || merged.ingredients.length < 2) {
     throw new Error("Recipe must include at least 2 ingredients.");
+  }
+  if (hasIngredientsNeedingReview(merged.ingredients)) {
+    throw new Error("Every ingredient needs a specific quantity, unit, or size before saving.");
   }
   if (!Array.isArray(merged.steps) || merged.steps.length < 2) {
     throw new Error("Recipe must include at least 2 steps.");

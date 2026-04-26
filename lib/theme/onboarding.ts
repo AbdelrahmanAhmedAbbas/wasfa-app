@@ -43,13 +43,14 @@ export const onboardingImages = {
   mascot: require("../../assets/images/mascot.png"),
   mascotReading: require("../../assets/images/mascot-reading.png"),
   mascotTyping: require("../../assets/images/mascot-typing.png"),
+  demoKabsaSocial: require("../../assets/images/demo-kabsa-social.png"),
 };
 
 export const dietImages: Record<string, number> = {
-  halal: require("../../assets/images/mascot.png"),
-  omnivore: require("../../assets/images/mascot.png"),
-  vegetarian: require("../../assets/images/mascot.png"),
-  vegan: require("../../assets/images/mascot.png"),
-  keto: require("../../assets/images/mascot.png"),
-  pescatarian: require("../../assets/images/mascot.png"),
+  halal: require("../../assets/images/diet-halal.png"),
+  omnivore: require("../../assets/images/diet-omnivore.png"),
+  vegetarian: require("../../assets/images/diet-vegetarian.png"),
+  vegan: require("../../assets/images/diet-vegan.png"),
+  keto: require("../../assets/images/diet-keto.png"),
+  pescatarian: require("../../assets/images/diet-pescatarian.png"),
 };

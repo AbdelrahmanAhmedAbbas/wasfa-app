@@ -1,24 +1,35 @@
 import { supabase } from "@/lib/supabase/client";
 import type { OnboardingAnswers } from "./answers";
+import {
+  buildOnboardingProfilePayload,
+  shouldRetryLegacyOnboardingProfileUpsert,
+} from "./supabase-compat";
 
 export async function saveOnboardingProfile(
   userId: string,
   answers: OnboardingAnswers
 ): Promise<void> {
-  const { error } = await supabase.from("onboarding_profiles").upsert({
-    user_id: userId,
-    diet: answers.diet,
-    allergies: answers.allergies,
-    referral_source: answers.referralSource,
-    invite_code: answers.inviteCode,
-    age_range: answers.ageRange,
-    measurement_system: answers.measurementSystem,
-    nutrition_display: answers.nutritionDisplay,
-  });
+  const { error } = await supabase
+    .from("onboarding_profiles")
+    .upsert(buildOnboardingProfilePayload(userId, answers));
 
-  if (error) {
-    throw error;
+  if (!error) {
+    return;
   }
+
+  if (shouldRetryLegacyOnboardingProfileUpsert(error)) {
+    const { error: legacyError } = await supabase
+      .from("onboarding_profiles")
+      .upsert(buildOnboardingProfilePayload(userId, answers, false));
+
+    if (!legacyError) {
+      return;
+    }
+
+    throw legacyError;
+  }
+
+  throw error;
 }
 
 export async function getOnboardingProfile(
@@ -42,6 +53,8 @@ export async function getOnboardingProfile(
   }
 
   return {
+    goal: data.goal,
+    painPoints: data.pain_points || [],
     diet: data.diet || [],
     allergies: data.allergies || [],
     referralSource: data.referral_source,

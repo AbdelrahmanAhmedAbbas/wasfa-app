@@ -93,12 +93,42 @@ function sanitizeIngredient(input: unknown): IngredientItem | null {
   if (!input || typeof input !== "object") return null;
   const item = input as Partial<IngredientItem>;
   if (!item.name || typeof item.name !== "string") return null;
-  return {
+  const source = isIngredientSource(item.source) ? item.source : undefined;
+  const confidence =
+    typeof item.confidence === "number" && Number.isFinite(item.confidence)
+      ? Math.min(1, Math.max(0, item.confidence))
+      : undefined;
+  const result: IngredientItem = {
     name: item.name.trim(),
-    quantity: optionalString(item.quantity),
-    unit: optionalString(item.unit),
-    notes: optionalString(item.notes),
   };
+  const quantity = optionalString(item.quantity);
+  const unit = optionalString(item.unit);
+  const notes = optionalString(item.notes);
+  const preparation = optionalString(item.preparation);
+  const size = optionalString(item.size);
+  const evidenceText = optionalString(item.evidence_text);
+  const citationUrl = optionalString(item.citation_url);
+  if (quantity) result.quantity = quantity;
+  if (unit) result.unit = unit;
+  if (notes) result.notes = notes;
+  if (preparation) result.preparation = preparation;
+  if (size) result.size = size;
+  if (source) result.source = source;
+  if (typeof confidence === "number") result.confidence = confidence;
+  if (evidenceText) result.evidence_text = evidenceText;
+  if (citationUrl) result.citation_url = citationUrl;
+  if (typeof item.needs_review === "boolean") result.needs_review = item.needs_review;
+  return result;
+}
+
+function isIngredientSource(value: unknown): value is NonNullable<IngredientItem["source"]> {
+  return (
+    value === "caption" ||
+    value === "transcript" ||
+    value === "video_ocr" ||
+    value === "web_research" ||
+    value === "user_edit"
+  );
 }
 
 function sanitizeStep(input: unknown, index: number): StepItem | null {

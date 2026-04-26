@@ -4,12 +4,16 @@ const ONBOARDING_ANSWERS_KEY = "@meal_planner_onboarding_answers";
 
 export type DietOption = "halal" | "omnivore" | "vegetarian" | "vegan" | "keto" | "pescatarian";
 export type AllergyOption = "shellfish" | "seafood" | "dairy" | "peanut" | "tree_nut" | "egg" | "gluten" | "wheat";
+export type GoalOption = "save_social" | "meal_plan" | "eat_better" | "save_money" | "family";
+export type PainPoint = "lost_recipes" | "daily_decisions" | "grocery_waste" | "picky_family" | "no_time";
 export type ReferralSource = "invite_code" | "instagram" | "facebook" | "app_store" | "tiktok" | "friend";
 export type AgeRange = "<18" | "18-25" | "25-30" | "30-35" | "35-40" | "40+";
 export type MeasurementSystem = "imperial" | "metric";
 export type NutritionDisplay = "show" | "hide";
 
 export type OnboardingAnswers = {
+  goal: GoalOption | null;
+  painPoints: PainPoint[];
   diet: DietOption[];
   allergies: AllergyOption[];
   referralSource: ReferralSource | null;
@@ -20,6 +24,8 @@ export type OnboardingAnswers = {
 };
 
 export const EMPTY_ONBOARDING_ANSWERS: OnboardingAnswers = {
+  goal: null,
+  painPoints: [],
   diet: [],
   allergies: [],
   referralSource: null,

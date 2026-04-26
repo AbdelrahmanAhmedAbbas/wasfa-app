@@ -1,126 +1,362 @@
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import * as ExpoFont from 'expo-font';
-import { Tabs } from 'expo-router';
-import React from 'react';
-import { View } from 'react-native';
+import Feather from "@expo/vector-icons/Feather";
+import * as ExpoFont from "expo-font";
+import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
+import { Tabs } from "expo-router";
+import React, { useEffect, useMemo } from "react";
+import { Pressable, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Animated, {
+  Easing,
+  ReduceMotion,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withTiming,
+} from "react-native-reanimated";
 
-import { useClientOnlyValue } from '@/components/useClientOnlyValue';
-import { useColorScheme } from '@/components/useColorScheme';
-import { useLanguage } from '@/lib/i18n/LanguageProvider';
-import { brandFontFamily } from '@/lib/theme/fonts';
-import { onboardingColors } from '@/lib/theme/onboarding';
+import { useClientOnlyValue } from "@/components/useClientOnlyValue";
+import { getTabBarVisualIndex, getTabBarVisualRouteNames } from "@/lib/home/home-screen";
+import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { brandFontFamily } from "@/lib/theme/fonts";
+import { onboardingColors } from "@/lib/theme/onboarding";
 
-// You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
-function TabBarIcon(props: {
-  name: React.ComponentProps<typeof FontAwesome>['name'];
-  color: string;
-}) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
+const TAB_CONFIG = {
+  index: { labelKey: "tabHome", fallbackLabel: "Home", icon: "home" },
+  planner: { labelKey: "tabPlanner", fallbackLabel: "Planner", icon: "calendar" },
+  grocery: { labelKey: "tabGrocery", fallbackLabel: "Grocery", icon: "shopping-cart" },
+  profile: { labelKey: "tabProfile", fallbackLabel: "Profile", icon: "user" },
+} as const;
+
+type TabRouteName = keyof typeof TAB_CONFIG;
+
+const ACTIVE_EASING = Easing.bezier(0.22, 1, 0.36, 1);
+
+type TabBarItemProps = {
+  label: string;
+  icon: React.ComponentProps<typeof Feather>["name"];
+  isFocused: boolean;
+  onPress: () => void;
+  onLongPress: () => void;
+  accessibilityLabel?: string;
+  testID?: string;
+  tabLabelFontFamily?: string;
+};
+
+function TabBarItem({
+  label,
+  icon,
+  isFocused,
+  onPress,
+  onLongPress,
+  accessibilityLabel,
+  testID,
+  tabLabelFontFamily,
+}: TabBarItemProps) {
+  const reduceMotionEnabled = useReducedMotion();
+  const selectedProgress = useSharedValue(isFocused ? 1 : 0);
+  const pressedScale = useSharedValue(1);
+
+  useEffect(() => {
+    selectedProgress.value = withTiming(isFocused ? 1 : 0, {
+      duration: reduceMotionEnabled ? 0 : 220,
+      easing: ACTIVE_EASING,
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [isFocused, reduceMotionEnabled, selectedProgress]);
+
+  const contentStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: pressedScale.value * (1 + selectedProgress.value * 0.02) }],
+  }));
+
+  const iconStyle = useAnimatedStyle(() => ({
+    opacity: 0.72 + selectedProgress.value * 0.28,
+    transform: [{ translateY: selectedProgress.value * -1 }],
+  }));
+
+  const labelStyle = useAnimatedStyle(() => ({
+    opacity: 0.8 + selectedProgress.value * 0.2,
+  }));
+
+  const handlePressIn = () => {
+    pressedScale.value = withTiming(reduceMotionEnabled ? 1 : 0.96, {
+      duration: reduceMotionEnabled ? 0 : 90,
+      reduceMotion: ReduceMotion.System,
+    });
+  };
+
+  const handlePressOut = () => {
+    pressedScale.value = withTiming(1, {
+      duration: reduceMotionEnabled ? 0 : 140,
+      easing: ACTIVE_EASING,
+      reduceMotion: ReduceMotion.System,
+    });
+  };
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={isFocused ? { selected: true } : {}}
+      accessibilityLabel={accessibilityLabel}
+      testID={testID}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      onPressIn={handlePressIn}
+      onPressOut={handlePressOut}
+      style={styles.pressable}
+    >
+      <Animated.View style={[styles.tabButton, contentStyle]}>
+        <Animated.View style={iconStyle}>
+          <Feather name={icon} size={18} color={isFocused ? "#FFFFFF" : "#9A938C"} />
+        </Animated.View>
+        <Animated.Text
+          style={[
+            styles.tabLabel,
+            isFocused && styles.tabLabelActive,
+            tabLabelFontFamily ? { fontFamily: tabLabelFontFamily } : undefined,
+            labelStyle,
+          ]}
+        >
+          {label}
+        </Animated.Text>
+      </Animated.View>
+    </Pressable>
+  );
+}
+
+function CustomTabBar({
+  state,
+  descriptors,
+  navigation,
+  tabLabelFontFamily,
+}: BottomTabBarProps & { tabLabelFontFamily?: string }) {
+  const { isRTL } = useLanguage();
+  const insets = useSafeAreaInsets();
+  const reduceMotionEnabled = useReducedMotion();
+  const visibleRoutes = state.routes.filter((route) => route.name in TAB_CONFIG) as Array<
+    typeof state.routes[number] & { name: TabRouteName }
+  >;
+  const visibleRouteNames = useMemo(
+    () => visibleRoutes.map((route) => route.name),
+    [visibleRoutes]
+  );
+  const visualRoutes = useMemo(
+    () => getTabBarVisualRouteNames(visibleRoutes, isRTL),
+    [isRTL, visibleRoutes]
+  );
+  const activeIndex = useSharedValue(state.index);
+  const rowWidth = useSharedValue(0);
+  const activeRouteName = state.routes[state.index]?.name as TabRouteName | undefined;
+
+  useEffect(() => {
+    const visualIndex =
+      activeRouteName == null
+        ? 0
+        : Math.max(getTabBarVisualIndex(activeRouteName, visibleRouteNames, isRTL), 0);
+
+    activeIndex.value = withTiming(visualIndex, {
+      duration: reduceMotionEnabled ? 0 : 260,
+      easing: ACTIVE_EASING,
+      reduceMotion: ReduceMotion.System,
+    });
+  }, [activeIndex, activeRouteName, isRTL, reduceMotionEnabled, visibleRouteNames]);
+
+  const activePillStyle = useAnimatedStyle(() => {
+    const slotWidth = visibleRoutes.length > 0 ? rowWidth.value / visibleRoutes.length : 0;
+    const pillWidth = Math.max(slotWidth - 18, 82);
+
+    return {
+      opacity: slotWidth > 0 ? 1 : 0,
+      width: pillWidth,
+      transform: [
+        {
+          translateX: slotWidth > 0 ? activeIndex.value * slotWidth + (slotWidth - pillWidth) / 2 : 0,
+        },
+      ],
+    };
+  });
+
+  return (
+    <View pointerEvents="box-none" style={styles.outerFrame}>
+      <View
+        style={[
+          styles.dock,
+          {
+            bottom: Math.max(insets.bottom - 4, 8),
+          },
+        ]}
+      >
+        <View
+          style={styles.dockRow}
+          onLayout={(event) => {
+            rowWidth.value = event.nativeEvent.layout.width;
+          }}
+        >
+          <Animated.View pointerEvents="none" style={[styles.activePill, activePillStyle]} />
+          {visualRoutes.map((route) => {
+            const config = TAB_CONFIG[route.name];
+            const descriptor = descriptors[route.key];
+            const isFocused = activeRouteName === route.name;
+            const label =
+              typeof descriptor.options.title === "string"
+                ? descriptor.options.title
+                : config.fallbackLabel;
+
+            const onPress = () => {
+              const event = navigation.emit({
+                type: "tabPress",
+                target: route.key,
+                canPreventDefault: true,
+              });
+
+              if (!isFocused && !event.defaultPrevented) {
+                navigation.navigate(route.name, route.params);
+              }
+            };
+
+            const onLongPress = () => {
+              navigation.emit({
+                type: "tabLongPress",
+                target: route.key,
+              });
+            };
+
+            return (
+              <TabBarItem
+                key={route.key}
+                label={label}
+                icon={config.icon}
+                isFocused={isFocused}
+                onPress={onPress}
+                onLongPress={onLongPress}
+                accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
+                testID={descriptor.options.tabBarButtonTestID}
+                tabLabelFontFamily={tabLabelFontFamily}
+              />
+            );
+          })}
+        </View>
+      </View>
+    </View>
+  );
 }
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
   const { t, language } = useLanguage();
+  const tabLabelFontFamily =
+    language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
+      ? brandFontFamily.arabic
+      : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
+        ? brandFontFamily.english
+        : undefined;
 
   return (
     <Tabs
+      tabBar={(props) => (
+        <CustomTabBar
+          {...props}
+          tabLabelFontFamily={tabLabelFontFamily}
+        />
+      )}
       screenOptions={{
-        tabBarActiveTintColor: onboardingColors.primary,
-        tabBarInactiveTintColor: onboardingColors.textMuted,
-        tabBarStyle: {
-          backgroundColor: onboardingColors.card,
-          borderTopColor: onboardingColors.border,
-          borderTopWidth: 1,
-          height: 80,
-          paddingBottom: 24,
-          paddingTop: 8,
-        },
-        tabBarLabelStyle: {
-          fontSize: 10,
-          fontWeight: "700",
-          fontFamily:
-            language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
-              ? brandFontFamily.arabic
-              : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
-                ? brandFontFamily.english
-                : undefined,
-        },
-        // Disable the static render of the header on web
-        // to prevent a hydration error in React Navigation v6.
         headerShown: useClientOnlyValue(false, true),
-      }}>
+        animation: "fade",
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: t('tabHome') || "Recipes",
-          tabBarIcon: ({ color }) => <TabBarIcon name="bookmark" color={color} />,
-          headerShown: false, // We'll build a custom header in the screen
+          title: t(TAB_CONFIG.index.labelKey) || TAB_CONFIG.index.fallbackLabel,
+          headerShown: false,
+        }}
+      />
+      <Tabs.Screen
+        name="planner"
+        options={{
+          title: t(TAB_CONFIG.planner.labelKey) || TAB_CONFIG.planner.fallbackLabel,
         }}
       />
       <Tabs.Screen
         name="grocery"
         options={{
-          title: t('tabGrocery') || "Groceries",
-          tabBarIcon: ({ color }) => <TabBarIcon name="shopping-bag" color={color} />,
-        }}
-      />
-
-      {/* Fake Tab for Import Plus Button */}
-      <Tabs.Screen
-        name="import-action"
-        options={{
-          title: "",
-          // Custom plus button in the middle
-          tabBarIcon: () => (
-            <View style={{
-              width: 56,
-              height: 56,
-              borderRadius: 28,
-              backgroundColor: "#ff8c00", // Orange from the image
-              alignItems: "center",
-              justifyContent: "center",
-              marginBottom: 10,
-              shadowColor: "#000",
-              shadowOffset: { width: 0, height: 4 },
-              shadowOpacity: 0.2,
-              shadowRadius: 5,
-              elevation: 5,
-            }}>
-              <FontAwesome name="plus" size={24} color="#fff" />
-            </View>
-          ),
-        }}
-        listeners={({ navigation }) => ({
-          tabPress: (e) => {
-            // Prevent default action
-            e.preventDefault();
-            // Open modal
-            navigation.navigate('modal');
-          },
-        })}
-      />
-
-      <Tabs.Screen
-        name="planner"
-        options={{
-          title: t('tabPlanner') || "Planner",
-          tabBarIcon: ({ color }) => <TabBarIcon name="calendar-check-o" color={color} />,
+          title: t(TAB_CONFIG.grocery.labelKey) || TAB_CONFIG.grocery.fallbackLabel,
         }}
       />
       <Tabs.Screen
         name="profile"
         options={{
-          title: t('tabProfile') || "Discover",
-          tabBarIcon: ({ color }) => <TabBarIcon name="th-large" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="meals"
-        options={{
-          // Hide from tab bar since we are removing it/merging to index
-          href: null,
+          title: t(TAB_CONFIG.profile.labelKey) || TAB_CONFIG.profile.fallbackLabel,
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  outerFrame: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  dock: {
+    position: "absolute",
+    left: 14,
+    right: 14,
+    direction: "ltr",
+    height: 74,
+    borderRadius: 22,
+    borderWidth: 1,
+    borderColor: "#D7E3F5",
+    backgroundColor: "#FFFFFF",
+    shadowColor: "#87A7D2",
+    shadowOpacity: 0.16,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    justifyContent: "center",
+  },
+  dockRow: {
+    flex: 1,
+    flexDirection: "row",
+    direction: "ltr",
+    alignItems: "center",
+    position: "relative",
+  },
+  pressable: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 1,
+  },
+  tabButton: {
+    minWidth: 68,
+    height: 56,
+    borderRadius: 8,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 4,
+  },
+  activePill: {
+    position: "absolute",
+    left: 0,
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: onboardingColors.primary,
+    shadowColor: onboardingColors.primaryDark,
+    shadowOpacity: 0.14,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 4,
+  },
+  tabLabel: {
+    fontSize: 11,
+    lineHeight: 12,
+    fontWeight: "600",
+    color: "#9A938C",
+    textAlign: "center",
+    includeFontPadding: false,
+  },
+  tabLabelActive: {
+    color: "#FFFFFF",
+    fontWeight: "700",
+  },
+});

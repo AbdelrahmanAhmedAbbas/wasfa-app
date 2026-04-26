@@ -1,598 +1,978 @@
 import { LocalizedText as Text } from "@/components/LocalizedText";
-import FontAwesome from '@expo/vector-icons/FontAwesome';
+import {
+  SocialImportDrawers,
+  type ImportPlatform,
+} from "@/components/import/SocialImportDrawers";
+import { ScreenTransition } from "@/components/navigation/ScreenTransition";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { router } from "expo-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   Image,
-  Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   TextInput,
-  UIManager,
-  View
+  View,
+  type ImageSourcePropType,
 } from "react-native";
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@/lib/auth/AuthProvider";
+import {
+  getHomeRecipeCards,
+  getHomeRecipeListParams,
+  getHomeScrollContentStyle,
+  getHomeScrollProps,
+  getHomeScreenCopy,
+  getHomeScreenLayout,
+} from "@/lib/home/home-screen";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import {
+  assignRecipeToFolder,
   createRecipeFolder,
+  deleteRecipeFolder,
   listRecipeFolders,
   listRecipes,
+  updateRecipeFolder,
   type RecipeFolder,
-  type RecipeSummary
+  type RecipeSummary,
 } from "@/lib/recipes/client";
 import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
+import { FolderNameDrawer } from "@/components/folders/FolderNameDrawer";
+import { FolderContextMenu } from "@/components/folders/FolderContextMenu";
+import { AddToFolderSheet } from "@/components/recipes/AddToFolderSheet";
 
-export default function RecipesHomeScreen() {
-  const { isRTL, t } = useLanguage();
+function getDisplayName(fullName?: string | null, email?: string | null) {
+  if (fullName?.trim()) {
+    return fullName.trim().split(/\s+/)[0];
+  }
+
+  if (email?.trim()) {
+    return email.split("@")[0];
+  }
+
+  return "";
+}
+
+function wrapLtrInlineText(value: string) {
+  return /[A-Za-z0-9]/.test(value) ? `\u2066${value}\u2069` : value;
+}
+
+export default function HomeScreen() {
   const insets = useSafeAreaInsets();
+  const { user } = useAuth();
+  const { t, isRTL } = useLanguage();
+  const bottomContentPadding = Math.max(insets.bottom + 176, 176);
+  const addButtonOffset = Math.max(insets.bottom + 96, 96);
 
   const [recipes, setRecipes] = useState<RecipeSummary[]>([]);
+  const [allRecipes, setAllRecipes] = useState<RecipeSummary[]>([]);
   const [folders, setFolders] = useState<RecipeFolder[]>([]);
-
-  // null = Folders View. string = Recipes inside a specific folder
-  const [selectedFolderId, setSelectedFolderId] = useState<string | "all" | "uncategorized" | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
-
-  const [newFolderName, setNewFolderName] = useState("");
-  const [creatingFolder, setCreatingFolder] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [refreshingHome, setRefreshingHome] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (Platform.OS === "android" && UIManager.setLayoutAnimationEnabledExperimental) {
-      UIManager.setLayoutAnimationEnabledExperimental(true);
-    }
-  }, []);
+  const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [folderDrawerVisible, setFolderDrawerVisible] = useState(false);
+  const [folderToEdit, setFolderToEdit] = useState<RecipeFolder | null>(null);
+  const [contextMenuFolder, setContextMenuFolder] = useState<RecipeFolder | null>(null);
+  const [addToFolderRecipe, setAddToFolderRecipe] = useState<RecipeSummary | null>(null);
+  const [importDrawerState, setImportDrawerState] = useState<"closed" | "platforms" | "guide">("closed");
+  const [selectedImportPlatform, setSelectedImportPlatform] = useState<ImportPlatform | null>(null);
 
-  const load = useCallback(async (silent = false) => {
-    if (silent) setRefreshing(true);
-    if (!silent) setLoading(true);
+  const loadHomeData = useCallback(async (options?: { showSpinner?: boolean; showRefresh?: boolean }) => {
+    const showSpinner = options?.showSpinner ?? false;
+    const showRefresh = options?.showRefresh ?? false;
+
+    if (showSpinner) setLoading(true);
+    if (showRefresh) setRefreshingHome(true);
+
     try {
-      const folderFilter =
-        selectedFolderId === "all" || selectedFolderId === null
-          ? undefined
-          : selectedFolderId === "uncategorized"
-            ? null
-            : selectedFolderId;
-      const [data, foldersData] = await Promise.all([
-        listRecipes({ folderId: folderFilter }),
-        listRecipeFolders(),
+      const selectedRecipeParams = getHomeRecipeListParams(selectedFolderId);
+      const folderPromise = listRecipeFolders();
+      const allRecipesPromise = listRecipes();
+      const selectedRecipesPromise = selectedRecipeParams
+        ? listRecipes(selectedRecipeParams)
+        : allRecipesPromise;
+      const [foldersData, allRecipesData, selectedRecipesData] = await Promise.all([
+        folderPromise,
+        allRecipesPromise,
+        selectedRecipesPromise,
       ]);
-      setRecipes(data);
+
       setFolders(foldersData);
+      setAllRecipes(allRecipesData);
+      setRecipes(selectedRecipesData);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load recipes.");
+      setError(e instanceof Error ? e.message : t("homeLoadFoldersError"));
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (showSpinner) setLoading(false);
+      if (showRefresh) setRefreshingHome(false);
     }
-  }, [selectedFolderId]);
+  }, [selectedFolderId, t]);
 
   useEffect(() => {
-    void load(false);
-  }, [load]);
+    void loadHomeData({ showSpinner: true });
+  }, [loadHomeData]);
 
-  const align = isRTL ? "right" : "left";
+  const handleRefreshHome = useCallback(() => {
+    void loadHomeData({ showRefresh: true });
+  }, [loadHomeData]);
 
-  const handleCreateFolder = async () => {
-    const name = newFolderName.trim();
-    if (!name) return;
-    try {
-      setCreatingFolder(true);
+  const displayName = getDisplayName(
+    typeof user?.user_metadata?.full_name === "string" ? user.user_metadata.full_name : null,
+    user?.email ?? null
+  ) || t("homeGuestChef");
+  const displayNameLabel = useMemo(() => wrapLtrInlineText(displayName), [displayName]);
+  const homeLayout = getHomeScreenLayout(isRTL);
+  const homeScrollProps = useMemo(() => getHomeScrollProps(), []);
+  const homeScrollContentStyle = useMemo(
+    () => getHomeScrollContentStyle(bottomContentPadding),
+    [bottomContentPadding]
+  );
+
+  const filteredRecipes = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return recipes;
+    return recipes.filter((recipe) => recipe.title.toLowerCase().includes(query));
+  }, [recipes, searchQuery]);
+
+  const recipeCards = useMemo(
+    () =>
+      getHomeRecipeCards<ImageSourcePropType>({
+        recipes: filteredRecipes,
+        minuteLabel: t("homeMinuteShort"),
+        fallbackImage: onboardingImages.demoKabsaSocial,
+      }),
+    [filteredRecipes, t]
+  );
+
+  const homeCopy = useMemo(
+    () =>
+      getHomeScreenCopy({
+        displayName,
+        folderCount: folders.length,
+        importedRecipeCount: allRecipes.length,
+        recipeCount: filteredRecipes.length,
+        selectedFolderName: selectedFolderId
+          ? folders.find((folder) => folder.id === selectedFolderId)?.name ?? null
+          : null,
+        translate: t,
+      }),
+    [allRecipes.length, displayName, filteredRecipes.length, folders, selectedFolderId, t]
+  );
+
+  const getFolderRecipeCount = useCallback(
+    (folderId: string | null) =>
+      folderId === null
+        ? allRecipes.length
+        : allRecipes.filter((recipe) => recipe.folder_id === folderId).length,
+    [allRecipes]
+  );
+
+  const handleSaveFolder = async (name: string) => {
+    if (folderToEdit) {
+      const updated = await updateRecipeFolder(folderToEdit.id, name);
+      setFolders((curr) => curr.map((f) => (f.id === updated.id ? updated : f)));
+    } else {
       const folder = await createRecipeFolder(name);
-      setFolders((prev) => [...prev, folder]);
-      setNewFolderName("");
-      await load(true);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create folder.");
-    } finally {
-      setCreatingFolder(false);
+      setFolders((current) => [...current, folder]);
     }
   };
 
-  const currentFolderName = selectedFolderId === "all"
-    ? t("allRecipes")
-    : selectedFolderId === "uncategorized"
-      ? t("uncategorized")
-      : folders.find(f => f.id === selectedFolderId)?.name || t("foldersTitle");
+  const handleDeleteFolder = (folder: RecipeFolder) => {
+    Alert.alert(
+      t("homeDeleteFolderTitle"),
+      t("homeDeleteFolderMessage").replace("{name}", folder.name),
+      [
+        { text: t("cancel"), style: "cancel" },
+        {
+          text: t("delete"),
+          style: "destructive",
+          onPress: async () => {
+            try {
+              await deleteRecipeFolder(folder.id);
+              setFolders((curr) => curr.filter((f) => f.id !== folder.id));
+              setAllRecipes((curr) =>
+                curr.map((recipe) =>
+                  recipe.folder_id === folder.id ? { ...recipe, folder_id: null } : recipe
+                )
+              );
+              if (selectedFolderId === folder.id) {
+                setSelectedFolderId(null);
+              }
+              if (selectedFolderId === null) {
+                // Refresh recipes to show the newly uncategorized ones
+                const recipesData = await listRecipes();
+                setRecipes(recipesData);
+                setAllRecipes(recipesData);
+              }
+            } catch (e) {
+              Alert.alert(t("homeSomethingWentWrong"), t("homeDeleteFolderError"));
+            }
+          },
+        },
+      ]
+    );
+  };
 
-  // Filter recipes based on search
-  const filteredRecipes = recipes.filter(r =>
-    r.title.toLowerCase().includes(searchQuery.toLowerCase())
+  const handleAssignRecipe = async (recipeId: string, targetFolderId: string | null) => {
+    await assignRecipeToFolder(recipeId, targetFolderId);
+    setAllRecipes((curr) =>
+      curr.map((recipe) => (recipe.id === recipeId ? { ...recipe, folder_id: targetFolderId } : recipe))
+    );
+    if (selectedFolderId !== null && targetFolderId !== selectedFolderId) {
+      setRecipes((curr) => curr.filter((r) => r.id !== recipeId));
+    } else {
+      setRecipes((curr) =>
+        curr.map((recipe) => (recipe.id === recipeId ? { ...recipe, folder_id: targetFolderId } : recipe))
+      );
+    }
+  };
+
+  const handleOpenImportDrawers = () => {
+    setSelectedImportPlatform(null);
+    setImportDrawerState("platforms");
+  };
+
+  const handleCloseImportDrawers = () => {
+    setSelectedImportPlatform(null);
+    setImportDrawerState("closed");
+  };
+
+  const handleSelectImportPlatform = (platform: ImportPlatform) => {
+    setSelectedImportPlatform(platform);
+    setImportDrawerState("guide");
+  };
+
+  const handleCloseImportGuide = () => {
+    setSelectedImportPlatform(null);
+    setImportDrawerState("platforms");
+  };
+
+  const renderImportedFolderCard = () => (
+    <Pressable
+      key="imported-recipes"
+      style={[
+        styles.importedFolderCard,
+        selectedFolderId === null && styles.folderCardSelected,
+      ]}
+      onPress={() => setSelectedFolderId(null)}
+    >
+      <View style={styles.importedFolderContent}>
+        <View style={styles.folderIconWrap}>
+          <FontAwesome name="folder" size={18} color={onboardingColors.primaryDark} />
+        </View>
+        <Text
+          numberOfLines={2}
+          style={[
+            styles.importedFolderTitle,
+            {
+              alignSelf: "stretch",
+              textAlign: homeLayout.textAlign,
+              writingDirection: homeLayout.writingDirection,
+            },
+          ]}
+        >
+          {homeCopy.importedFolderTitle}
+        </Text>
+        <Text
+          style={[
+            styles.importedFolderMeta,
+            { alignSelf: "stretch", textAlign: homeLayout.textAlign },
+          ]}
+        >
+          {homeCopy.importedFolderMeta}
+        </Text>
+      </View>
+    </Pressable>
   );
 
-  return (
-    <View style={[styles.container, { paddingTop: Math.max(insets.top, 20) }]}>
-      {/* Top Header Row */}
-      <View style={styles.headerRow}>
-        <Pressable
-          style={styles.headerButtonLeft}
-          onPress={() => setSelectedFolderId(null)}
+  const renderFolderCards = () =>
+    folders.map((folder) => (
+      <Pressable
+        key={folder.id}
+        style={[
+          styles.folderCard,
+          selectedFolderId === folder.id && styles.folderCardSelected,
+        ]}
+        onPress={() => setSelectedFolderId(folder.id)}
+        onLongPress={() => setContextMenuFolder(folder)}
+      >
+        <View style={styles.folderIconWrap}>
+          <FontAwesome name="folder" size={18} color={onboardingColors.primaryDark} />
+        </View>
+        <Text
+          numberOfLines={2}
+          style={[
+            styles.folderCardTitle,
+            {
+              alignSelf: "stretch",
+              textAlign: homeLayout.textAlign,
+              writingDirection: homeLayout.writingDirection,
+            },
+          ]}
         >
-          <FontAwesome name="folder" size={16} color={onboardingColors.text} style={{ marginRight: 6 }} />
-          <Text style={styles.headerButtonText}>{t("foldersTitle")}</Text>
-        </Pressable>
+          {folder.name}
+        </Text>
+        <Text style={[styles.folderCardMeta, { textAlign: homeLayout.textAlign }]}>
+          {t("homeRecipeCount").replace("{count}", String(getFolderRecipeCount(folder.id)))}
+        </Text>
+      </Pressable>
+    ));
 
-        <View style={styles.headerRight}>
-          <Pressable style={styles.iconButton}>
-            <FontAwesome name="magic" size={18} color={onboardingColors.text} />
-          </Pressable>
-          <Pressable style={styles.iconButton}>
-            <FontAwesome name="cog" size={18} color={onboardingColors.text} />
-          </Pressable>
-        </View>
+  const renderNewFolderCard = () => (
+    <Pressable
+      key="new-folder"
+      style={styles.newFolderCard}
+      onPress={() => {
+        setFolderToEdit(null);
+        setFolderDrawerVisible(true);
+      }}
+    >
+      <View style={styles.newFolderIcon}>
+        <FontAwesome name="plus-circle" size={22} color="#617263" />
       </View>
+      <Text style={[styles.newFolderText, { textAlign: "center" }]}>
+        {homeCopy.newFolderText}
+      </Text>
+    </Pressable>
+  );
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        {/* Title and Sort */}
-        <View style={styles.titleRow}>
-          <Text style={styles.pageTitle}>
-            {selectedFolderId === null ? t("foldersTitle") : currentFolderName}
+  const renderFolderTiles = () =>
+    isRTL ? (
+      <>
+        {renderNewFolderCard()}
+        {renderFolderCards()}
+        {renderImportedFolderCard()}
+      </>
+    ) : (
+      <>
+        {renderImportedFolderCard()}
+        {renderFolderCards()}
+        {renderNewFolderCard()}
+      </>
+    );
+
+  return (
+    <ScreenTransition>
+      <View style={[styles.screen, { paddingTop: Math.max(insets.top, 16) }]}>
+        <ScrollView
+          style={styles.homeScroll}
+          contentContainerStyle={[styles.content, homeScrollContentStyle]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          alwaysBounceVertical={homeScrollProps.alwaysBounceVertical}
+          bounces={homeScrollProps.bounces}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshingHome}
+              onRefresh={handleRefreshHome}
+              tintColor={onboardingColors.primary}
+              colors={[onboardingColors.primary]}
+            />
+          }
+        >
+        <View style={styles.libraryIntro}>
+          <Text
+            style={[
+              styles.libraryGreeting,
+              {
+                textAlign: homeLayout.textAlign,
+                writingDirection: homeLayout.writingDirection,
+              },
+            ]}
+          >
+            {`${t("homeGreeting")} ${displayNameLabel}!`}
           </Text>
-          {selectedFolderId !== null && (
-            <Pressable style={styles.sortButton}>
-              <Text style={styles.sortText}>{t("sortLabel")}</Text>
-              <FontAwesome name="filter" size={16} color={onboardingColors.text} />
-            </Pressable>
-          )}
+          <Text
+            style={[
+              styles.librarySubtitle,
+              {
+                textAlign: homeLayout.textAlign,
+                writingDirection: homeLayout.writingDirection,
+              },
+            ]}
+          >
+            {homeCopy.menuSubtitle}
+          </Text>
         </View>
 
-        {/* Search Bar */}
-        <View style={[styles.searchContainer, isRTL && styles.searchContainerRTL]}>
-          <FontAwesome name="search" size={16} color={onboardingColors.primary} style={[styles.searchIcon, isRTL && styles.searchIconRTL]} />
+        <View style={[styles.searchRow]}>
+          <FontAwesome name="search" size={16} color="#7E8576" />
           <TextInput
+            placeholder={homeCopy.searchPlaceholder}
+            placeholderTextColor="#9AA094"
             value={searchQuery}
             onChangeText={setSearchQuery}
-            placeholder={selectedFolderId === null ? t("searchFoldersPlaceholder") : t("searchRecipesPlaceholder")}
-            placeholderTextColor={onboardingColors.textPlaceholder}
-            style={[styles.searchInput, isRTL && styles.searchInputRTL]}
+            style={[
+              styles.searchInput,
+              {
+                textAlign: homeLayout.textAlign,
+                writingDirection: homeLayout.writingDirection,
+              },
+            ]}
           />
         </View>
 
-        {/* Banner */}
-        <View style={styles.banner}>
-          <Text style={styles.bannerText}>{t("unlockRecipesBanner")}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Text style={styles.bannerSubtext}>9 {t("importsRemaining")}</Text>
-            <View style={styles.bannerBadge}>
-              <FontAwesome name="moon-o" size={14} color="#556b2f" style={{ marginRight: 4 }} />
-              <Text style={styles.badgeText}>∞</Text>
-            </View>
-          </View>
-        </View>
-
-        {/* How-to tips */}
-        <View style={styles.tipsRow}>
-          <Text style={styles.tipsText}>{t("howToTips")}</Text>
-          <View style={styles.tutorialDropdown}>
-            <FontAwesome name="info-circle" size={16} color={onboardingColors.text} style={{ marginRight: 6 }} />
-            <Text style={styles.tutorialText}>{t("tutorial")}</Text>
-            <FontAwesome name="chevron-down" size={12} color={onboardingColors.text} style={{ marginLeft: 6 }} />
-          </View>
+        <View style={[styles.filtersRow]}>
+          <Pressable style={[styles.filterChip, styles.filterChipActive]}>
+            <FontAwesome name="clock-o" size={12} color={onboardingColors.primaryDark} />
+            <Text style={styles.filterChipText}>{homeCopy.filterTime}</Text>
+            <FontAwesome name="chevron-down" size={10} color={onboardingColors.text} />
+          </Pressable>
+          <Pressable style={[styles.filterChipWide]}>
+            <FontAwesome name="cutlery" size={12} color="#7E8576" />
+            <Text style={styles.filterChipText}>{homeCopy.filterMainIngredient}</Text>
+            <FontAwesome name="chevron-down" size={10} color={onboardingColors.text} />
+          </Pressable>
         </View>
 
         {error ? (
-          <Pressable style={styles.errorCard} onPress={() => void load(true)}>
-            <Text style={[styles.errorBody, { textAlign: align }]}>{error}</Text>
-            <Text style={[styles.retryText, { textAlign: align }]}>{t("tapToRetry")}</Text>
+          <Pressable style={styles.errorCard} onPress={() => void loadHomeData({ showSpinner: true })}>
+            <Text style={[styles.errorTitle, { textAlign: homeLayout.textAlign }]}>
+              {homeCopy.errorTitle}
+            </Text>
+            <Text
+              style={[
+                styles.errorBody,
+                {
+                  textAlign: homeLayout.textAlign,
+                  writingDirection: homeLayout.writingDirection,
+                },
+              ]}
+            >
+              {error}
+            </Text>
+            <Text style={[styles.errorHint, { textAlign: homeLayout.textAlign }]}>
+              {homeCopy.errorHint}
+            </Text>
           </Pressable>
         ) : null}
 
-        {loading ? (
-          <View style={styles.centerContainer}>
-            <ActivityIndicator color={onboardingColors.primary} />
-          </View>
-        ) : selectedFolderId === null ? (
-          /* Render Folders Grid */
-          <View style={styles.folderGrid}>
-            <View style={styles.folderRow}>
-              <Pressable style={styles.folderCard} onPress={() => setSelectedFolderId("all")}>
-                <FontAwesome name="folder-open" size={32} color={onboardingColors.primary} style={styles.folderCardIcon} />
-                <View>
-                  <Text style={styles.folderCardTitle}>{t("allRecipes")}</Text>
-                </View>
-              </Pressable>
-              <Pressable style={styles.folderCard} onPress={() => setSelectedFolderId("uncategorized")}>
-                <FontAwesome name="folder" size={32} color={onboardingColors.textMuted} style={styles.folderCardIcon} />
-                <View>
-                  <Text style={styles.folderCardTitle}>{t("uncategorized")}</Text>
-                </View>
-              </Pressable>
-            </View>
+        <View style={[styles.sectionHeader]}>
+          <Text style={[styles.sectionTitle, { textAlign: homeLayout.textAlign }]}>
+            {homeCopy.sectionTitle}
+          </Text>
+          <Pressable style={styles.viewAllButton} onPress={() => setSelectedFolderId(null)}>
+            {loading ? <ActivityIndicator size="small" color={onboardingColors.primary} /> : null}
+            <Text style={styles.viewAllText}>{homeCopy.sectionAction}</Text>
+          </Pressable>
+        </View>
 
-            {folders.map(folder => (
-              <Pressable key={folder.id} style={styles.folderCardFull} onPress={() => setSelectedFolderId(folder.id)}>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                  <FontAwesome name="folder" size={24} color={onboardingColors.primary} style={{ marginRight: 12 }} />
-                  <Text style={styles.folderCardTitle}>{folder.name}</Text>
-                </View>
-                <FontAwesome name="chevron-right" size={14} color={onboardingColors.textMuted} />
-              </Pressable>
-            ))}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.folderScroller}
+        >
+          {renderFolderTiles()}
+        </ScrollView>
 
-            {/* Create Folder Row */}
-            <View style={styles.createFolderContainer}>
-              <TextInput
-                value={newFolderName}
-                onChangeText={setNewFolderName}
-                placeholder={t("newFolderPlaceholder")}
-                placeholderTextColor={onboardingColors.textPlaceholder}
-                style={styles.newFolderInput}
-              />
-              <Pressable
-                style={[styles.createFolderButton, creatingFolder && { opacity: 0.6 }]}
-                onPress={() => void handleCreateFolder()}
-                disabled={creatingFolder}
-              >
-                <Text style={styles.createFolderBtnText}>{t("create")}</Text>
-              </Pressable>
-            </View>
+        <View style={styles.recipeSectionHeader}>
+          <View style={styles.recipeSectionHeaderText}>
+            <Text
+              style={[
+                styles.sectionTitle,
+                {
+                  alignSelf: "stretch",
+                  textAlign: homeLayout.textAlign,
+                  writingDirection: homeLayout.writingDirection,
+                },
+              ]}
+            >
+              {homeCopy.recipeSectionTitle}
+            </Text>
+            <Text style={styles.sectionMeta}>{homeCopy.recipeSectionMeta}</Text>
           </View>
-        ) : (
-          /* Render Recipes List/Grid */
-          <View style={styles.recipesGrid}>
-            {filteredRecipes.length === 0 ? (
-              <View style={styles.emptyCard}>
-                <Text style={[styles.emptyTitle, { textAlign: align }]}>{t("noRecipesFound")}</Text>
-                <Text style={[styles.emptyBody, { textAlign: align }]}>
-                  {t("noRecipesHint")}
-                </Text>
-              </View>
-            ) : (
-              filteredRecipes.map((recipe) => (
+        </View>
+
+          {recipeCards.length > 0 ? (
+            <View style={styles.recipeList}>
+              {recipeCards.map((recipe) => (
                 <Pressable
                   key={recipe.id}
-                  style={styles.recipeCardImage}
-                  onPress={() => router.push({ pathname: "/recipe/[id]", params: { id: recipe.id } })}
+                  style={styles.recipeCard}
+                  onPress={() => {
+                    router.push({ pathname: "/recipe/[id]", params: { id: recipe.recipeId } });
+                  }}
                 >
-                  <Image
-                    source={recipe.source_thumbnail_url ? { uri: recipe.source_thumbnail_url } : onboardingImages.mascotTyping}
-                    style={styles.recipeImage}
-                    resizeMode="cover"
-                  />
-                  <View style={styles.recipeOverlay}>
-                    <View>
-                      <Text style={styles.recipeTitleText} numberOfLines={2}>
-                        {recipe.title}
-                      </Text>
+                  <View style={styles.recipeImageWrap}>
+                    <Image source={recipe.image} style={styles.recipeImage} />
+                    <View style={styles.recipeTimePill}>
+                      <FontAwesome name="clock-o" size={10} color="#FFFFFF" />
+                      <Text style={styles.recipeTimeText}>{recipe.minutes}</Text>
                     </View>
-                    <View style={styles.recipeMetaPill}>
-                      <FontAwesome name="users" size={12} color="#000" style={{ marginRight: 4 }} />
-                      <Text style={styles.recipePillText}>
-                        {typeof recipe.servings === "number" ? recipe.servings : "-"}
+                    <Pressable
+                      style={[styles.recipeMenu, homeLayout.recipeMenuPosition]}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        const fullRecipe = recipes.find((r) => r.id === recipe.recipeId);
+                        if (fullRecipe) setAddToFolderRecipe(fullRecipe);
+                      }}
+                    >
+                      <FontAwesome name="ellipsis-h" size={14} color="#2C332A" />
+                    </Pressable>
+                  </View>
+                  <View style={styles.recipeCardBody}>
+                    <Text
+                      numberOfLines={1}
+                      style={[
+                        styles.recipeTitle,
+                        {
+                          alignSelf: "stretch",
+                          textAlign: homeLayout.textAlign,
+                          writingDirection: homeLayout.writingDirection,
+                        },
+                      ]}
+                    >
+                      {recipe.title}
+                    </Text>
+                    {recipes.find((item) => item.id === recipe.recipeId)?.description ? (
+                      <Text
+                        numberOfLines={2}
+                        style={[
+                          styles.recipeDescription,
+                          {
+                            textAlign: homeLayout.textAlign,
+                            writingDirection: homeLayout.writingDirection,
+                          },
+                        ]}
+                      >
+                        {recipes.find((item) => item.id === recipe.recipeId)?.description}
                       </Text>
-                      <FontAwesome name="clock-o" size={12} color="#000" style={{ marginLeft: 10, marginRight: 4 }} />
-                      <Text style={styles.recipePillText}>
-                        {recipe.prep_minutes || recipe.cook_minutes ? `${(recipe.prep_minutes || 0) + (recipe.cook_minutes || 0)} min` : "-"}
-                      </Text>
-                      <FontAwesome name="shopping-cart" size={12} color="#000" style={{ marginLeft: 10 }} />
-                    </View>
+                    ) : null}
                   </View>
                 </Pressable>
-              ))
-            )}
-          </View>
-        )}
-      </ScrollView>
-    </View>
+              ))}
+            </View>
+          ) : (
+            <Pressable
+              style={styles.emptyRecipesCard}
+              onPress={handleOpenImportDrawers}
+            >
+              <View style={styles.emptyRecipesIcon}>
+                <FontAwesome name="plus" size={16} color="#FFFFFF" />
+              </View>
+              <View style={styles.emptyRecipesCopy}>
+                <Text style={[styles.emptyRecipesTitle, { textAlign: homeLayout.textAlign }]}>
+                  {t("noRecipesFound")}
+                </Text>
+                <Text
+                  style={[
+                    styles.emptyRecipesBody,
+                    {
+                      textAlign: homeLayout.textAlign,
+                      writingDirection: homeLayout.writingDirection,
+                    },
+                  ]}
+                >
+                  {t("homeEmptyRecipesBody")}
+                </Text>
+              </View>
+            </Pressable>
+          )}
+        </ScrollView>
+        
+        <FolderNameDrawer
+          visible={folderDrawerVisible}
+          initialName={folderToEdit?.name || ""}
+          title={folderToEdit ? t("homeRenameFolder") : t("homeNewFolder")}
+          onClose={() => setFolderDrawerVisible(false)}
+          onConfirm={handleSaveFolder}
+        />
+
+        <FolderContextMenu
+          folder={contextMenuFolder}
+          visible={!!contextMenuFolder}
+          onClose={() => setContextMenuFolder(null)}
+          onRename={(folder) => {
+            setFolderToEdit(folder);
+            setFolderDrawerVisible(true);
+          }}
+          onDelete={handleDeleteFolder}
+        />
+
+        <AddToFolderSheet
+          recipe={addToFolderRecipe}
+          folders={folders}
+          visible={!!addToFolderRecipe}
+          onClose={() => setAddToFolderRecipe(null)}
+          onAssign={handleAssignRecipe}
+        />
+
+        <SocialImportDrawers
+          isPrimaryVisible={importDrawerState !== "closed"}
+          selectedPlatform={importDrawerState === "guide" ? selectedImportPlatform : null}
+          t={t}
+          onClosePrimary={handleCloseImportDrawers}
+          onSelectPlatform={handleSelectImportPlatform}
+          onCloseGuide={handleCloseImportGuide}
+        />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={homeCopy.primaryCta}
+          style={[
+            styles.floatingAddButton,
+            isRTL ? { left: 18, bottom: addButtonOffset } : { right: 18, bottom: addButtonOffset },
+          ]}
+          onPress={handleOpenImportDrawers}
+        >
+          <FontAwesome name="plus" size={24} color="#FFFFFF" />
+        </Pressable>
+      </View>
+    </ScreenTransition>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    backgroundColor: "#fffaf6", // lighter background from the image
+    backgroundColor: "#FAF9F4",
   },
-  headerRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  headerButtonLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: "#e0dcd6",
-  },
-  headerButtonText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: onboardingColors.text,
-  },
-  headerRight: {
-    flexDirection: "row",
-    gap: 8,
-  },
-  iconButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: "#fff",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#e0dcd6",
+  homeScroll: {
+    flex: 1,
   },
   content: {
-    padding: 16,
-    paddingBottom: 100, // Make room for floating tab bar
-    gap: 16,
+    paddingHorizontal: 22,
+    gap: 14,
   },
-  titleRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 10,
+  libraryIntro: {
+    paddingTop: 8,
+    gap: 3,
   },
-  pageTitle: {
-    fontSize: 32,
-    fontWeight: "800",
+  libraryGreeting: {
+    fontSize: 26,
+    lineHeight: 31,
+    fontWeight: "900",
     color: onboardingColors.primaryDark,
   },
-  sortButton: {
-    flexDirection: "row",
-    alignItems: "center",
+  librarySubtitle: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    color: "#6E7A68",
   },
-  sortText: {
-    fontSize: 16,
-    fontWeight: "600",
-    color: onboardingColors.text,
-    marginRight: 6,
-  },
-  searchContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
+  searchRow: {
+    height: 50,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#e0dcd6",
-    borderRadius: 16,
+    borderColor: "#E6E5DD",
+    backgroundColor: "#FFFFFF",
     paddingHorizontal: 14,
-    height: 52,
-  },
-  searchIcon: {
-    marginRight: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    shadowColor: "#1F281D",
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.04,
+    shadowRadius: 8,
+    elevation: 1,
   },
   searchInput: {
     flex: 1,
     fontSize: 16,
-    color: onboardingColors.text,
+    color: "#23271F",
   },
-  searchContainerRTL: {
-    flexDirection: "row-reverse",
+  filtersRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
-  searchIconRTL: {
-    marginRight: 0,
-    marginLeft: 10,
-  },
-  searchInputRTL: {
-    textAlign: "right",
-    writingDirection: "rtl",
-  },
-  banner: {
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e0dcd6",
+  filterChip: {
+    height: 32,
     borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+    borderWidth: 1,
+    borderColor: "#E5E4DA",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
+    gap: 7,
   },
-  bannerText: {
-    fontSize: 11,
-    fontWeight: "700",
-    color: "#4a6b4a", // dark green text
+  filterChipActive: {
+    borderColor: "#DCEFD2",
+    backgroundColor: "#E6F5DF",
   },
-  bannerSubtext: {
-    fontSize: 9,
-    color: "#ff6b6b", // slightly red
-    marginRight: 10,
-  },
-  bannerBadge: {
+  filterChipWide: {
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E5E4DA",
+    backgroundColor: "#FFFFFF",
+    paddingHorizontal: 12,
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#e8f0e1",
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 12,
+    gap: 7,
   },
-  badgeText: {
+  filterChipText: {
     fontSize: 12,
     fontWeight: "700",
-    color: "#556b2f",
+    color: "#2A2D24",
   },
-  tipsRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingHorizontal: 4,
-  },
-  tipsText: {
-    fontSize: 15,
-    fontWeight: "600",
-    color: onboardingColors.text,
-  },
-  tutorialDropdown: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e0dcd6",
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+  errorCard: {
+    backgroundColor: "#FFF1EE",
     borderRadius: 16,
+    padding: 14,
+    gap: 4,
   },
-  tutorialText: {
+  errorTitle: {
     fontSize: 14,
-    fontWeight: "600",
-    color: onboardingColors.text,
+    fontWeight: "800",
+    color: "#5D2E25",
   },
-  centerContainer: {
-    padding: 20,
-    alignItems: "center",
-    justifyContent: "center",
+  errorBody: {
+    fontSize: 13,
+    color: "#7F4B3F",
   },
-  folderGrid: {
-    gap: 12,
+  errorHint: {
+    fontSize: 12,
+    color: "#996051",
   },
-  folderRow: {
+  sectionHeader: {
     flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 6,
+  },
+  sectionTitle: {
+    fontSize: 17,
+    fontWeight: "800",
+    color: onboardingColors.primaryDark,
+  },
+  viewAllButton: {
+    minHeight: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+  },
+  viewAllText: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: "#729B68",
+  },
+  folderScroller: {
     gap: 12,
+    paddingRight: 18,
+    paddingLeft: 2,
+  },
+  importedFolderCard: {
+    width: 122,
+    height: 122,
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
+    borderWidth: 1,
+    borderColor: "#E6EBDD",
+    padding: 14,
+    justifyContent: "space-between",
+  },
+  importedFolderContent: {
+    flex: 1,
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  importedFolderTitle: {
+    color: "#46513F",
+    fontSize: 14,
+    lineHeight: 17,
+    fontWeight: "800",
+    width: "100%",
+  },
+  importedFolderMeta: {
+    color: "#5D8B55",
+    fontSize: 11,
+    fontWeight: "800",
+    width: "100%",
   },
   folderCard: {
-    flex: 1,
-    backgroundColor: "#fff",
+    width: 122,
+    height: 122,
+    borderRadius: 14,
+    backgroundColor: "#FFFFFF",
     borderWidth: 1,
-    borderColor: "#e0dcd6",
-    borderRadius: 20,
-    padding: 20,
+    borderColor: "#E6EBDD",
+    padding: 14,
     justifyContent: "space-between",
-    height: 120,
   },
-  folderCardFull: {
-    flexDirection: "row",
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e0dcd6",
-    borderRadius: 16,
-    padding: 16,
+  folderCardSelected: {
+    borderColor: onboardingColors.primary,
+  },
+  folderIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: "#E6F0DB",
     alignItems: "center",
-    justifyContent: "space-between",
-  },
-  folderCardIcon: {
-    marginBottom: 8,
+    justifyContent: "center",
   },
   folderCardTitle: {
-    fontSize: 16,
+    fontSize: 14,
+    lineHeight: 18,
     fontWeight: "700",
-    color: onboardingColors.text,
+    color: "#2C3128",
+    width: "100%",
   },
-  folderCardCount: {
-    fontSize: 13,
-    color: onboardingColors.textMuted,
-    marginTop: 4,
+  folderCardMeta: {
+    fontSize: 11,
+    fontWeight: "800",
+    color: "#5D8B55",
+    width: "100%",
   },
-  createFolderContainer: {
-    flexDirection: "row",
-    marginTop: 10,
-    gap: 10,
-  },
-  newFolderInput: {
-    flex: 1,
-    height: 48,
-    borderRadius: 12,
+  newFolderCard: {
+    width: 122,
+    height: 122,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#e0dcd6",
-    backgroundColor: "#fff",
-    paddingHorizontal: 14,
-    fontSize: 15,
-  },
-  createFolderButton: {
-    justifyContent: "center",
+    borderStyle: "dashed",
+    borderColor: "#DBE6CF",
+    backgroundColor: "#FAFCF4",
     alignItems: "center",
-    backgroundColor: onboardingColors.primary,
-    borderRadius: 12,
-    paddingHorizontal: 20,
-    height: 48,
+    justifyContent: "center",
+    gap: 12,
   },
-  createFolderBtnText: {
-    color: "#fff",
+  newFolderIcon: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: "#E9F1E2",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  newFolderText: {
+    fontSize: 13,
     fontWeight: "700",
-    fontSize: 15,
+    color: "#4F6E42",
+    width: "100%",
   },
-  recipesGrid: {
-    gap: 16,
+  recipeSectionHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginTop: 2,
   },
-  recipeCardImage: {
-    height: 260,
-    borderRadius: 24,
+  recipeSectionHeaderText: {
+    flexDirection: "row",
+    alignItems: "baseline",
+    gap: 4,
+  },
+  sectionMeta: {
+    fontSize: 13,
+    color: "#8A9084",
+  },
+  recipeList: {
+    gap: 14,
+  },
+  recipeCard: {
+    width: "100%",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E6EBDD",
+    backgroundColor: "#FFFFFF",
     overflow: "hidden",
+  },
+  recipeImageWrap: {
+    width: "100%",
+    height: 144,
+    overflow: "hidden",
+    backgroundColor: "#D9DED3",
   },
   recipeImage: {
     width: "100%",
     height: "100%",
+  },
+  recipeMenu: {
     position: "absolute",
+    top: 10,
+    right: 10,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  recipeOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.3)",
-    padding: 16,
-    justifyContent: "space-between",
-  },
-  recipeTitleText: {
-    color: "#fff",
-    fontSize: 24,
-    fontWeight: "800",
-    textShadowColor: "rgba(0,0,0,0.5)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  recipeMetaPill: {
-    backgroundColor: "rgba(255,255,255,0.9)",
-    alignSelf: "center",
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 30,
+  recipeTimePill: {
+    position: "absolute",
+    left: 10,
+    bottom: 10,
+    minHeight: 24,
+    borderRadius: 12,
+    paddingHorizontal: 9,
     flexDirection: "row",
     alignItems: "center",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
+    gap: 4,
+    backgroundColor: "rgba(34, 40, 32, 0.78)",
   },
-  recipePillText: {
-    fontSize: 14,
-    fontWeight: "700",
-    color: "#000",
+  recipeTimeText: {
+    color: "#FFFFFF",
+    fontSize: 11,
+    fontWeight: "800",
   },
-  emptyCard: {
-    backgroundColor: "#fff",
-    borderRadius: 20,
-    padding: 24,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#e0dcd6",
-    marginTop: 10,
-  },
-  emptyTitle: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: onboardingColors.primaryDark,
-  },
-  emptyBody: {
-    fontSize: 14,
-    color: onboardingColors.textMuted,
-    marginTop: 6,
-    textAlign: "center",
-  },
-  errorCard: {
-    backgroundColor: "#fff6f6",
-    borderWidth: 1,
-    borderColor: "#e2bdbd",
+  recipeCardBody: {
     padding: 12,
-    borderRadius: 12,
+    gap: 4,
   },
-  errorBody: {
-    color: "#8a2626",
-    fontSize: 14,
+  recipeTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#20241D",
+    width: "100%",
   },
-  retryText: {
-    color: "#8a2626",
-    fontWeight: "700",
-    fontSize: 14,
-    marginTop: 4,
+  recipeDescription: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: "#7B816F",
+  },
+  emptyRecipesCard: {
+    minHeight: 96,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E6E5DD",
+    backgroundColor: "#FFFFFF",
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  emptyRecipesIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: onboardingColors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  emptyRecipesCopy: {
+    flex: 1,
+    gap: 4,
+  },
+  emptyRecipesTitle: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: "#20241D",
+  },
+  emptyRecipesBody: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: "#7B816F",
+  },
+  floatingAddButton: {
+    position: "absolute",
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: onboardingColors.primary,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: onboardingColors.primaryDark,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.24,
+    shadowRadius: 14,
+    elevation: 8,
   },
 });

@@ -28,8 +28,10 @@ supabase functions deploy import-confirm
 
 ## Notes
 - The migration creates RLS-protected tables for jobs, drafts, recipes, and events.
-- AI orchestration uses Vercel AI SDK (`ai`) with OpenRouter for both transcription (OpenAI model via OpenRouter) and Gemini parsing/localization/nutrition.
+- AI orchestration uses Vercel AI SDK (`ai`) with OpenRouter for transcription, Gemini parsing/localization/nutrition, video OCR, and cited web-search fallback for missing ingredient measurements.
 - Pipeline is URL-share first and attempts metadata/OpenGraph resolution, then Apify actor fallback, then transcription and schema-constrained parsing.
+- Video OCR runs only for downloaded video media under 20 MB and stores concise OCR text as an encrypted `ocr_text` raw artifact.
+- Ingredient drafts with name-only items are left in `awaiting_user_review` instead of being auto-confirmed.
 - Temporary media/audio/transcript artifacts are handled in-memory and cleared immediately after extraction attempt.
 - Draft payload always stores localized recipe text for both `en` and `ar` (falls back to source text if translation fails).
 - Android text sharing is bridged into `mealplanner://import?...` in native `MainActivity`.

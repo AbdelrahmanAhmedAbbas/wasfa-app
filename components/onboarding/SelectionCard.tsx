@@ -2,6 +2,7 @@ import { Pressable, StyleSheet, View } from "react-native";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 
+import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { onboardingColors } from "@/lib/theme/onboarding";
 
 type Props = {
@@ -15,20 +16,25 @@ type Props = {
 };
 
 export function SelectionCard({ label, selected, onPress, icon, emoji, subtitle, children }: Props) {
+  const { isRTL } = useLanguage();
+  const flexDirection = isRTL ? "row-reverse" : "row";
+  // In React Native with direction: 'rtl', 'left' acts as the logical start (i.e. physical right).
+  const textAlign = "left";
+
   return (
     <Pressable
-      style={[styles.card, selected && styles.cardSelected]}
+      style={[styles.card, selected && styles.cardSelected, { flexDirection }]}
       onPress={onPress}
     >
-      <View style={styles.content}>
+      <View style={[styles.content, { flexDirection }]}>
         {emoji ? (
-          <Text style={styles.emoji}>{emoji}</Text>
+          <Text style={[styles.emoji, { marginHorizontal: 12 }]}>{emoji}</Text>
         ) : icon ? (
-          <Text style={styles.icon}>{icon}</Text>
+          <Text style={[styles.icon, { marginHorizontal: 12 }]}>{icon}</Text>
         ) : null}
         <View style={styles.textContainer}>
-          <Text style={[styles.label, selected && styles.labelSelected]}>{label}</Text>
-          {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+          <Text style={[styles.label, selected && styles.labelSelected, { textAlign }]}>{label}</Text>
+          {subtitle && <Text style={[styles.subtitle, { textAlign }]}>{subtitle}</Text>}
           {children}
         </View>
       </View>
@@ -65,11 +71,11 @@ const styles = StyleSheet.create({
   },
   icon: {
     fontSize: 24,
-    marginRight: 12,
+    marginEnd: 12,
   },
   emoji: {
     fontSize: 24,
-    marginRight: 12,
+    marginEnd: 12,
   },
   textContainer: {
     flex: 1,

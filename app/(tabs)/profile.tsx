@@ -2,6 +2,7 @@ import { router } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { LocalizedText as Text } from "@/components/LocalizedText";
+import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
@@ -79,109 +80,111 @@ export default function ProfileScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Profile Header */}
-      <View style={styles.header}>
-        {user ? (
-          <>
-            {/* User Avatar */}
-            {user.user_metadata?.avatar_url ? (
-              <Image source={{ uri: user.user_metadata.avatar_url }} style={styles.avatar} />
-            ) : (
+    <ScreenTransition>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {/* Profile Header */}
+        <View style={styles.header}>
+          {user ? (
+            <>
+              {/* User Avatar */}
+              {user.user_metadata?.avatar_url ? (
+                <Image source={{ uri: user.user_metadata.avatar_url }} style={styles.avatar} />
+              ) : (
+                <View style={[styles.avatar, styles.avatarPlaceholder]}>
+                  <Text style={styles.avatarText}>
+                    {user.user_metadata?.full_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || "U"}
+                  </Text>
+                </View>
+              )}
+
+              {/* User Info */}
+              <Text style={[styles.userName, { textAlign }]}>{user.user_metadata?.full_name || "User"}</Text>
+              <Text style={[styles.userEmail, { textAlign }]}>{user.email}</Text>
+              <Text style={[styles.userLabel, { textAlign }]}>{t("profileUserInfo")}</Text>
+            </>
+          ) : (
+            <>
+              {/* Guest Mode */}
               <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                <Text style={styles.avatarText}>
-                  {user.user_metadata?.full_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || "U"}
-                </Text>
+                <Image source={onboardingImages.logo} style={styles.guestLogo} resizeMode="cover" />
               </View>
-            )}
+              <Text style={[styles.userName, { textAlign }]}>{t("profileGuestMode")}</Text>
+              <Text style={[styles.userEmail, { textAlign }]}>{t("profileSignIn")}</Text>
+            </>
+          )}
+        </View>
 
-            {/* User Info */}
-            <Text style={[styles.userName, { textAlign }]}>{user.user_metadata?.full_name || "User"}</Text>
-            <Text style={[styles.userEmail, { textAlign }]}>{user.email}</Text>
-            <Text style={[styles.userLabel, { textAlign }]}>{t("profileUserInfo")}</Text>
-          </>
-        ) : (
-          <>
-            {/* Guest Mode */}
-            <View style={[styles.avatar, styles.avatarPlaceholder]}>
-              <Image source={onboardingImages.logo} style={styles.guestLogo} resizeMode="cover" />
-            </View>
-            <Text style={[styles.userName, { textAlign }]}>{t("profileGuestMode")}</Text>
-            <Text style={[styles.userEmail, { textAlign }]}>{t("profileSignIn")}</Text>
-          </>
-        )}
-      </View>
-
-      {/* Actions */}
-      <View style={styles.actions}>
-        {user ? (
-          <>
+        {/* Actions */}
+        <View style={styles.actions}>
+          {user ? (
+            <>
+              <Pressable
+                style={[styles.button, styles.signOutButton]}
+                onPress={handleSignOut}
+                disabled={isLoading}
+              >
+                <Text style={styles.buttonText}>{t("profileSignOut")}</Text>
+              </Pressable>
+              <Pressable
+                style={[styles.button, styles.deleteButton]}
+                onPress={handleDeleteAccount}
+                disabled={isLoading}
+              >
+                {isLoading ? (
+                  <ActivityIndicator color="#d64545" />
+                ) : (
+                  <Text style={styles.deleteButtonText}>{t("profileDeleteAccount" as any)}</Text>
+                )}
+              </Pressable>
+            </>
+          ) : (
             <Pressable
-              style={[styles.button, styles.signOutButton]}
-              onPress={handleSignOut}
-              disabled={isLoading}
-            >
-              <Text style={styles.buttonText}>{t("profileSignOut")}</Text>
-            </Pressable>
-            <Pressable
-              style={[styles.button, styles.deleteButton]}
-              onPress={handleDeleteAccount}
+              style={[styles.button, styles.signInButton]}
+              onPress={handleSignIn}
               disabled={isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator color="#d64545" />
+                <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.deleteButtonText}>{t("profileDeleteAccount" as any)}</Text>
+                <>
+                  <Text style={styles.googleIcon}>G</Text>
+                  <Text style={styles.buttonText}>{t("authSignInGoogle")}</Text>
+                </>
               )}
             </Pressable>
-          </>
-        ) : (
-          <Pressable
-            style={[styles.button, styles.signInButton]}
-            onPress={handleSignIn}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <ActivityIndicator color="#fff" />
-            ) : (
-              <>
-                <Text style={styles.googleIcon}>G</Text>
-                <Text style={styles.buttonText}>{t("authSignInGoogle")}</Text>
-              </>
-            )}
-          </Pressable>
-        )}
-      </View>
-
-      {/* Language Settings */}
-      <View style={styles.languageSection}>
-        <Text style={[styles.sectionTitle, { textAlign }]}>{t("language")}</Text>
-        <View style={styles.pillSelector}>
-          <Pressable
-            style={[styles.pill, language === "en" && styles.pillActive]}
-            onPress={() => setLanguage("en")}
-          >
-            <Text style={[styles.pillText, language === "en" && styles.pillTextActive]}>
-              {t("english")}
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.pill, language === "ar" && styles.pillActive]}
-            onPress={() => setLanguage("ar")}
-          >
-            <Text style={[styles.pillText, language === "ar" && styles.pillTextActive]}>
-              {t("arabic")}
-            </Text>
-          </Pressable>
+          )}
         </View>
-      </View>
 
-      {/* Placeholder for future settings */}
-      <View style={styles.placeholder}>
-        <Text style={[styles.placeholderText, { textAlign }]}>{t("screenComingSoonTitle")}</Text>
-        <Text style={[styles.placeholderSubtext, { textAlign }]}>{t("screenComingSoonBody")}</Text>
-      </View>
-    </ScrollView>
+        {/* Language Settings */}
+        <View style={styles.languageSection}>
+          <Text style={[styles.sectionTitle, { textAlign }]}>{t("language")}</Text>
+          <View style={styles.pillSelector}>
+            <Pressable
+              style={[styles.pill, language === "en" && styles.pillActive]}
+              onPress={() => setLanguage("en")}
+            >
+              <Text style={[styles.pillText, language === "en" && styles.pillTextActive]}>
+                {t("english")}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.pill, language === "ar" && styles.pillActive]}
+              onPress={() => setLanguage("ar")}
+            >
+              <Text style={[styles.pillText, language === "ar" && styles.pillTextActive]}>
+                {t("arabic")}
+              </Text>
+            </Pressable>
+          </View>
+        </View>
+
+        {/* Placeholder for future settings */}
+        <View style={styles.placeholder}>
+          <Text style={[styles.placeholderText, { textAlign }]}>{t("screenComingSoonTitle")}</Text>
+          <Text style={[styles.placeholderSubtext, { textAlign }]}>{t("screenComingSoonBody")}</Text>
+        </View>
+      </ScrollView>
+    </ScreenTransition>
   );
 }
 
