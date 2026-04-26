@@ -7,9 +7,11 @@ import { brandFontFamily } from "@/lib/theme/fonts";
 export function LocalizedText({ style, ...props }: TextProps) {
   const { language } = useLanguage();
   const fontStyle: TextStyle | null =
-    language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
-      ? { fontFamily: brandFontFamily.arabic, fontWeight: "600" as const }
-      : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
+    language === "ar"
+      ? ExpoFont.isLoaded(brandFontFamily.arabic)
+        ? { fontFamily: brandFontFamily.arabic }
+        : null
+      : ExpoFont.isLoaded(brandFontFamily.english)
         ? { fontFamily: brandFontFamily.english }
         : null;
 

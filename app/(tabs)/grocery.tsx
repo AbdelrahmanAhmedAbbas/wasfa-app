@@ -1,4 +1,5 @@
 import { LocalizedText as Text } from "@/components/LocalizedText";
+import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -178,69 +179,73 @@ export default function GroceryScreen() {
 
   if (loading) {
     return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator color={onboardingColors.primary} />
-        <Text style={styles.loadingText}>{t("loadingShoppingList")}</Text>
-      </View>
+      <ScreenTransition>
+        <View style={styles.centerContainer}>
+          <ActivityIndicator color={onboardingColors.primary} />
+          <Text style={styles.loadingText}>{t("loadingShoppingList")}</Text>
+        </View>
+      </ScreenTransition>
     );
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.heroCard}>
-        <View style={styles.heroRow}>
-          <View style={styles.heroText}>
-            <Text style={[styles.title, { textAlign: align }]}>{t("shoppingListTitle")}</Text>
-            <Text style={[styles.subtitle, { textAlign: align }]}>
-              {t("shoppingListSubtitle")}
+    <ScreenTransition>
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        <View style={styles.heroCard}>
+          <View style={styles.heroRow}>
+            <View style={styles.heroText}>
+              <Text style={[styles.title, { textAlign: align }]}>{t("shoppingListTitle")}</Text>
+              <Text style={[styles.subtitle, { textAlign: align }]}>
+                {t("shoppingListSubtitle")}
+              </Text>
+            </View>
+            <Image source={onboardingImages.mascot} style={styles.heroImage} resizeMode="contain" />
+          </View>
+        </View>
+
+        {error ? (
+          <Text style={[styles.errorText, { textAlign: align }]}>{error}</Text>
+        ) : null}
+
+        {groupedItems.length === 0 ? (
+          <View style={styles.emptyCard}>
+            <Image source={onboardingImages.mascotReading} style={styles.emptyImage} resizeMode="contain" />
+            <Text style={[styles.emptyTitle, { textAlign: align }]}>{t("noItemsYet")}</Text>
+            <Text style={[styles.emptyBody, { textAlign: align }]}>
+              {t("noItemsHint")}
             </Text>
           </View>
-          <Image source={onboardingImages.mascot} style={styles.heroImage} resizeMode="contain" />
-        </View>
-      </View>
-
-      {error ? (
-        <Text style={[styles.errorText, { textAlign: align }]}>{error}</Text>
-      ) : null}
-
-      {groupedItems.length === 0 ? (
-        <View style={styles.emptyCard}>
-          <Image source={onboardingImages.mascotReading} style={styles.emptyImage} resizeMode="contain" />
-          <Text style={[styles.emptyTitle, { textAlign: align }]}>{t("noItemsYet")}</Text>
-          <Text style={[styles.emptyBody, { textAlign: align }]}>
-            {t("noItemsHint")}
-          </Text>
-        </View>
-      ) : (
-        groupedItems.map((group) => {
-          const sources = Array.from(group.recipes).join(", ");
-          return (
-            <View key={group.id} style={styles.itemCard}>
-              <Pressable style={styles.checkbox} onPress={() => void toggleGroup(group)}>
-                <Text style={styles.checkboxText}>{group.checked ? "✓" : ""}</Text>
-              </Pressable>
-              <View style={styles.itemBody}>
-                <Text
-                  style={[
-                    styles.itemText,
-                    group.checked && styles.itemTextChecked,
-                    { textAlign: align },
-                  ]}
-                >
-                  {group.ingredient_text}
-                </Text>
-                <Text style={[styles.itemMeta, { textAlign: align }]} numberOfLines={1}>
-                  {sources}
-                </Text>
+        ) : (
+          groupedItems.map((group) => {
+            const sources = Array.from(group.recipes).join(", ");
+            return (
+              <View key={group.id} style={styles.itemCard}>
+                <Pressable style={styles.checkbox} onPress={() => void toggleGroup(group)}>
+                  <Text style={styles.checkboxText}>{group.checked ? "✓" : ""}</Text>
+                </Pressable>
+                <View style={styles.itemBody}>
+                  <Text
+                    style={[
+                      styles.itemText,
+                      group.checked && styles.itemTextChecked,
+                      { textAlign: align },
+                    ]}
+                  >
+                    {group.ingredient_text}
+                  </Text>
+                  <Text style={[styles.itemMeta, { textAlign: align }]} numberOfLines={1}>
+                    {sources}
+                  </Text>
+                </View>
+                <Pressable style={styles.removeButton} onPress={() => void removeGroup(group)}>
+                  <Text style={styles.removeText}>×</Text>
+                </Pressable>
               </View>
-              <Pressable style={styles.removeButton} onPress={() => void removeGroup(group)}>
-                <Text style={styles.removeText}>×</Text>
-              </Pressable>
-            </View>
-          );
-        })
-      )}
-    </ScrollView>
+            );
+          })
+        )}
+      </ScrollView>
+    </ScreenTransition>
   );
 }
 

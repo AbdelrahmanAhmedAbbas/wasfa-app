@@ -34,8 +34,8 @@ export function OnboardingScaffold({
   children,
 }: Props) {
   const { isRTL, t } = useLanguage();
-  const textAlign = isRTL ? "right" : "left";
-  const align = isRTL ? "flex-end" : "flex-start";
+  // In React Native with direction: 'rtl', 'left' acts as the logical start (i.e. physical right).
+  const textAlign = "left";
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -56,14 +56,14 @@ export function OnboardingScaffold({
             style={[
               styles.title,
               titleVariant === "hero" ? styles.titleHero : styles.titleNormal,
-              { textAlign, alignSelf: align },
+              { textAlign, alignSelf: "stretch" },
             ]}
           >
             {title}
           </Text>
         ) : null}
         {subtitle ? (
-          <Text style={[styles.subtitle, { textAlign, alignSelf: align }]}>{subtitle}</Text>
+          <Text style={[styles.subtitle, { textAlign, alignSelf: "stretch" }]}>{subtitle}</Text>
         ) : null}
 
         {children}
@@ -71,7 +71,7 @@ export function OnboardingScaffold({
 
       <View style={styles.footer}>
         {footerContent}
-        <View style={styles.footerButtonsRow}>
+        <View style={[styles.footerButtonsRow, { flexDirection: isRTL ? "row-reverse" : "row" }]}>
           {onBack ? (
             <Pressable onPress={onBack} style={styles.footerBackButton}>
               <FontAwesome
@@ -131,20 +131,17 @@ const styles = StyleSheet.create({
   },
   titleHero: {
     fontSize: 52,
-    lineHeight: 56,
     fontWeight: "900",
     letterSpacing: -1,
   },
   titleNormal: {
     fontSize: 45,
-    lineHeight: 47,
     fontWeight: "900",
     letterSpacing: -1,
   },
   subtitle: {
     marginTop: 8,
     fontSize: 19,
-    lineHeight: 25,
     color: onboardingColors.textMuted,
     fontWeight: "500",
     maxWidth: 320,

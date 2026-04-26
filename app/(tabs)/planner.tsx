@@ -1,5 +1,6 @@
 import { Image, StyleSheet, View } from "react-native";
 import { LocalizedText as Text } from "@/components/LocalizedText";
+import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
@@ -7,15 +8,17 @@ import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
 export default function PlannerScreen() {
   const { isRTL, t } = useLanguage();
   return (
-    <View style={styles.container}>
-      <Image source={onboardingImages.mascotTyping} resizeMode="contain" style={styles.image} />
-      <Text style={[styles.title, { textAlign: isRTL ? "right" : "left" }]}>
-        {t("screenComingSoonTitle")}
-      </Text>
-      <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
-        {t("screenComingSoonBody")}
-      </Text>
-    </View>
+    <ScreenTransition>
+      <View style={styles.container}>
+        <Image source={onboardingImages.mascotTyping} resizeMode="contain" style={styles.image} />
+        <Text style={[styles.title, { textAlign: isRTL ? "right" : "left" }]}>
+          {t("screenComingSoonTitle")}
+        </Text>
+        <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
+          {t("screenComingSoonBody")}
+        </Text>
+      </View>
+    </ScreenTransition>
   );
 }
 

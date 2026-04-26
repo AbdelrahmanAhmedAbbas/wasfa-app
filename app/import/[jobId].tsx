@@ -10,6 +10,11 @@ import {
   confirmRecipe,
   getImportJob,
 } from "@/lib/import/client";
+import {
+  hasIngredientsNeedingReview,
+  markIngredientReviewState,
+} from "@/lib/import/ingredient-details";
+import { shouldRedirectImportHome } from "@/lib/import/navigation";
 import type { IngredientItem, LocalizedRecipeText, RecipeDraft, StepItem } from "@/lib/import/types";
 import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
 
@@ -71,25 +76,11 @@ function getTranscriptionStatusText(params: {
   return "Transcription: unavailable";
 }
 
-function ingredientsToText(ingredients: IngredientItem[]) {
-  return ingredients
-    .map((item) => [item.quantity, item.unit, item.name].filter(Boolean).join(" ").trim())
-    .join("\n");
-}
-
 function stepsToText(steps: StepItem[]) {
   return steps
     .sort((a, b) => a.order - b.order)
     .map((step) => step.text)
     .join("\n");
-}
-
-function parseIngredients(text: string): IngredientItem[] {
-  return text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => ({ name: line }));
 }
 
 function parseSteps(text: string): StepItem[] {
@@ -149,7 +140,7 @@ export default function ImportJobScreen() {
   const [servings, setServings] = useState("");
   const [prepMinutes, setPrepMinutes] = useState("");
   const [cookMinutes, setCookMinutes] = useState("");
-  const [ingredientsText, setIngredientsText] = useState("");
+  const [ingredientRows, setIngredientRows] = useState<IngredientItem[]>([]);
   const [stepsText, setStepsText] = useState("");
   const [nutritionSummary, setNutritionSummary] = useState<string | null>(null);
 
@@ -205,7 +196,7 @@ export default function ImportJobScreen() {
           setServings(draft.servings ? String(draft.servings) : "");
           setPrepMinutes(draft.prep_minutes ? String(draft.prep_minutes) : "");
           setCookMinutes(draft.cook_minutes ? String(draft.cook_minutes) : "");
-          setIngredientsText(ingredientsToText(draft.ingredients));
+          setIngredientRows(draft.ingredients.map((ingredient) => markIngredientReviewState(ingredient)));
           setStepsText(stepsToText(draft.steps));
           if (draft.nutrition_estimate) {
             const calories =
@@ -247,12 +238,43 @@ export default function ImportJobScreen() {
     return () => clearInterval(handle);
   }, [status, load]);
 
-  // Hook to instantly auto-confirm when loading finishes and it moves to awaiting_user_review setup
   useEffect(() => {
-    if (status === "awaiting_user_review" && title && !saving) {
+    if (shouldRedirectImportHome(status)) {
+      router.replace("/(tabs)");
+    }
+  }, [status]);
+
+  const ingredientNeedsReview = useMemo(
+    () => hasIngredientsNeedingReview(ingredientRows),
+    [ingredientRows]
+  );
+
+  // Auto-confirm only when a draft has complete structured ingredient details.
+  useEffect(() => {
+    if (
+      status === "awaiting_user_review" &&
+      title &&
+      !saving &&
+      ingredientRows.length >= 2 &&
+      !ingredientNeedsReview
+    ) {
       void onConfirmDraft();
     }
-  }, [status, title]);
+  }, [status, title, ingredientRows.length, ingredientNeedsReview, saving]);
+
+  function updateIngredient(index: number, patch: Partial<IngredientItem>) {
+    setIngredientRows((rows) =>
+      rows.map((ingredient, ingredientIndex) =>
+        ingredientIndex === index
+          ? markIngredientReviewState({
+              ...ingredient,
+              ...patch,
+              source: "user_edit",
+            })
+          : ingredient
+      )
+    );
+  }
 
   async function onConfirmDraft() {
     if (!jobId) return;
@@ -262,7 +284,17 @@ export default function ImportJobScreen() {
       servings: servings.trim() ? Number(servings) : undefined,
       prep_minutes: prepMinutes.trim() ? Number(prepMinutes) : undefined,
       cook_minutes: cookMinutes.trim() ? Number(cookMinutes) : undefined,
-      ingredients: parseIngredients(ingredientsText),
+      ingredients: ingredientRows.map((ingredient) =>
+        markIngredientReviewState({
+          ...ingredient,
+          name: ingredient.name.trim(),
+          quantity: ingredient.quantity?.trim() || undefined,
+          unit: ingredient.unit?.trim() || undefined,
+          size: ingredient.size?.trim() || undefined,
+          preparation: ingredient.preparation?.trim() || undefined,
+          notes: ingredient.notes?.trim() || undefined,
+        })
+      ),
       steps: parseSteps(stepsText),
     };
 
@@ -271,17 +303,13 @@ export default function ImportJobScreen() {
     try {
       await confirmRecipe(jobId, edits, accessToken);
       setStatus("confirmed");
-      // Add small delay to ensure database finishes triggering any hooks
-      setTimeout(() => {
-        router.replace({ pathname: "/recipe/[id]", params: { id: jobId } });
-      }, 500);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to confirm recipe.");
       setSaving(false);
     }
   }
 
-  const isCurrentlyProcessing = loading || ["queued", "processing"].includes(status) || (status === "awaiting_user_review" && title);
+  const isCurrentlyProcessing = loading || ["queued", "processing"].includes(status);
 
   if (isCurrentlyProcessing) {
     return (
@@ -380,14 +408,66 @@ export default function ImportJobScreen() {
           <Text style={[styles.label, { textAlign: isRTL ? "right" : "left" }]}>
             {t("importIngredientsLabel")}
           </Text>
-          <TextInput
-            multiline
-            value={ingredientsText}
-            onChangeText={setIngredientsText}
-            placeholder={t("importIngredientsPlaceholder")}
-            style={[styles.textArea, isRTL && styles.textRtl]}
-            placeholderTextColor="#7A7F74"
-          />
+          {ingredientNeedsReview ? (
+            <Text style={[styles.warning, { textAlign: isRTL ? "right" : "left" }]}>
+              Add a specific quantity, unit, or size for each highlighted ingredient before saving.
+            </Text>
+          ) : null}
+          {ingredientRows.map((ingredient, index) => (
+            <View key={`${ingredient.name}-${index}`} style={styles.ingredientGroup}>
+              <View style={styles.ingredientHeaderRow}>
+                <Text style={[styles.ingredientTitle, { textAlign: isRTL ? "right" : "left" }]}>
+                  Ingredient {index + 1}
+                </Text>
+                {ingredient.needs_review ? (
+                  <Text style={styles.reviewPill}>Needs details</Text>
+                ) : null}
+              </View>
+              <View style={styles.row}>
+                <TextInput
+                  value={ingredient.quantity ?? ""}
+                  onChangeText={(value) => updateIngredient(index, { quantity: value })}
+                  placeholder="Qty"
+                  keyboardType="default"
+                  style={[styles.input, styles.thirdInput, isRTL && styles.textRtl]}
+                  placeholderTextColor="#7A7F74"
+                />
+                <TextInput
+                  value={ingredient.unit ?? ""}
+                  onChangeText={(value) => updateIngredient(index, { unit: value })}
+                  placeholder="Unit"
+                  style={[styles.input, styles.thirdInput, isRTL && styles.textRtl]}
+                  placeholderTextColor="#7A7F74"
+                />
+                <TextInput
+                  value={ingredient.size ?? ""}
+                  onChangeText={(value) => updateIngredient(index, { size: value })}
+                  placeholder="Size"
+                  style={[styles.input, styles.thirdInput, isRTL && styles.textRtl]}
+                  placeholderTextColor="#7A7F74"
+                />
+              </View>
+              <TextInput
+                value={ingredient.name}
+                onChangeText={(value) => updateIngredient(index, { name: value })}
+                placeholder="Ingredient name"
+                style={[styles.input, isRTL && styles.textRtl]}
+                placeholderTextColor="#7A7F74"
+              />
+              <TextInput
+                value={ingredient.preparation ?? ""}
+                onChangeText={(value) => updateIngredient(index, { preparation: value })}
+                placeholder="Preparation"
+                style={[styles.input, isRTL && styles.textRtl]}
+                placeholderTextColor="#7A7F74"
+              />
+              {ingredient.evidence_text ? (
+                <Text style={[styles.evidenceText, { textAlign: isRTL ? "right" : "left" }]}>
+                  Source: {ingredient.evidence_text}
+                </Text>
+              ) : null}
+            </View>
+          ))}
 
           <Text style={[styles.label, { textAlign: isRTL ? "right" : "left" }]}>
             {t("importStepsLabel")}
@@ -409,12 +489,12 @@ export default function ImportJobScreen() {
             <Pressable
               style={[
                 styles.button,
-                (saving || parseIngredients(ingredientsText).length < 2 || parseSteps(stepsText).length < 2) &&
+                (saving || ingredientRows.length < 2 || ingredientNeedsReview || parseSteps(stepsText).length < 2) &&
                 styles.buttonDisabled,
               ]}
               onPress={() => void onConfirmDraft()}
               disabled={
-                saving || parseIngredients(ingredientsText).length < 2 || parseSteps(stepsText).length < 2
+                saving || ingredientRows.length < 2 || ingredientNeedsReview || parseSteps(stepsText).length < 2
               }
             >
               {saving ? (
@@ -508,6 +588,42 @@ const styles = StyleSheet.create({
   },
   halfInput: {
     flex: 1,
+  },
+  thirdInput: {
+    flex: 1,
+    minWidth: 0,
+  },
+  ingredientGroup: {
+    borderTopWidth: 1,
+    borderTopColor: "#d9d0c1",
+    paddingTop: 12,
+    gap: 8,
+  },
+  ingredientHeaderRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 8,
+  },
+  ingredientTitle: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#43513a",
+  },
+  reviewPill: {
+    borderRadius: 999,
+    backgroundColor: "#f5e3ba",
+    color: "#7a5a18",
+    fontSize: 12,
+    fontWeight: "700",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    overflow: "hidden",
+  },
+  evidenceText: {
+    fontSize: 12,
+    color: "#647058",
   },
   textArea: {
     minHeight: 100,

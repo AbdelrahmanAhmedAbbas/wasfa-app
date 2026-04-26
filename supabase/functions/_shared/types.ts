@@ -14,6 +14,13 @@ export type IngredientItem = {
   quantity?: string;
   unit?: string;
   notes?: string;
+  preparation?: string;
+  size?: string;
+  source?: "caption" | "transcript" | "video_ocr" | "web_research" | "user_edit";
+  confidence?: number;
+  evidence_text?: string;
+  citation_url?: string;
+  needs_review?: boolean;
 };
 
 export type StepItem = {

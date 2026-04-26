@@ -158,7 +158,6 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 46,
-    lineHeight: 49,
     fontWeight: "900",
     color: launchScreenColors.text,
     textAlign: "center",
@@ -166,7 +165,6 @@ const styles = StyleSheet.create({
   subtitle: {
     marginTop: 14,
     fontSize: 17,
-    lineHeight: 25,
     color: launchScreenColors.textSecondary,
     textAlign: "center",
   },

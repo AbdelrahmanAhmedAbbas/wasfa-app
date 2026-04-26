@@ -9,6 +9,7 @@ import {
   logJobEvent,
   updateJobStatus,
 } from "../_shared/db.ts";
+import { hasIngredientsNeedingReview } from "../_shared/ingredient-details.ts";
 import type { RecipeDraft } from "../_shared/types.ts";
 import { validateRecipeDraft } from "../_shared/validation.ts";
 
@@ -71,6 +72,12 @@ Deno.serve(async (req) => {
   if (!validated) {
     return jsonResponse(
       { error: "Invalid recipe edits. Ensure at least 2 ingredients and 2 steps." },
+      422
+    );
+  }
+  if (hasIngredientsNeedingReview(validated.ingredients)) {
+    return jsonResponse(
+      { error: "Every ingredient needs a specific quantity, unit, or size before saving." },
       422
     );
   }

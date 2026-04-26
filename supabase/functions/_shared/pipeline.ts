@@ -1,20 +1,29 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
-import { estimateNutrition, extractRecipe } from "./ai.ts";
+import {
+  estimateNutrition,
+  extractRecipe,
+  extractVisualRecipeText,
+  type VisualRecipeTextResult,
+} from "./ai.ts";
+import { encryptArtifact } from "./crypto.ts";
 import {
   confirmRecipeFromDraft,
+  insertRawArtifact,
   logJobEvent,
   updateJobStatus,
   upsertRecipeDraft,
 } from "./db.ts";
+import { hasIngredientsNeedingReview } from "./ingredient-details.ts";
 import type { ImportJobRow } from "./types.ts";
 
-const OPENROUTER_TRANSCRIBE_MODEL = "google/gemini-2.0-flash-001";
+const OPENROUTER_TRANSCRIBE_MODEL = "google/gemini-2.5-flash";
 // Allow reasonably large source downloads so we can still extract metadata/captions
 // even when transcription upload limits are lower.
 const MAX_MEDIA_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 // Transcription: upload and transcribe whenever we have media, up to API limit (OpenAI 25 MB).
 const MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024;
+const MAX_VISUAL_OCR_UPLOAD_BYTES = 20 * 1024 * 1024;
 const APIFY_ACTOR_ID = "nH2AHrwxeTRJoN5hX";
 
 type SourceMetadata = {
@@ -567,6 +576,7 @@ function buildCombinedContext(params: {
   sourcePlatform: ImportJobRow["source_platform"];
   metadata: SourceMetadata;
   transcript?: string | null;
+  visualOcr?: VisualRecipeTextResult | null;
   sharedText?: string | null;
 }): string {
   const lines: string[] = [
@@ -593,6 +603,28 @@ function buildCombinedContext(params: {
   } else {
     lines.push("Transcript: unavailable (transcription skipped).");
   }
+  if (params.visualOcr?.text.trim()) {
+    lines.push(`Video OCR visible text:\n${params.visualOcr.text.trim()}`);
+  } else {
+    lines.push("Video OCR visible text: unavailable.");
+  }
+  if (params.visualOcr?.ingredients.length) {
+    lines.push(
+      `Video OCR structured ingredients:\n${params.visualOcr.ingredients
+        .map((ingredient) =>
+          JSON.stringify({
+            name: ingredient.name,
+            quantity: ingredient.quantity ?? null,
+            unit: ingredient.unit ?? null,
+            size: ingredient.size ?? null,
+            preparation: ingredient.preparation ?? null,
+            evidence_text: ingredient.evidence_text ?? null,
+            confidence: ingredient.confidence ?? null,
+          })
+        )
+        .join("\n")}`
+    );
+  }
 
   return lines.join("\n\n");
 }
@@ -601,8 +633,11 @@ function hasExtractionTextContext(params: {
   metadata: SourceMetadata;
   sharedText?: string | null;
   transcript?: string | null;
+  visualOcr?: VisualRecipeTextResult | null;
 }): boolean {
   if (params.transcript?.trim()) return true;
+  if (params.visualOcr?.text.trim()) return true;
+  if (params.visualOcr?.ingredients.length) return true;
   if (params.sharedText?.trim()) return true;
   if (params.metadata.caption?.trim()) return true;
   if (params.metadata.firstComment?.trim()) return true;
@@ -709,6 +744,7 @@ export async function runImportPipeline(params: {
 }) {
   let mediaBuffer: Uint8Array | null = null;
   let transcript: string | null = null;
+  let visualOcr: VisualRecipeTextResult | null = null;
 
   await updateJobStatus(params.adminClient, {
     jobId: params.job.id,
@@ -772,18 +808,66 @@ export async function runImportPipeline(params: {
     });
 
     let transcriptionSkippedReason: string | null = null;
+    let visualOcrSkippedReason: string | null = null;
     try {
       const media = await downloadMediaForTranscription(metadata);
       mediaBuffer = media.buffer;
       const mediaEligibleForTranscription =
         media.buffer.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES;
+      const mediaEligibleForVisualOcr =
+        media.mimeType.startsWith("video/") && media.buffer.byteLength <= MAX_VISUAL_OCR_UPLOAD_BYTES;
       await logJobEvent(params.adminClient, params.job.id, "normalized", {
         stage: "audio_extract",
         mime_type: media.mimeType,
         media_bytes: media.buffer.byteLength,
         transcription_eligible: mediaEligibleForTranscription,
         transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
+        video_ocr_eligible: mediaEligibleForVisualOcr,
+        video_ocr_upload_limit_bytes: MAX_VISUAL_OCR_UPLOAD_BYTES,
       });
+
+      if (mediaEligibleForVisualOcr) {
+        try {
+          visualOcr = await extractVisualRecipeText(media);
+          try {
+            await insertRawArtifact(params.adminClient, {
+              jobId: params.job.id,
+              artifactType: "ocr_text",
+              encryptedContent: await encryptArtifact(visualOcr.text.slice(0, 12_000)),
+            });
+          } catch (error) {
+            await logJobEvent(params.adminClient, params.job.id, "normalized", {
+              stage: "openrouter_video_ocr_artifact_failed",
+              details: truncateForLog(String(error), 1200),
+            });
+          }
+          await logJobEvent(params.adminClient, params.job.id, "normalized", {
+            stage: "openrouter_video_ocr",
+            model: visualOcr.model,
+            text_length: visualOcr.text.length,
+            visible_text_count: visualOcr.visibleTextCount,
+            ingredient_count: visualOcr.ingredients.length,
+          });
+        } catch (error) {
+          visualOcr = null;
+          visualOcrSkippedReason = "video_ocr_error";
+          await logJobEvent(params.adminClient, params.job.id, "normalized", {
+            stage: "openrouter_video_ocr_failed",
+            reason: visualOcrSkippedReason,
+            details: truncateForLog(String(error), 1200),
+          });
+        }
+      } else {
+        visualOcrSkippedReason = media.mimeType.startsWith("video/")
+          ? "media_too_large_for_video_ocr"
+          : "not_video_media";
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "openrouter_video_ocr_skipped",
+          reason: visualOcrSkippedReason,
+          media_bytes: media.buffer.byteLength,
+          video_ocr_upload_limit_bytes: MAX_VISUAL_OCR_UPLOAD_BYTES,
+        });
+      }
 
       if (mediaEligibleForTranscription) {
         transcript = await transcribeWithOpenRouter(media);
@@ -816,15 +900,12 @@ export async function runImportPipeline(params: {
       });
     }
 
-    if (!transcript?.trim()) {
-      throw new Error("TRANSCRIPTION_REQUIRED");
-    }
-
     if (
       !hasExtractionTextContext({
         metadata,
         sharedText: params.sharedText,
         transcript,
+        visualOcr,
       })
     ) {
       if (transcriptionSkippedReason) {
@@ -838,6 +919,7 @@ export async function runImportPipeline(params: {
       sourcePlatform: params.job.source_platform,
       metadata,
       transcript,
+      visualOcr,
       sharedText: params.sharedText,
     });
 
@@ -877,6 +959,11 @@ export async function runImportPipeline(params: {
         transcription_provider: transcript ? "openrouter" : "skipped",
         transcription_chars: transcript?.length ?? 0,
         transcription_skipped: !transcript,
+        video_ocr_model: visualOcr?.model ?? null,
+        video_ocr_chars: visualOcr?.text.length ?? 0,
+        video_ocr_ingredients: visualOcr?.ingredients.length ?? 0,
+        video_ocr_provider: visualOcr ? "openrouter" : "skipped",
+        video_ocr_skipped_reason: visualOcr ? null : visualOcrSkippedReason,
         nutrition_provider: extraction.provider,
         source_metadata: {
           source_post_id: metadata.sourcePostId ?? null,
@@ -898,24 +985,41 @@ export async function runImportPipeline(params: {
       language: extraction.draft.source.language ?? null,
     });
 
-    const recipeId = await confirmRecipeFromDraft(params.adminClient, {
-      job: params.job,
-      payload: enrichedDraft,
-      sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
-      sourceReelUrl: params.job.source_url,
-    });
+    const needsIngredientReview = hasIngredientsNeedingReview(enrichedDraft.ingredients);
+    let recipeId: string | null = null;
 
-    await updateJobStatus(params.adminClient, {
-      jobId: params.job.id,
-      status: "confirmed",
-      errorCode: null,
-      errorMessage: null,
-    });
+    if (needsIngredientReview) {
+      await updateJobStatus(params.adminClient, {
+        jobId: params.job.id,
+        status: "awaiting_user_review",
+        errorCode: null,
+        errorMessage: "Some ingredients need quantity, unit, or size details before saving.",
+      });
+      await logJobEvent(params.adminClient, params.job.id, "ai_extracted", {
+        auto_confirmed: false,
+        needs_ingredient_review: true,
+        ingredient_count: enrichedDraft.ingredients.length,
+      });
+    } else {
+      recipeId = await confirmRecipeFromDraft(params.adminClient, {
+        job: params.job,
+        payload: enrichedDraft,
+        sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
+        sourceReelUrl: params.job.source_url,
+      });
 
-    await logJobEvent(params.adminClient, params.job.id, "confirmed", {
-      recipe_id: recipeId,
-      auto_confirmed: true,
-    });
+      await updateJobStatus(params.adminClient, {
+        jobId: params.job.id,
+        status: "confirmed",
+        errorCode: null,
+        errorMessage: null,
+      });
+
+      await logJobEvent(params.adminClient, params.job.id, "confirmed", {
+        recipe_id: recipeId,
+        auto_confirmed: true,
+      });
+    }
 
     await logJobEvent(params.adminClient, params.job.id, "ai_extracted", {
       provider: extraction.provider,
@@ -925,6 +1029,7 @@ export async function runImportPipeline(params: {
       has_localized_ar: !!enrichedDraft.localized?.ar,
       has_localized_en: !!enrichedDraft.localized?.en,
       recipe_id: recipeId,
+      needs_ingredient_review: needsIngredientReview,
     });
   } catch (error) {
     const mapped = mapPipelineError(error);
@@ -943,11 +1048,13 @@ export async function runImportPipeline(params: {
     // explicitly cleared after each attempt.
     mediaBuffer = null;
     transcript = null;
+    visualOcr = null;
     try {
       await logJobEvent(params.adminClient, params.job.id, "normalized", {
         stage: "cleanup_artifacts",
         media_cleared: true,
         transcript_cleared: true,
+        video_ocr_cleared: true,
       });
     } catch {
       // Ignore cleanup event logging failures to avoid masking job outcome.
