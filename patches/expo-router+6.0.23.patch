@@ -1,8 +1,9 @@
 diff --git a/node_modules/expo-router/build/link/linking.js b/node_modules/expo-router/build/link/linking.js
-index 0cbb8dd..f0e8b2a 100644
+index b9535b5..3acb06a 100644
 --- a/node_modules/expo-router/build/link/linking.js
 +++ b/node_modules/expo-router/build/link/linking.js
-@@ -76,7 +76,7 @@ let _rootURL;
+@@ -76,7 +76,7 @@ function getInitialURL() {
+ let _rootURL;
  function getRootURL() {
      if (_rootURL === undefined) {
 -        _rootURL = Linking.createURL('/');
@@ -11,7 +12,7 @@ index 0cbb8dd..f0e8b2a 100644
              _rootURL = (0, extractPathFromURL_1.parsePathFromExpoGoLink)(_rootURL);
          }
 diff --git a/node_modules/expo-router/build/views/Unmatched.js b/node_modules/expo-router/build/views/Unmatched.js
-index 67129ae..f29adf1 100644
+index 6e08a1d..c02a219 100644
 --- a/node_modules/expo-router/build/views/Unmatched.js
 +++ b/node_modules/expo-router/build/views/Unmatched.js
 @@ -35,7 +35,7 @@ function UnmatchedInner() {

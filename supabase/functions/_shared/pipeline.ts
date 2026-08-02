@@ -3,28 +3,29 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   estimateNutrition,
   extractRecipe,
-  extractVisualRecipeText,
-  type VisualRecipeTextResult,
 } from "./ai.ts";
-import { encryptArtifact } from "./crypto.ts";
+import { normalizeSourceUrlForCache } from "./cache.ts";
 import {
   confirmRecipeFromDraft,
-  insertRawArtifact,
+  findCachedExtractionByUrl,
   logJobEvent,
   updateJobStatus,
+  upsertExtractionCache,
   upsertRecipeDraft,
 } from "./db.ts";
 import { hasIngredientsNeedingReview } from "./ingredient-details.ts";
-import type { ImportJobRow } from "./types.ts";
+import { runSanityCheck } from "./sanity-check.ts";
+import { rewriteStepsForLanguage } from "./step-rewriter.ts";
+import type { ImportJobRow, LocalizedRecipeText, RecipeDraft } from "./types.ts";
 
-const OPENROUTER_TRANSCRIBE_MODEL = "google/gemini-2.5-flash";
+const OPENROUTER_TRANSCRIBE_MODEL = "google/gemini-3-flash-preview";
 // Allow reasonably large source downloads so we can still extract metadata/captions
 // even when transcription upload limits are lower.
 const MAX_MEDIA_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 // Transcription: upload and transcribe whenever we have media, up to API limit (OpenAI 25 MB).
 const MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024;
-const MAX_VISUAL_OCR_UPLOAD_BYTES = 20 * 1024 * 1024;
-const APIFY_ACTOR_ID = "nH2AHrwxeTRJoN5hX";
+const DEFAULT_APIFY_ACTOR_INSTAGRAM = "nH2AHrwxeTRJoN5hX";
+const DEFAULT_APIFY_ACTOR_TIKTOK = "W2tevPiLZeuTLtcG7";
 
 type SourceMetadata = {
   title?: string;
@@ -44,23 +45,14 @@ type SourceMetadata = {
   mediaUrl?: string;
   mediaType?: string;
   thumbnailUrl?: string;
-  mediaOrigin?: "opengraph" | "apify";
+  mediaOrigin?: "apify";
+  transcript?: string;
 };
 
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name);
   if (!value) throw new Error(`Missing env variable: ${name}`);
   return value;
-}
-
-function extractMetaContent(html: string, property: string): string | null {
-  const escaped = property.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const regex = new RegExp(
-    `<meta[^>]+(?:property|name)=["']${escaped}["'][^>]+content=["']([^"']+)["'][^>]*>`,
-    "i"
-  );
-  const match = html.match(regex);
-  return match?.[1]?.trim() || null;
 }
 
 function normalizeLookupKey(value: string): string {
@@ -135,6 +127,37 @@ function parseJsonLenient(raw: string): unknown {
   }
 }
 
+function findFirstStringValue(input: unknown): string | undefined {
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  if (Array.isArray(input)) {
+    let fallback: string | undefined;
+    for (const item of input) {
+      const found = findFirstStringValue(item);
+      if (!found) continue;
+      if (/^https?:\/\//i.test(found)) return found;
+      fallback ??= found;
+    }
+    return fallback;
+  }
+
+  if (input && typeof input === "object") {
+    let fallback: string | undefined;
+    for (const value of Object.values(input as Record<string, unknown>)) {
+      const found = findFirstStringValue(value);
+      if (!found) continue;
+      if (/^https?:\/\//i.test(found)) return found;
+      fallback ??= found;
+    }
+    return fallback;
+  }
+
+  return undefined;
+}
+
 function findFirstStringByKeys(
   input: unknown,
   acceptedKeys: Set<string>
@@ -153,9 +176,8 @@ function findFirstStringByKeys(
 
   for (const [key, value] of Object.entries(record)) {
     if (!acceptedKeys.has(normalizeLookupKey(key))) continue;
-    if (typeof value === "string" && value.trim()) {
-      return value.trim();
-    }
+    const found = findFirstStringValue(value);
+    if (found) return found;
   }
 
   for (const value of Object.values(record)) {
@@ -181,71 +203,6 @@ async function safeFetch(url: string): Promise<Response | null> {
   } catch {
     return null;
   }
-}
-
-async function fetchOEmbedMetadata(sourceUrl: string): Promise<Partial<SourceMetadata>> {
-  const endpoint = `https://noembed.com/embed?url=${encodeURIComponent(sourceUrl)}`;
-  const response = await safeFetch(endpoint);
-  if (!response?.ok) return {};
-
-  try {
-    const data = await response.json();
-    return {
-      title: typeof data?.title === "string" ? data.title : undefined,
-      description: typeof data?.author_name === "string" ? `By ${data.author_name}` : undefined,
-    };
-  } catch {
-    return {};
-  }
-}
-
-async function fetchOpenGraphMetadata(sourceUrl: string): Promise<Partial<SourceMetadata>> {
-  const response = await safeFetch(sourceUrl);
-  if (!response?.ok) return {};
-
-  const contentType = response.headers.get("content-type") || "";
-  if (!contentType.includes("text/html")) return {};
-
-  const html = await response.text();
-  const ogTitle = extractMetaContent(html, "og:title");
-  const ogDescription = extractMetaContent(html, "og:description");
-  const twitterDescription = extractMetaContent(html, "twitter:description");
-  const description = extractMetaContent(html, "description");
-  const ogVideoSecure = extractMetaContent(html, "og:video:secure_url");
-  const ogVideo = extractMetaContent(html, "og:video");
-  const twitterStream = extractMetaContent(html, "twitter:player:stream");
-  const ogImageSecure = extractMetaContent(html, "og:image:secure_url");
-  const ogImage = extractMetaContent(html, "og:image");
-  const twitterImage = extractMetaContent(html, "twitter:image");
-  const mediaType =
-    extractMetaContent(html, "og:video:type") ||
-    extractMetaContent(html, "twitter:player:stream:content_type") ||
-    undefined;
-
-  return {
-    title: ogTitle || undefined,
-    description: ogDescription || twitterDescription || description || undefined,
-    caption: ogDescription || twitterDescription || description || undefined,
-    mediaUrl: ogVideoSecure || ogVideo || twitterStream || undefined,
-    mediaType,
-    thumbnailUrl: ogImageSecure || ogImage || twitterImage || undefined,
-  };
-}
-
-async function fetchSourceMetadata(sourceUrl: string): Promise<SourceMetadata> {
-  const [oembed, openGraph] = await Promise.all([
-    fetchOEmbedMetadata(sourceUrl),
-    fetchOpenGraphMetadata(sourceUrl),
-  ]);
-
-  return {
-    title: openGraph.title || oembed.title,
-    description: openGraph.description || oembed.description,
-    caption: openGraph.caption,
-    mediaUrl: openGraph.mediaUrl,
-    mediaType: openGraph.mediaType,
-    mediaOrigin: openGraph.mediaUrl ? "opengraph" : undefined,
-  };
 }
 
 function extractApifyPrimaryRecord(payload: unknown): Record<string, unknown> | null {
@@ -277,14 +234,25 @@ function extractApifyLatestComment(record: Record<string, unknown>): string | un
   return undefined;
 }
 
-async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMetadata>> {
+function getApifyActorId(envName: string, fallback: string): string {
+  const configured = Deno.env.get(envName)?.trim();
+  if (configured) return configured;
+  console.warn("[import][apify] actor env missing, using fallback", { envName, fallback });
+  return fallback;
+}
+
+async function runApifyActor(params: {
+  actorId: string;
+  sourceUrl: string;
+  body: Record<string, unknown>;
+}): Promise<unknown> {
   const apifyToken = Deno.env.get("APIFY_TOKEN");
   if (!apifyToken) {
     throw new Error("APIFY_TOKEN_MISSING");
   }
 
   const response = await fetch(
-    `https://api.apify.com/v2/acts/${APIFY_ACTOR_ID}/run-sync-get-dataset-items?format=json&clean=true`,
+    `https://api.apify.com/v2/acts/${params.actorId}/run-sync-get-dataset-items?format=json&clean=true`,
     {
       method: "POST",
       headers: {
@@ -292,11 +260,7 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
         Accept: "application/json",
         Authorization: `Bearer ${apifyToken}`,
       },
-      body: JSON.stringify({
-        resultsLimit: 24,
-        skipPinnedPosts: false,
-        username: [sourceUrl],
-      }),
+      body: JSON.stringify(params.body),
     }
   );
 
@@ -305,7 +269,8 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
     status: response.status,
     ok: response.ok,
     bytes: rawBody.length,
-    url: sourceUrl,
+    actorId: params.actorId,
+    url: params.sourceUrl,
   });
   console.log("[import][apify] raw body preview", truncateForLog(rawBody, 4000));
 
@@ -318,16 +283,32 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
     payload = parseJsonLenient(rawBody);
   } catch (error) {
     console.error("[import][apify] invalid json payload", {
-      url: sourceUrl,
+      url: params.sourceUrl,
       error: String(error),
       preview: truncateForLog(rawBody, 1500),
     });
     throw new Error("APIFY_INVALID_JSON");
   }
 
+  return payload;
+}
+
+function parseApifyMetadata(sourceUrl: string, payload: unknown): SourceMetadata {
   const record = extractApifyPrimaryRecord(payload);
-  const videoUrl = sanitizeHttpUrl(record?.videoUrl);
-  const audioUrl = sanitizeHttpUrl(record?.audioUrl);
+  const videoMeta = asRecord(record?.videoMeta) ?? {};
+  const musicMeta = asRecord(record?.musicMeta) ?? {};
+  const authorMeta = asRecord(record?.authorMeta) ?? {};
+  const transcript = asRecord(record?.transcript) ?? {};
+  const transcriptText = asString(transcript.text);
+
+  const videoUrl =
+    sanitizeHttpUrl(record?.videoUrl) ||
+    sanitizeHttpUrl(videoMeta.downloadAddr) ||
+    sanitizeHttpUrl(record?.["videoMeta.downloadAddr"]);
+  const audioUrl =
+    sanitizeHttpUrl(record?.audioUrl) ||
+    sanitizeHttpUrl(musicMeta.playUrl) ||
+    sanitizeHttpUrl(record?.["musicMeta.playUrl"]);
   const mediaUrl =
     videoUrl ||
     audioUrl ||
@@ -338,10 +319,14 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
           "videourl",
           "video",
           "videosrc",
+          "downloadaddr",
+          "videometadownloadaddr",
           "downloadurl",
           "downloadvideourl",
           "playaddr",
+          "musicmetaplayurl",
           "mediaurl",
+          "mediaurls",
           "mp4url",
           "audiourl",
         ])
@@ -352,6 +337,7 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
     findFirstStringByKeys(payload, new Set(["title", "videotitle", "name"]));
   const caption =
     asString(record?.caption) ||
+    asString(record?.text) ||
     findFirstStringByKeys(payload, new Set(["caption", "description", "text", "videodescription"]));
   const firstComment =
     asString(record?.firstComment) ||
@@ -359,17 +345,25 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
   const hashtags = asStringArray(record?.hashtags);
   const sourcePostId = asString(record?.id);
   const shortCode = asString(record?.shortCode);
-  const creatorUsername = asString(record?.ownerUsername);
-  const postedAt = asString(record?.timestamp);
-  const videoDurationSeconds = asNumber(record?.videoDuration);
-  const likesCount = asNumber(record?.likesCount);
-  const commentsCount = asNumber(record?.commentsCount);
-  const videoViewCount = asNumber(record?.videoViewCount);
-  const videoPlayCount = asNumber(record?.videoPlayCount);
+  const creatorUsername =
+    asString(record?.ownerUsername) ||
+    asString(authorMeta.name) ||
+    asString(record?.["authorMeta.name"]);
+  const postedAt = asString(record?.timestamp) || asString(record?.createTimeISO);
+  const videoDurationSeconds =
+    asNumber(record?.videoDuration) ??
+    asNumber(videoMeta.duration) ??
+    asNumber(record?.["videoMeta.duration"]);
+  const likesCount = asNumber(record?.likesCount) ?? asNumber(record?.diggCount);
+  const commentsCount = asNumber(record?.commentsCount) ?? asNumber(record?.commentCount);
+  const videoViewCount = asNumber(record?.videoViewCount) ?? asNumber(record?.playCount);
+  const videoPlayCount = asNumber(record?.videoPlayCount) ?? asNumber(record?.playCount);
   const thumbnailUrl =
     sanitizeHttpUrl(asString(record?.thumbnailUrl)) ||
     sanitizeHttpUrl(asString(record?.displayUrl)) ||
     sanitizeHttpUrl(asString(record?.coverUrl)) ||
+    sanitizeHttpUrl(videoMeta.coverUrl) ||
+    sanitizeHttpUrl(record?.["videoMeta.coverUrl"]) ||
     sanitizeHttpUrl(asString(record?.coverImageUrl)) ||
     sanitizeHttpUrl(
       findFirstStringByKeys(
@@ -411,7 +405,90 @@ async function fetchApifyMetadata(sourceUrl: string): Promise<Partial<SourceMeta
     mediaType: videoUrl ? "video/mp4" : audioUrl ? "audio/mp4" : undefined,
     thumbnailUrl,
     mediaOrigin: mediaUrl ? "apify" : undefined,
+    transcript: transcriptText,
   };
+}
+
+async function fetchInstagramViaApify(sourceUrl: string): Promise<SourceMetadata> {
+  const actorId = getApifyActorId("APIFY_ACTOR_INSTAGRAM", DEFAULT_APIFY_ACTOR_INSTAGRAM);
+  const payload = await runApifyActor({
+    actorId,
+    sourceUrl,
+    body: {
+      resultsLimit: 24,
+      skipPinnedPosts: false,
+      username: [sourceUrl],
+    },
+  });
+  return parseApifyMetadata(sourceUrl, payload);
+}
+
+function buildTikTokApifyBodies(sourceUrl: string): Array<{
+  label: string;
+  body: Record<string, unknown>;
+}> {
+  return [
+    {
+      label: "postURLs",
+      body: {
+        postURLs: [sourceUrl],
+        shouldDownloadCovers: false,
+        shouldDownloadSlideshowImages: false,
+        shouldDownloadSubtitles: false,
+        shouldDownloadVideos: false,
+        translate: "english",
+        video_url: sourceUrl,
+      },
+    },
+    {
+      label: "legacy_video_url_string",
+      body: {
+        translate: "english",
+        video_url: sourceUrl,
+      },
+    },
+    {
+      label: "legacy_video_url_array",
+      body: {
+        translate: "english",
+        video_url: [sourceUrl],
+      },
+    },
+  ];
+}
+
+async function fetchTikTokViaApify(sourceUrl: string): Promise<SourceMetadata> {
+  const actorId = getApifyActorId("APIFY_ACTOR_TIKTOK", DEFAULT_APIFY_ACTOR_TIKTOK);
+  let lastError: unknown;
+
+  for (const attempt of buildTikTokApifyBodies(sourceUrl)) {
+    try {
+      const payload = await runApifyActor({
+        actorId,
+        sourceUrl,
+        body: attempt.body,
+      });
+      return parseApifyMetadata(sourceUrl, payload);
+    } catch (error) {
+      if (String(error).includes("APIFY_TOKEN_MISSING")) throw error;
+      lastError = error;
+      console.warn("[import][apify] TikTok actor attempt failed", {
+        actorId,
+        inputShape: attempt.label,
+        error: truncateForLog(String(error), 800),
+      });
+    }
+  }
+
+  throw new Error(`TIKTOK_APIFY_FAILED ${String(lastError)}`);
+}
+
+async function fetchApifyMetadata(params: {
+  sourceUrl: string;
+  sourcePlatform: ImportJobRow["source_platform"];
+}): Promise<SourceMetadata> {
+  if (params.sourcePlatform === "tiktok") return fetchTikTokViaApify(params.sourceUrl);
+  return fetchInstagramViaApify(params.sourceUrl);
 }
 
 async function downloadMediaForTranscription(metadata: SourceMetadata): Promise<{
@@ -576,7 +653,6 @@ function buildCombinedContext(params: {
   sourcePlatform: ImportJobRow["source_platform"];
   metadata: SourceMetadata;
   transcript?: string | null;
-  visualOcr?: VisualRecipeTextResult | null;
   sharedText?: string | null;
 }): string {
   const lines: string[] = [
@@ -603,28 +679,6 @@ function buildCombinedContext(params: {
   } else {
     lines.push("Transcript: unavailable (transcription skipped).");
   }
-  if (params.visualOcr?.text.trim()) {
-    lines.push(`Video OCR visible text:\n${params.visualOcr.text.trim()}`);
-  } else {
-    lines.push("Video OCR visible text: unavailable.");
-  }
-  if (params.visualOcr?.ingredients.length) {
-    lines.push(
-      `Video OCR structured ingredients:\n${params.visualOcr.ingredients
-        .map((ingredient) =>
-          JSON.stringify({
-            name: ingredient.name,
-            quantity: ingredient.quantity ?? null,
-            unit: ingredient.unit ?? null,
-            size: ingredient.size ?? null,
-            preparation: ingredient.preparation ?? null,
-            evidence_text: ingredient.evidence_text ?? null,
-            confidence: ingredient.confidence ?? null,
-          })
-        )
-        .join("\n")}`
-    );
-  }
 
   return lines.join("\n\n");
 }
@@ -633,17 +687,71 @@ function hasExtractionTextContext(params: {
   metadata: SourceMetadata;
   sharedText?: string | null;
   transcript?: string | null;
-  visualOcr?: VisualRecipeTextResult | null;
 }): boolean {
   if (params.transcript?.trim()) return true;
-  if (params.visualOcr?.text.trim()) return true;
-  if (params.visualOcr?.ingredients.length) return true;
   if (params.sharedText?.trim()) return true;
   if (params.metadata.caption?.trim()) return true;
   if (params.metadata.firstComment?.trim()) return true;
   if (params.metadata.description?.trim()) return true;
   if (params.metadata.title?.trim()) return true;
   return false;
+}
+
+function localizedTextWithSteps(draft: RecipeDraft, language: "en" | "ar"): LocalizedRecipeText {
+  const existing = draft.localized?.[language];
+  return {
+    title: existing?.title ?? draft.title,
+    description: existing?.description ?? draft.description,
+    cuisine: existing?.cuisine ?? draft.cuisine,
+    meal_type: existing?.meal_type ?? draft.meal_type,
+    ingredients:
+      existing?.ingredients ??
+      draft.ingredients.map((ingredient) => ({
+        name: ingredient.name,
+        notes: ingredient.notes,
+      })),
+    steps: existing?.steps ?? draft.steps,
+  };
+}
+
+async function rewriteProceduralSteps(draft: RecipeDraft): Promise<{
+  draft: RecipeDraft;
+  models: Partial<Record<"en" | "ar", string>>;
+  failed: boolean;
+}> {
+  try {
+    const enRewrite = await rewriteStepsForLanguage(draft, "en");
+    const arRewrite = await rewriteStepsForLanguage(draft, "ar");
+    return {
+      draft: {
+        ...draft,
+        steps: enRewrite.steps,
+        localized: {
+          ...draft.localized,
+          en: {
+            ...localizedTextWithSteps(draft, "en"),
+            steps: enRewrite.steps,
+          },
+          ar: {
+            ...localizedTextWithSteps(draft, "ar"),
+            steps: arRewrite.steps,
+          },
+        },
+      },
+      models: {
+        en: enRewrite.model,
+        ar: arRewrite.model,
+      },
+      failed: false,
+    };
+  } catch (error) {
+    console.warn("[import][step-rewrite] failed", { error: String(error) });
+    return {
+      draft,
+      models: {},
+      failed: true,
+    };
+  }
 }
 
 function isTranscriptionOversizeError(error: unknown): boolean {
@@ -661,6 +769,12 @@ function mapPipelineError(error: unknown): { code: string; message: string } {
     return {
       code: "MEDIA_NOT_AVAILABLE",
       message: "Could not resolve a downloadable media URL from this post.",
+    };
+  }
+  if (raw.includes("TIKTOK_APIFY_FAILED")) {
+    return {
+      code: "TIKTOK_APIFY_FAILED",
+      message: "TikTok actor failed while resolving this media URL.",
     };
   }
   if (raw.includes("APIFY_RUN_FAILED")) {
@@ -742,9 +856,7 @@ export async function runImportPipeline(params: {
   job: ImportJobRow;
   sharedText?: string | null;
 }) {
-  let mediaBuffer: Uint8Array | null = null;
   let transcript: string | null = null;
-  let visualOcr: VisualRecipeTextResult | null = null;
 
   await updateJobStatus(params.adminClient, {
     jobId: params.job.id,
@@ -760,34 +872,53 @@ export async function runImportPipeline(params: {
       source_platform: params.job.source_platform,
     });
 
-    let metadata = await fetchSourceMetadata(params.job.source_url);
-    let apifyUsed = false;
-    if (!metadata.mediaUrl) {
-      const apifyMetadata = await fetchApifyMetadata(params.job.source_url);
-      if (apifyMetadata.mediaUrl || apifyMetadata.caption || apifyMetadata.title) {
-        metadata = {
-          title: metadata.title || apifyMetadata.title,
-          description: metadata.description || apifyMetadata.description,
-          caption: metadata.caption || apifyMetadata.caption,
-          firstComment: metadata.firstComment || apifyMetadata.firstComment,
-          hashtags: metadata.hashtags?.length ? metadata.hashtags : apifyMetadata.hashtags,
-          sourcePostId: metadata.sourcePostId || apifyMetadata.sourcePostId,
-          shortCode: metadata.shortCode || apifyMetadata.shortCode,
-          creatorUsername: metadata.creatorUsername || apifyMetadata.creatorUsername,
-          postedAt: metadata.postedAt || apifyMetadata.postedAt,
-          videoDurationSeconds: metadata.videoDurationSeconds || apifyMetadata.videoDurationSeconds,
-          likesCount: metadata.likesCount || apifyMetadata.likesCount,
-          commentsCount: metadata.commentsCount || apifyMetadata.commentsCount,
-          videoViewCount: metadata.videoViewCount || apifyMetadata.videoViewCount,
-          videoPlayCount: metadata.videoPlayCount || apifyMetadata.videoPlayCount,
-          mediaUrl: metadata.mediaUrl || apifyMetadata.mediaUrl,
-          mediaType: metadata.mediaType || apifyMetadata.mediaType,
-          thumbnailUrl: metadata.thumbnailUrl || apifyMetadata.thumbnailUrl,
-          mediaOrigin: metadata.mediaOrigin || apifyMetadata.mediaOrigin,
-        };
-        apifyUsed = !!apifyMetadata.mediaUrl;
-      }
+    const normalizedCacheUrl = normalizeSourceUrlForCache(params.job.source_url);
+    const cachedExtraction = await findCachedExtractionByUrl(params.adminClient, normalizedCacheUrl);
+    await logJobEvent(params.adminClient, params.job.id, "normalized", {
+      stage: "cache_lookup",
+      cache_hit: !!cachedExtraction,
+      normalized_source_url: normalizedCacheUrl,
+    });
+
+    if (cachedExtraction) {
+      const cachedDraft = cachedExtraction.payload;
+      await upsertRecipeDraft(params.adminClient, {
+        jobId: params.job.id,
+        userId: params.job.user_id,
+        payload: cachedDraft,
+        confidence: {
+          cache_hit: true,
+          cache_source_url: normalizedCacheUrl,
+          extraction_model_used: cachedExtraction.extraction_model,
+        },
+        language: cachedDraft.source.language ?? null,
+      });
+
+      const recipeId = await confirmRecipeFromDraft(params.adminClient, {
+        job: params.job,
+        payload: cachedDraft,
+        sourceReelUrl: params.job.source_url,
+      });
+
+      await updateJobStatus(params.adminClient, {
+        jobId: params.job.id,
+        status: "confirmed",
+        errorCode: null,
+        errorMessage: null,
+      });
+
+      await logJobEvent(params.adminClient, params.job.id, "confirmed", {
+        recipe_id: recipeId,
+        auto_confirmed: true,
+        cache_hit: true,
+      });
+      return;
     }
+
+    const metadata = await fetchApifyMetadata({
+      sourceUrl: params.job.source_url,
+      sourcePlatform: params.job.source_platform,
+    });
 
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
       stage: "metadata_fetch",
@@ -798,7 +929,7 @@ export async function runImportPipeline(params: {
       hashtags_count: metadata.hashtags?.length ?? 0,
       media_origin: metadata.mediaOrigin ?? null,
       has_thumbnail: !!metadata.thumbnailUrl,
-      apify_used: apifyUsed,
+      apify_used: true,
     });
 
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
@@ -808,96 +939,55 @@ export async function runImportPipeline(params: {
     });
 
     let transcriptionSkippedReason: string | null = null;
-    let visualOcrSkippedReason: string | null = null;
-    try {
-      const media = await downloadMediaForTranscription(metadata);
-      mediaBuffer = media.buffer;
-      const mediaEligibleForTranscription =
-        media.buffer.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES;
-      const mediaEligibleForVisualOcr =
-        media.mimeType.startsWith("video/") && media.buffer.byteLength <= MAX_VISUAL_OCR_UPLOAD_BYTES;
+    if (metadata.transcript?.trim()) {
+      transcript = metadata.transcript.trim();
       await logJobEvent(params.adminClient, params.job.id, "normalized", {
-        stage: "audio_extract",
-        mime_type: media.mimeType,
-        media_bytes: media.buffer.byteLength,
-        transcription_eligible: mediaEligibleForTranscription,
-        transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
-        video_ocr_eligible: mediaEligibleForVisualOcr,
-        video_ocr_upload_limit_bytes: MAX_VISUAL_OCR_UPLOAD_BYTES,
+        stage: "tiktok_apify_transcript_used",
+        transcript_chars: transcript.length,
       });
-
-      if (mediaEligibleForVisualOcr) {
-        try {
-          visualOcr = await extractVisualRecipeText(media);
-          try {
-            await insertRawArtifact(params.adminClient, {
-              jobId: params.job.id,
-              artifactType: "ocr_text",
-              encryptedContent: await encryptArtifact(visualOcr.text.slice(0, 12_000)),
-            });
-          } catch (error) {
-            await logJobEvent(params.adminClient, params.job.id, "normalized", {
-              stage: "openrouter_video_ocr_artifact_failed",
-              details: truncateForLog(String(error), 1200),
-            });
-          }
-          await logJobEvent(params.adminClient, params.job.id, "normalized", {
-            stage: "openrouter_video_ocr",
-            model: visualOcr.model,
-            text_length: visualOcr.text.length,
-            visible_text_count: visualOcr.visibleTextCount,
-            ingredient_count: visualOcr.ingredients.length,
-          });
-        } catch (error) {
-          visualOcr = null;
-          visualOcrSkippedReason = "video_ocr_error";
-          await logJobEvent(params.adminClient, params.job.id, "normalized", {
-            stage: "openrouter_video_ocr_failed",
-            reason: visualOcrSkippedReason,
-            details: truncateForLog(String(error), 1200),
-          });
-        }
-      } else {
-        visualOcrSkippedReason = media.mimeType.startsWith("video/")
-          ? "media_too_large_for_video_ocr"
-          : "not_video_media";
+    } else {
+      try {
+        const media = await downloadMediaForTranscription(metadata);
+        const mediaEligibleForTranscription =
+          media.buffer.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES;
         await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "openrouter_video_ocr_skipped",
-          reason: visualOcrSkippedReason,
+          stage: "audio_extract",
+          mime_type: media.mimeType,
           media_bytes: media.buffer.byteLength,
-          video_ocr_upload_limit_bytes: MAX_VISUAL_OCR_UPLOAD_BYTES,
-        });
-      }
-
-      if (mediaEligibleForTranscription) {
-        transcript = await transcribeWithOpenRouter(media);
-        await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "openrouter_transcribe",
-          transcript_length: transcript.length,
-          model: OPENROUTER_TRANSCRIBE_MODEL,
-        });
-      } else {
-        transcriptionSkippedReason = "media_too_large_for_transcription_upload";
-        transcript = null;
-        await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "openrouter_transcribe_skipped",
-          reason: transcriptionSkippedReason,
-          model: OPENROUTER_TRANSCRIBE_MODEL,
-          media_bytes: media.buffer.byteLength,
+          transcription_eligible: mediaEligibleForTranscription,
           transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
         });
+
+        if (mediaEligibleForTranscription) {
+          transcript = await transcribeWithOpenRouter(media);
+          await logJobEvent(params.adminClient, params.job.id, "normalized", {
+            stage: "openrouter_transcribe",
+            transcript_length: transcript.length,
+            model: OPENROUTER_TRANSCRIBE_MODEL,
+          });
+        } else {
+          transcriptionSkippedReason = "media_too_large_for_transcription_upload";
+          transcript = null;
+          await logJobEvent(params.adminClient, params.job.id, "normalized", {
+            stage: "openrouter_transcribe_skipped",
+            reason: transcriptionSkippedReason,
+            model: OPENROUTER_TRANSCRIBE_MODEL,
+            media_bytes: media.buffer.byteLength,
+            transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
+          });
+        }
+      } catch (error) {
+        transcriptionSkippedReason = isTranscriptionOversizeError(error)
+          ? "media_too_large"
+          : "transcription_error";
+        transcript = null;
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "openrouter_transcribe_failed",
+          reason: transcriptionSkippedReason,
+          model: OPENROUTER_TRANSCRIBE_MODEL,
+          details: truncateForLog(String(error), 1200),
+        });
       }
-    } catch (error) {
-      transcriptionSkippedReason = isTranscriptionOversizeError(error)
-        ? "media_too_large"
-        : "transcription_error";
-      transcript = null;
-      await logJobEvent(params.adminClient, params.job.id, "normalized", {
-        stage: "openrouter_transcribe_failed",
-        reason: transcriptionSkippedReason,
-        model: OPENROUTER_TRANSCRIBE_MODEL,
-        details: truncateForLog(String(error), 1200),
-      });
     }
 
     if (
@@ -905,7 +995,6 @@ export async function runImportPipeline(params: {
         metadata,
         sharedText: params.sharedText,
         transcript,
-        visualOcr,
       })
     ) {
       if (transcriptionSkippedReason) {
@@ -919,7 +1008,6 @@ export async function runImportPipeline(params: {
       sourcePlatform: params.job.source_platform,
       metadata,
       transcript,
-      visualOcr,
       sharedText: params.sharedText,
     });
 
@@ -933,13 +1021,47 @@ export async function runImportPipeline(params: {
       model: extraction.model,
       provider: extraction.provider,
     });
+    await logJobEvent(params.adminClient, params.job.id, "normalized", {
+      stage: "web_measurement_fill",
+      ingredients_filled:
+        typeof extraction.confidence.ingredient_review === "object" &&
+        extraction.confidence.ingredient_review !== null &&
+        "web_research_ingredients" in extraction.confidence.ingredient_review
+          ? extraction.confidence.ingredient_review.web_research_ingredients
+          : 0,
+      citations_count:
+        typeof extraction.confidence.ingredient_review === "object" &&
+        extraction.confidence.ingredient_review !== null &&
+        "web_research_citations" in extraction.confidence.ingredient_review &&
+        Array.isArray(extraction.confidence.ingredient_review.web_research_citations)
+          ? extraction.confidence.ingredient_review.web_research_citations.length
+          : 0,
+    });
 
-    const nutrition = await estimateNutrition(extraction.draft);
+    const stepRewrite = await rewriteProceduralSteps(extraction.draft);
+    await logJobEvent(params.adminClient, params.job.id, "normalized", {
+      stage: "step_rewrite",
+      has_localized_ar: !!stepRewrite.draft.localized?.ar,
+      has_localized_en: !!stepRewrite.draft.localized?.en,
+      model_en: stepRewrite.models.en ?? null,
+      model_ar: stepRewrite.models.ar ?? null,
+      failed: stepRewrite.failed,
+    });
+
+    const nutrition = await estimateNutrition(stepRewrite.draft);
 
     const enrichedDraft = {
-      ...extraction.draft,
+      ...stepRewrite.draft,
       nutrition_estimate: nutrition,
     };
+    const sanityCheck = await runSanityCheck(enrichedDraft);
+    await logJobEvent(params.adminClient, params.job.id, "normalized", {
+      stage: "sanity_check",
+      passed: sanityCheck.passed,
+      issue_count: sanityCheck.issues.length,
+      issues: sanityCheck.issues,
+    });
+
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
       stage: "gemini_localize_en_ar",
       has_localized_ar: !!enrichedDraft.localized?.ar,
@@ -955,16 +1077,19 @@ export async function runImportPipeline(params: {
       payload: enrichedDraft,
       confidence: {
         ...extraction.confidence,
-        transcription_model: transcript ? OPENROUTER_TRANSCRIBE_MODEL : null,
-        transcription_provider: transcript ? "openrouter" : "skipped",
+        cache_hit: false,
+        cache_source_url: normalizedCacheUrl,
+        transcription_model: metadata.transcript ? null : transcript ? OPENROUTER_TRANSCRIBE_MODEL : null,
+        transcription_provider: metadata.transcript ? "apify" : transcript ? "openrouter" : "skipped",
         transcription_chars: transcript?.length ?? 0,
         transcription_skipped: !transcript,
-        video_ocr_model: visualOcr?.model ?? null,
-        video_ocr_chars: visualOcr?.text.length ?? 0,
-        video_ocr_ingredients: visualOcr?.ingredients.length ?? 0,
-        video_ocr_provider: visualOcr ? "openrouter" : "skipped",
-        video_ocr_skipped_reason: visualOcr ? null : visualOcrSkippedReason,
         nutrition_provider: extraction.provider,
+        step_rewrite_models: stepRewrite.models,
+        step_rewrite_failed: stepRewrite.failed,
+        sanity_check: {
+          passed: sanityCheck.passed,
+          issue_count: sanityCheck.issues.length,
+        },
         source_metadata: {
           source_post_id: metadata.sourcePostId ?? null,
           short_code: metadata.shortCode ?? null,
@@ -985,41 +1110,39 @@ export async function runImportPipeline(params: {
       language: extraction.draft.source.language ?? null,
     });
 
+    await upsertExtractionCache(params.adminClient, {
+      normalizedUrl: normalizedCacheUrl,
+      payload: enrichedDraft,
+      sourcePlatform: params.job.source_platform,
+      sourcePostId: metadata.sourcePostId ?? null,
+      modelInfo: { extractionModel: extraction.model },
+    });
+    await logJobEvent(params.adminClient, params.job.id, "normalized", {
+      stage: "cache_write",
+      model: extraction.model,
+      payload_bytes: JSON.stringify(enrichedDraft).length,
+    });
+
     const needsIngredientReview = hasIngredientsNeedingReview(enrichedDraft.ingredients);
-    let recipeId: string | null = null;
+    const recipeId = await confirmRecipeFromDraft(params.adminClient, {
+      job: params.job,
+      payload: enrichedDraft,
+      sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
+      sourceReelUrl: params.job.source_url,
+    });
 
-    if (needsIngredientReview) {
-      await updateJobStatus(params.adminClient, {
-        jobId: params.job.id,
-        status: "awaiting_user_review",
-        errorCode: null,
-        errorMessage: "Some ingredients need quantity, unit, or size details before saving.",
-      });
-      await logJobEvent(params.adminClient, params.job.id, "ai_extracted", {
-        auto_confirmed: false,
-        needs_ingredient_review: true,
-        ingredient_count: enrichedDraft.ingredients.length,
-      });
-    } else {
-      recipeId = await confirmRecipeFromDraft(params.adminClient, {
-        job: params.job,
-        payload: enrichedDraft,
-        sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
-        sourceReelUrl: params.job.source_url,
-      });
+    await updateJobStatus(params.adminClient, {
+      jobId: params.job.id,
+      status: "confirmed",
+      errorCode: null,
+      errorMessage: null,
+    });
 
-      await updateJobStatus(params.adminClient, {
-        jobId: params.job.id,
-        status: "confirmed",
-        errorCode: null,
-        errorMessage: null,
-      });
-
-      await logJobEvent(params.adminClient, params.job.id, "confirmed", {
-        recipe_id: recipeId,
-        auto_confirmed: true,
-      });
-    }
+    await logJobEvent(params.adminClient, params.job.id, "confirmed", {
+      recipe_id: recipeId,
+      auto_confirmed: true,
+      ingredient_review_remaining: needsIngredientReview,
+    });
 
     await logJobEvent(params.adminClient, params.job.id, "ai_extracted", {
       provider: extraction.provider,
@@ -1046,15 +1169,11 @@ export async function runImportPipeline(params: {
   } finally {
     // Immediate cleanup: temporary media and transcript are memory-only and
     // explicitly cleared after each attempt.
-    mediaBuffer = null;
     transcript = null;
-    visualOcr = null;
     try {
       await logJobEvent(params.adminClient, params.job.id, "normalized", {
         stage: "cleanup_artifacts",
-        media_cleared: true,
         transcript_cleared: true,
-        video_ocr_cleared: true,
       });
     } catch {
       // Ignore cleanup event logging failures to avoid masking job outcome.

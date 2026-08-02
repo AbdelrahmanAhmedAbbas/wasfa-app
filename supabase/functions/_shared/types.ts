@@ -16,17 +16,33 @@ export type IngredientItem = {
   notes?: string;
   preparation?: string;
   size?: string;
-  source?: "caption" | "transcript" | "video_ocr" | "web_research" | "user_edit";
+  dietary_flags?: string[];
+  allergen_hints?: string[];
+  is_halal?: boolean | null;
+  halal_concern?: string;
+  suggested_alternative?: string;
+  source?: "caption" | "transcript" | "web_research" | "ai_estimate" | "user_edit";
   confidence?: number;
   evidence_text?: string;
   citation_url?: string;
   needs_review?: boolean;
+  is_estimated: boolean;
+};
+
+export type StepTemperature = {
+  value: number;
+  unit: "C" | "F";
 };
 
 export type StepItem = {
   order: number;
+  title: string;
   text: string;
   duration_minutes?: number;
+  temperature?: StepTemperature;
+  equipment?: string[];
+  ingredients_used?: string[];
+  tips?: string[];
 };
 
 export type NutritionEstimate = {
@@ -42,19 +58,20 @@ export type NutritionEstimate = {
 export type LocalizedRecipeText = {
   title: string;
   description?: string;
+  cuisine?: string;
+  meal_type?: string;
   ingredients: Array<{
     name: string;
     notes?: string;
   }>;
-  steps: Array<{
-    order: number;
-    text: string;
-  }>;
+  steps: StepItem[];
 };
 
 export type RecipeDraft = {
   title: string;
   description?: string;
+  cuisine: string;
+  meal_type: string;
   servings?: number;
   prep_minutes?: number;
   cook_minutes?: number;

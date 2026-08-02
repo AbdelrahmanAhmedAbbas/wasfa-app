@@ -29,6 +29,8 @@ import {
   getHomeScrollProps,
   getHomeScreenCopy,
   getHomeScreenLayout,
+  getLocalizedRecipeSummary,
+  matchesRecipeSearch,
 } from "@/lib/home/home-screen";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import {
@@ -65,7 +67,7 @@ function wrapLtrInlineText(value: string) {
 export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const { user } = useAuth();
-  const { t, isRTL } = useLanguage();
+  const { t, isRTL, language } = useLanguage();
   const bottomContentPadding = Math.max(insets.bottom + 176, 176);
   const addButtonOffset = Math.max(insets.bottom + 96, 96);
 
@@ -140,13 +142,14 @@ export default function HomeScreen() {
   const filteredRecipes = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return recipes;
-    return recipes.filter((recipe) => recipe.title.toLowerCase().includes(query));
+    return recipes.filter((recipe) => matchesRecipeSearch(recipe, query));
   }, [recipes, searchQuery]);
 
   const recipeCards = useMemo(
     () =>
       getHomeRecipeCards<ImageSourcePropType>({
         recipes: filteredRecipes,
+        language,
         minuteLabel: t("homeMinuteShort"),
         fallbackImage: onboardingImages.demoKabsaSocial,
       }),
@@ -494,7 +497,12 @@ export default function HomeScreen() {
 
           {recipeCards.length > 0 ? (
             <View style={styles.recipeList}>
-              {recipeCards.map((recipe) => (
+              {recipeCards.map((recipe) => {
+                const fullRecipe = recipes.find((item) => item.id === recipe.recipeId);
+                const cardDescription = fullRecipe
+                  ? getLocalizedRecipeSummary(fullRecipe, language).description
+                  : null;
+                return (
                 <Pressable
                   key={recipe.id}
                   style={styles.recipeCard}
@@ -533,7 +541,7 @@ export default function HomeScreen() {
                     >
                       {recipe.title}
                     </Text>
-                    {recipes.find((item) => item.id === recipe.recipeId)?.description ? (
+                    {cardDescription ? (
                       <Text
                         numberOfLines={2}
                         style={[
@@ -544,12 +552,13 @@ export default function HomeScreen() {
                           },
                         ]}
                       >
-                        {recipes.find((item) => item.id === recipe.recipeId)?.description}
+                        {cardDescription}
                       </Text>
                     ) : null}
                   </View>
                 </Pressable>
-              ))}
+                );
+              })}
             </View>
           ) : (
             <Pressable

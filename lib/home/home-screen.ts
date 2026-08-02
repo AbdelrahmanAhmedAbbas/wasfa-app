@@ -14,9 +14,11 @@ type HomeScreenCopyInput = {
 type RecentRecipeInput = {
   id: string;
   title: string;
+  description?: string | null;
   prep_minutes: number | null;
   cook_minutes: number | null;
   source_thumbnail_url: string | null;
+  localized?: Partial<Record<"en" | "ar", { title: string; description?: string; ingredients: unknown[]; steps: unknown[] }>>;
 };
 
 export type HomeRecipeListParams = {
@@ -31,6 +33,22 @@ export type HomeRecipeCard<TImage> = {
   recipeId: string;
   interactive: true;
 };
+
+export function getLocalizedRecipeSummary(recipe: RecentRecipeInput, language: "en" | "ar") {
+  const localized = recipe.localized?.[language];
+  return {
+    title: localized?.title?.trim() || recipe.title,
+    description: localized?.description?.trim() || recipe.description || null,
+  };
+}
+
+export function matchesRecipeSearch(recipe: RecentRecipeInput, query: string) {
+  const normalized = query.trim().toLowerCase();
+  if (!normalized) return true;
+  return [recipe.title, recipe.localized?.en?.title, recipe.localized?.ar?.title]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .some((value) => value.toLowerCase().includes(normalized));
+}
 
 function interpolate(template: string, replacements: Record<string, string | number>) {
   return Object.entries(replacements).reduce(
@@ -92,21 +110,26 @@ export function getHomeScreenLayout(isRTL: boolean) {
 
 export function getHomeRecipeCards<TImage>({
   recipes,
+  language = "en",
   minuteLabel,
   fallbackImage,
 }: {
   recipes: RecentRecipeInput[];
+  language?: "en" | "ar";
   minuteLabel: string;
   fallbackImage: TImage;
 }): HomeRecipeCard<TImage>[] {
-  return recipes.map((recipe) => ({
-    id: recipe.id,
-    recipeId: recipe.id,
-    interactive: true,
-    title: recipe.title,
-    minutes: getRecipeMinutes(recipe, minuteLabel),
-    image: recipe.source_thumbnail_url ? { uri: recipe.source_thumbnail_url } : fallbackImage,
-  }));
+  return recipes.map((recipe) => {
+    const localized = getLocalizedRecipeSummary(recipe, language);
+    return {
+      id: recipe.id,
+      recipeId: recipe.id,
+      interactive: true as const,
+      title: localized.title,
+      minutes: getRecipeMinutes(recipe, minuteLabel),
+      image: recipe.source_thumbnail_url ? { uri: recipe.source_thumbnail_url } : fallbackImage,
+    };
+  });
 }
 
 export function getHomeScreenCopy({

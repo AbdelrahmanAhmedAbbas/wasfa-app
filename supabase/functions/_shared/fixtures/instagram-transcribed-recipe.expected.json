@@ -1,0 +1,74 @@
+{
+  "source_platform": "instagram",
+  "events": [
+    {
+      "stage": "metadata_fetch",
+      "apify_used": true
+    },
+    {
+      "stage": "openrouter_transcribe",
+      "transcript_length": 312
+    },
+    {
+      "stage": "step_rewrite"
+    }
+  ],
+  "status": "confirmed",
+  "recipe": {
+    "title": "Creamy Pesto Chicken Pasta",
+    "cuisine": "Italian",
+    "meal_type": "Dinner",
+    "servings": 4,
+    "ingredients": [
+      {
+        "name": "chicken breast",
+        "quantity": "1",
+        "unit": "lb",
+        "source": "transcript",
+        "is_estimated": false
+      },
+      {
+        "name": "pesto",
+        "quantity": "0.5",
+        "unit": "cup",
+        "source": "web_research",
+        "is_estimated": true
+      }
+    ],
+    "steps": [
+      {
+        "order": 1,
+        "title": "Sear the chicken",
+        "text": "Cook the chicken in a skillet until browned and cooked through.",
+        "duration_minutes": 8,
+        "equipment": ["skillet"],
+        "ingredients_used": ["chicken breast"],
+        "tips": ["Slice the chicken after resting so it stays juicy."]
+      }
+    ],
+    "localized": {
+      "en": {
+        "steps": [
+          {
+            "order": 1,
+            "title": "Sear the chicken",
+            "text": "Cook the chicken in a skillet until browned and cooked through.",
+            "ingredients_used": ["chicken breast"],
+            "tips": ["Slice the chicken after resting so it stays juicy."]
+          }
+        ]
+      },
+      "ar": {
+        "steps": [
+          {
+            "order": 1,
+            "title": "حمري الدجاج",
+            "text": "اطهي الدجاج في مقلاة حتى يتحمر وينضج بالكامل.",
+            "ingredients_used": ["chicken breast"],
+            "tips": ["اتركي الدجاج يرتاح قبل التقطيع ليبقى طريا."]
+          }
+        ]
+      }
+    }
+  }
+}

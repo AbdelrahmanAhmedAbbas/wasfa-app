@@ -6,7 +6,7 @@ import {
   markIngredientReviewStates,
 } from "./ingredient-details.ts";
 
-test("OCR ingredient details override name-only transcript ingredients", () => {
+test("AI-estimated ingredient details override name-only transcript ingredients", () => {
   const merged = mergeIngredientSources([
     { name: "beef bacon", source: "transcript" },
     {
@@ -14,7 +14,7 @@ test("OCR ingredient details override name-only transcript ingredients", () => {
       quantity: "150",
       unit: "g",
       preparation: "cooked and diced",
-      source: "video_ocr",
+      source: "ai_estimate",
       evidence_text: "150g Cooked & Diced Beef Bacon",
     },
   ]);
@@ -25,9 +25,10 @@ test("OCR ingredient details override name-only transcript ingredients", () => {
       quantity: "150",
       unit: "g",
       preparation: "cooked and diced",
-      source: "video_ocr",
+      source: "ai_estimate",
       evidence_text: "150g Cooked & Diced Beef Bacon",
       needs_review: false,
+      is_estimated: true,
     },
   ]);
 });

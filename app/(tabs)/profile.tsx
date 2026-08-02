@@ -1,5 +1,5 @@
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
@@ -9,14 +9,95 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { setOnboardingDone, clearOnboardingStep } from "@/lib/onboarding/storage";
-import { clearOnboardingAnswers } from "@/lib/onboarding/answers";
+import {
+  clearOnboardingAnswers,
+  type AllergyOption,
+  type DietOption,
+  type MeasurementSystem,
+  type NutritionDisplay,
+} from "@/lib/onboarding/answers";
+import { loadRecipePreferences, saveRecipePreferences, type RecipePreferences } from "@/lib/recipes/preferences";
+
+const DIET_OPTIONS: { id: DietOption; labelKey: string }[] = [
+  { id: "halal", labelKey: "dietHalal" },
+  { id: "omnivore", labelKey: "dietOmnivore" },
+  { id: "vegetarian", labelKey: "dietVegetarian" },
+  { id: "vegan", labelKey: "dietVegan" },
+  { id: "keto", labelKey: "dietKeto" },
+  { id: "pescatarian", labelKey: "dietPescatarian" },
+];
+
+const ALLERGY_OPTIONS: { id: AllergyOption; labelKey: string }[] = [
+  { id: "shellfish", labelKey: "allergyShellfish" },
+  { id: "seafood", labelKey: "allergySeafood" },
+  { id: "dairy", labelKey: "allergyDairy" },
+  { id: "peanut", labelKey: "allergyPeanut" },
+  { id: "tree_nut", labelKey: "allergyTreeNut" },
+  { id: "egg", labelKey: "allergyEgg" },
+  { id: "gluten", labelKey: "allergyGluten" },
+  { id: "wheat", labelKey: "allergyWheat" },
+];
 
 export default function ProfileScreen() {
   const { language, isRTL, setLanguage, t } = useLanguage();
   const { user, signInWithGoogle, signOut } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
+  const [preferences, setPreferences] = useState<RecipePreferences>({
+    diet: [],
+    allergies: [],
+    measurementSystem: null,
+    nutritionDisplay: null,
+  });
+  const [preferencesSaving, setPreferencesSaving] = useState(false);
 
   const textAlign = isRTL ? "right" : "left";
+
+  useEffect(() => {
+    let isMounted = true;
+    void loadRecipePreferences(user?.id).then((value) => {
+      if (isMounted) setPreferences(value);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
+
+  const updatePreferences = async (partial: Partial<RecipePreferences>) => {
+    const previous = preferences;
+    setPreferences({ ...preferences, ...partial });
+    setPreferencesSaving(true);
+    try {
+      const saved = await saveRecipePreferences(partial, user?.id);
+      setPreferences(saved);
+    } catch (error) {
+      Alert.alert("Error", error instanceof Error ? error.message : "Failed to save preferences.");
+      setPreferences(previous);
+    } finally {
+      setPreferencesSaving(false);
+    }
+  };
+
+  const toggleDiet = (id: DietOption) => {
+    const next = preferences.diet.includes(id)
+      ? preferences.diet.filter((item) => item !== id)
+      : [...preferences.diet, id];
+    void updatePreferences({ diet: next });
+  };
+
+  const toggleAllergy = (id: AllergyOption) => {
+    const next = preferences.allergies.includes(id)
+      ? preferences.allergies.filter((item) => item !== id)
+      : [...preferences.allergies, id];
+    void updatePreferences({ allergies: next });
+  };
+
+  const setMeasurementSystem = (measurementSystem: MeasurementSystem) => {
+    void updatePreferences({ measurementSystem });
+  };
+
+  const setNutritionDisplay = (nutritionDisplay: NutritionDisplay) => {
+    void updatePreferences({ nutritionDisplay });
+  };
 
   const handleSignIn = async () => {
     try {
@@ -178,13 +259,94 @@ export default function ProfileScreen() {
           </View>
         </View>
 
-        {/* Placeholder for future settings */}
-        <View style={styles.placeholder}>
-          <Text style={[styles.placeholderText, { textAlign }]}>{t("screenComingSoonTitle")}</Text>
-          <Text style={[styles.placeholderSubtext, { textAlign }]}>{t("screenComingSoonBody")}</Text>
+        <View style={styles.preferencesSection}>
+          <View style={styles.sectionTitleRow}>
+            <Text style={[styles.sectionTitle, { textAlign }]}>{t("recipePreferences" as any)}</Text>
+            {preferencesSaving ? <ActivityIndicator color="#1e9f92" size="small" /> : null}
+          </View>
+
+          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesDiet" as any)}</Text>
+          <View style={styles.chipWrap}>
+            {DIET_OPTIONS.map((option) => (
+              <PreferenceChip
+                key={option.id}
+                label={t(option.labelKey as any)}
+                active={preferences.diet.includes(option.id)}
+                onPress={() => toggleDiet(option.id)}
+              />
+            ))}
+          </View>
+
+          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesAllergies" as any)}</Text>
+          <View style={styles.chipWrap}>
+            {ALLERGY_OPTIONS.map((option) => (
+              <PreferenceChip
+                key={option.id}
+                label={t(option.labelKey as any)}
+                active={preferences.allergies.includes(option.id)}
+                onPress={() => toggleAllergy(option.id)}
+              />
+            ))}
+          </View>
+
+          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesMeasurements" as any)}</Text>
+          <View style={styles.pillSelector}>
+            <Pressable
+              style={[styles.pill, preferences.measurementSystem === "imperial" && styles.pillActive]}
+              onPress={() => setMeasurementSystem("imperial")}
+            >
+              <Text style={[styles.pillText, preferences.measurementSystem === "imperial" && styles.pillTextActive]}>
+                {t("measurementImperial")}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.pill, preferences.measurementSystem === "metric" && styles.pillActive]}
+              onPress={() => setMeasurementSystem("metric")}
+            >
+              <Text style={[styles.pillText, preferences.measurementSystem === "metric" && styles.pillTextActive]}>
+                {t("measurementMetric")}
+              </Text>
+            </Pressable>
+          </View>
+
+          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesNutrition" as any)}</Text>
+          <View style={styles.pillSelector}>
+            <Pressable
+              style={[styles.pill, preferences.nutritionDisplay === "show" && styles.pillActive]}
+              onPress={() => setNutritionDisplay("show")}
+            >
+              <Text style={[styles.pillText, preferences.nutritionDisplay === "show" && styles.pillTextActive]}>
+                {t("nutritionShow")}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.pill, preferences.nutritionDisplay === "hide" && styles.pillActive]}
+              onPress={() => setNutritionDisplay("hide")}
+            >
+              <Text style={[styles.pillText, preferences.nutritionDisplay === "hide" && styles.pillTextActive]}>
+                {t("nutritionHide")}
+              </Text>
+            </Pressable>
+          </View>
         </View>
       </ScrollView>
     </ScreenTransition>
+  );
+}
+
+function PreferenceChip({
+  label,
+  active,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable style={[styles.preferenceChip, active && styles.preferenceChipActive]} onPress={onPress}>
+      <Text style={[styles.preferenceChipText, active && styles.preferenceChipTextActive]}>{label}</Text>
+    </Pressable>
   );
 }
 
@@ -290,22 +452,51 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 32,
   },
-  placeholder: {
+  preferencesSection: {
     padding: 24,
     borderRadius: 16,
     backgroundColor: "#fff",
     borderWidth: 1,
     borderColor: "#e2e2e2",
+    gap: 14,
   },
-  placeholderText: {
-    fontSize: 20,
+  sectionTitleRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+  },
+  preferenceLabel: {
+    fontSize: 13,
     fontWeight: "700",
-    color: "#252821",
-    marginBottom: 8,
-  },
-  placeholderSubtext: {
-    fontSize: 16,
     color: "#4f5347",
+    textTransform: "uppercase",
+    marginTop: 4,
+  },
+  chipWrap: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  preferenceChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "#dfe5d7",
+    backgroundColor: "#f7f8f1",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  preferenceChipActive: {
+    borderColor: "#1e9f92",
+    backgroundColor: "#E0F7EF",
+  },
+  preferenceChipText: {
+    color: "#4f5347",
+    fontSize: 14,
+    fontWeight: "600",
+  },
+  preferenceChipTextActive: {
+    color: "#087563",
   },
   languageSection: {
     marginBottom: 32,

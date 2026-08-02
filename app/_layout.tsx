@@ -12,6 +12,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider } from '@/lib/auth/AuthProvider';
 import { LanguageProvider, useLanguage } from '@/lib/i18n/LanguageProvider';
+import { getShareIntentKey, shouldRedirectShareIntent } from '@/lib/import/navigation';
 import { brandFontSources } from '@/lib/theme/fonts';
 
 export {
@@ -88,11 +89,12 @@ function RootLayoutNav() {
   const direction = isRTL ? "rtl" : "ltr";
   const router = useRouter();
   const { isReady, hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
-  const hasRedirected = useRef(false);
+  const lastShareKey = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isReady || !hasShareIntent || hasRedirected.current) return;
-    hasRedirected.current = true;
+    const currentKey = getShareIntentKey(shareIntent);
+    if (!isReady || !hasShareIntent || !shouldRedirectShareIntent(currentKey, lastShareKey.current)) return;
+    lastShareKey.current = currentKey;
     const url = shareIntent.webUrl ?? undefined;
     const text = shareIntent.text ?? undefined;
     const firstFile = shareIntent.files?.[0];

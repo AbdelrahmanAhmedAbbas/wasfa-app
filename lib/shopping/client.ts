@@ -1,6 +1,6 @@
 import { supabase } from "@/lib/supabase/client";
 
-import type { RecipeDetail } from "@/lib/recipes/client";
+import { normalizeLocalizedRecipeText, type LocalizedRecipeText, type RecipeDetail } from "@/lib/recipes/client";
 
 export type ShoppingListItem = {
   id: string;
@@ -11,6 +11,7 @@ export type ShoppingListItem = {
   recipe?: {
     id: string;
     title: string;
+    localized: Partial<Record<"en" | "ar", LocalizedRecipeText>>;
     source_thumbnail_url: string | null;
   } | null;
 };
@@ -25,6 +26,7 @@ type ShoppingListRow = {
     | {
         id: string;
         title: string;
+        localized_json?: unknown;
         source_thumbnail_url: string | null;
       }[]
     | null;
@@ -43,7 +45,7 @@ function formatIngredient(item: {
 export async function listShoppingListItems(): Promise<ShoppingListItem[]> {
   const { data, error } = await supabase
     .from("shopping_list_items")
-    .select("id,recipe_id,ingredient_text,checked,created_at,recipe:recipes(id,title,source_thumbnail_url)")
+    .select("id,recipe_id,ingredient_text,checked,created_at,recipe:recipes(id,title,localized_json,source_thumbnail_url)")
     .order("created_at", { ascending: false });
 
   if (error) throw error;
@@ -53,7 +55,14 @@ export async function listShoppingListItems(): Promise<ShoppingListItem[]> {
     ingredient_text: row.ingredient_text,
     checked: row.checked,
     created_at: row.created_at,
-    recipe: Array.isArray(row.recipe) ? row.recipe[0] ?? null : null,
+    recipe: Array.isArray(row.recipe) && row.recipe[0]
+      ? {
+          id: row.recipe[0].id,
+          title: row.recipe[0].title,
+          localized: normalizeLocalizedRecipeText(row.recipe[0].localized_json),
+          source_thumbnail_url: row.recipe[0].source_thumbnail_url,
+        }
+      : null,
   }));
 }
 

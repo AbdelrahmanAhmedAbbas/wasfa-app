@@ -62,7 +62,11 @@ type GroupedItem = {
   recipes: Set<string>;
 };
 
-function groupItems(items: ShoppingListItem[]): GroupedItem[] {
+function getShoppingRecipeTitle(item: ShoppingListItem, language: "en" | "ar") {
+  return item.recipe?.localized?.[language]?.title || item.recipe?.title || "Recipe";
+}
+
+function groupItems(items: ShoppingListItem[], language: "en" | "ar"): GroupedItem[] {
   const groups: Record<string, {
     amount: number;
     unit: string | null;
@@ -70,12 +74,15 @@ function groupItems(items: ShoppingListItem[]): GroupedItem[] {
     checked: boolean;
     related: ShoppingListItem[];
     recipes: Set<string>;
+    recipeTitles: Record<string, string>;
   }> = {};
 
   const ungrouped: GroupedItem[] = [];
 
   items.forEach(item => {
     const { amount, unit, name, original } = parseIngredientText(item.ingredient_text);
+    const recipeId = item.recipe?.id ?? item.recipe_id;
+    const recipeTitle = getShoppingRecipeTitle(item, language);
 
     // If no amount can be parsed, or name is empty, just push it ungrouped
     if (amount === null || !name) {
@@ -84,7 +91,7 @@ function groupItems(items: ShoppingListItem[]): GroupedItem[] {
         ingredient_text: item.ingredient_text,
         checked: item.checked,
         relatedItems: [item],
-        recipes: new Set([item.recipe?.title || "Recipe"])
+        recipes: new Set([recipeTitle])
       });
       return;
     }
@@ -98,13 +105,15 @@ function groupItems(items: ShoppingListItem[]): GroupedItem[] {
         name,
         checked: item.checked,
         related: [item],
-        recipes: new Set([item.recipe?.title || "Recipe"])
+        recipes: new Set([recipeTitle]),
+        recipeTitles: { [recipeId]: recipeTitle }
       };
     } else {
       groups[key].amount += amount;
       groups[key].checked = groups[key].checked && item.checked;
       groups[key].related.push(item);
-      groups[key].recipes.add(item.recipe?.title || "Recipe");
+      groups[key].recipeTitles[recipeId] = recipeTitle;
+      groups[key].recipes.add(recipeTitle);
     }
   });
 
@@ -126,7 +135,7 @@ function groupItems(items: ShoppingListItem[]): GroupedItem[] {
 }
 
 export default function GroceryScreen() {
-  const { isRTL, t } = useLanguage();
+  const { isRTL, t, language } = useLanguage();
   const [items, setItems] = useState<ShoppingListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -151,7 +160,7 @@ export default function GroceryScreen() {
 
   const align = isRTL ? "right" : "left";
 
-  const groupedItems = useMemo(() => groupItems(items), [items]);
+  const groupedItems = useMemo(() => groupItems(items, language), [items, language]);
 
   const toggleGroup = async (group: GroupedItem) => {
     const next = !group.checked;

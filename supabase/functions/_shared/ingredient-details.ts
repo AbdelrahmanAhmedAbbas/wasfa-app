@@ -2,13 +2,13 @@ import type { IngredientItem } from "./types.ts";
 
 const SOURCE_PRIORITY: Record<NonNullable<IngredientItem["source"]>, number> = {
   web_research: 1,
+  ai_estimate: 1,
   transcript: 2,
   caption: 3,
-  video_ocr: 4,
   user_edit: 5,
 };
 
-const MEASURE_UNITS = new Set([
+export const MEASURE_UNITS = new Set([
   "g",
   "gram",
   "grams",
@@ -47,10 +47,62 @@ const MEASURE_UNITS = new Set([
   "cloves",
   "bunch",
   "bunches",
+  "pinch",
+  "pinches",
+  "dash",
+  "dashes",
+  "splash",
+  "splashes",
+  "drop",
+  "drops",
+  "handful",
+  "handfuls",
+  "stick",
+  "sticks",
+  "head",
+  "heads",
+  "sprig",
+  "sprigs",
+  "leaf",
+  "leaves",
 ]);
 
+const UNIT_NORMALIZATION: Record<string, string> = {
+  "tbsp.": "tbsp",
+  "tbs": "tbsp",
+  "tbs.": "tbsp",
+  "tsp.": "tsp",
+  "ts": "tsp",
+  "ts.": "tsp",
+  "fl oz": "oz",
+  "fl. oz": "oz",
+  "fl. oz.": "oz",
+  "fl-oz": "oz",
+  "gr": "g",
+  "gr.": "g",
+  "gm": "g",
+  "gms": "g",
+  "kgs": "kg",
+  "lb.": "lb",
+  "lbs.": "lbs",
+  "ml.": "ml",
+  "mls": "ml",
+  "l.": "l",
+};
+
+export function normalizeUnit(value: string | null | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!trimmed) return "";
+  if (UNIT_NORMALIZATION[trimmed]) return UNIT_NORMALIZATION[trimmed];
+  const stripped = trimmed.replace(/\.$/, "");
+  if (UNIT_NORMALIZATION[stripped]) return UNIT_NORMALIZATION[stripped];
+  if (MEASURE_UNITS.has(stripped)) return stripped;
+  return trimmed;
+}
+
 const QUANTITY_WITH_UNIT_PATTERN =
-  /\b\d+(?:[./]\d+)?\s*(?:g|grams?|kg|oz|ounces?|lb|lbs|pounds?|ml|l|liters?|litres?|tsp|teaspoons?|tbsp|tablespoons?|cups?|slices?|pieces?|whole|cans?|packs?|cloves?|bunches?)\b/i;
+  /\b\d+(?:[./]\d+)?\s*(?:g|grams?|kg|oz|ounces?|lb|lbs|pounds?|ml|l|liters?|litres?|tsp|teaspoons?|tbsp|tablespoons?|cups?|slices?|pieces?|whole|cans?|packs?|cloves?|bunches?|pinches?|dashes?|splashes?|drops?|handfuls?|sticks?|heads?|sprigs?|leaves|leaf)\b/i;
 
 function hasText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -82,10 +134,11 @@ export function isIngredientDetailComplete(
   ingredient: Pick<IngredientItem, "quantity" | "unit" | "size">
 ): boolean {
   const quantity = optionalString(ingredient.quantity) ?? "";
-  const unit = optionalString(ingredient.unit)?.toLowerCase() ?? "";
+  const unit = normalizeUnit(ingredient.unit);
   const size = optionalString(ingredient.size) ?? "";
 
   if (quantity && unit && MEASURE_UNITS.has(unit)) return true;
+  if (quantity && unit) return true;
   if (quantity && size) return true;
   if (quantity && QUANTITY_WITH_UNIT_PATTERN.test(quantity)) return true;
   if (size && QUANTITY_WITH_UNIT_PATTERN.test(size)) return true;
@@ -96,6 +149,7 @@ export function markIngredientReviewState<T extends IngredientItem>(ingredient: 
   return compactIngredient({
     ...ingredient,
     needs_review: !isIngredientDetailComplete(ingredient),
+    is_estimated: ingredient.is_estimated === true || ingredient.source === "web_research" || ingredient.source === "ai_estimate",
   }) as T;
 }
 
@@ -142,6 +196,7 @@ function compactIngredient(ingredient: IngredientItem): IngredientItem {
   if (optionalString(ingredient.evidence_text)) result.evidence_text = optionalString(ingredient.evidence_text);
   if (optionalString(ingredient.citation_url)) result.citation_url = optionalString(ingredient.citation_url);
   if (typeof ingredient.needs_review === "boolean") result.needs_review = ingredient.needs_review;
+  if (ingredient.is_estimated === true) result.is_estimated = true;
   return result;
 }
 

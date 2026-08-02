@@ -10,6 +10,16 @@ import type {
   SourcePlatform,
 } from "./types.ts";
 
+export type CachedExtractionRow = {
+  normalized_source_url: string;
+  source_platform: SourcePlatform;
+  source_post_id: string | null;
+  payload: RecipeDraft;
+  extraction_model: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 type RequestUser = {
   id: string;
   isAuthenticated: boolean;
@@ -252,6 +262,46 @@ export async function getRecipeDraftByJobId(
   return data;
 }
 
+export async function findCachedExtractionByUrl(
+  adminClient: ReturnType<typeof createClient>,
+  normalizedUrl: string
+): Promise<CachedExtractionRow | null> {
+  const { data, error } = await adminClient
+    .from("recipe_extraction_cache")
+    .select("normalized_source_url, source_platform, source_post_id, payload, extraction_model, created_at, updated_at")
+    .eq("normalized_source_url", normalizedUrl)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data as CachedExtractionRow | null;
+}
+
+export async function upsertExtractionCache(
+  adminClient: ReturnType<typeof createClient>,
+  params: {
+    normalizedUrl: string;
+    payload: RecipeDraft;
+    sourcePlatform: SourcePlatform;
+    sourcePostId?: string | null;
+    modelInfo?: { extractionModel?: string | null } | null;
+  }
+) {
+  const { error } = await adminClient
+    .from("recipe_extraction_cache")
+    .upsert(
+      {
+        normalized_source_url: params.normalizedUrl,
+        source_platform: params.sourcePlatform,
+        source_post_id: params.sourcePostId ?? null,
+        payload: params.payload,
+        extraction_model: params.modelInfo?.extractionModel ?? null,
+      },
+      { onConflict: "normalized_source_url" }
+    );
+
+  if (error) throw error;
+}
+
 export async function confirmRecipeFromDraft(
   adminClient: ReturnType<typeof createClient>,
   params: {
@@ -273,12 +323,15 @@ export async function confirmRecipeFromDraft(
         source_thumbnail_url: params.sourceThumbnailUrl ?? null,
         title: params.payload.title,
         description: params.payload.description ?? null,
+        cuisine: params.payload.cuisine,
+        meal_type: params.payload.meal_type,
         servings: params.payload.servings ?? null,
         prep_minutes: params.payload.prep_minutes ?? null,
         cook_minutes: params.payload.cook_minutes ?? null,
         ingredients_json: params.payload.ingredients,
         steps_json: params.payload.steps,
         nutrition_json: params.payload.nutrition_estimate ?? {},
+        localized_json: params.payload.localized ?? {},
       },
       { onConflict: "draft_job_id" }
     )

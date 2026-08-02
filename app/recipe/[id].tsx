@@ -2,25 +2,41 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { router, useLocalSearchParams } from "expo-router";
 import type { ComponentProps } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
   Image,
-  Linking,
   Pressable,
   ScrollView,
+  Share,
   StyleSheet,
+  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
-import { deleteRecipeById, getRecipeById, type RecipeDetail } from "@/lib/recipes/client";
-import { addRecipeIngredientsToShoppingList } from "@/lib/shopping/client";
-import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
+import { deleteRecipeById, getRecipeById, recalculateRecipeServings, type LocalizedRecipeText, type RecipeDetail } from "@/lib/recipes/client";
+import { getIngredientWarnings } from "@/lib/recipes/ingredient-warnings";
+import { loadRecipePreferences, type RecipePreferences } from "@/lib/recipes/preferences";
+import {
+  formatStepMetaItems,
+  getEstimatedIngredientLabel,
+  getSafeStepTitle,
+} from "@/lib/recipes/rich-step-display";
+import {
+  cleanLocalizedIngredientName,
+  convertIngredientAmount,
+  getLocalizedUnitLabel,
+  type MeasurementSystem,
+} from "@/lib/recipes/units";
+import { onboardingImages } from "@/lib/theme/onboarding";
 
 type RecipeIngredient = RecipeDetail["ingredients_json"][number];
+type RecipeStep = RecipeDetail["steps_json"][number];
+type LocalizedIngredient = RecipeIngredient & { localizedName: string; localizedNotes?: string };
 
 const colors = {
   background: "#F9FAF3",
@@ -36,14 +52,15 @@ const colors = {
   mintText: "#00705A",
   warningBg: "#FFF1F1",
   warningText: "#BA1A1A",
+  warningBorder: "#FFDAD6",
   yellow: "#F5A623",
 };
 
-function formatDuration(recipe: RecipeDetail) {
+function formatDuration(recipe: RecipeDetail, t: (key: any) => string) {
   const total = (recipe.prep_minutes ?? 0) + (recipe.cook_minutes ?? 0);
-  if (total > 0) return `${total} mins`;
-  if (recipe.prep_minutes) return `${recipe.prep_minutes} mins`;
-  if (recipe.cook_minutes) return `${recipe.cook_minutes} mins`;
+  if (total > 0) return t("durationMinutes").replace("{count}", String(total));
+  if (recipe.prep_minutes) return t("durationMinutes").replace("{count}", String(recipe.prep_minutes));
+  if (recipe.cook_minutes) return t("durationMinutes").replace("{count}", String(recipe.cook_minutes));
   return "-";
 }
 
@@ -52,37 +69,67 @@ function getNutritionNumber(recipe: RecipeDetail, key: string) {
   return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null;
 }
 
-function getIngredientAmount(item: RecipeIngredient) {
-  return [item.quantity, item.unit || item.size].filter(Boolean).join(" ").trim();
+function stripOppositeScriptFallback(value: string | undefined, language: "en" | "ar") {
+  if (!value) return undefined;
+  const pattern = language === "en" ? /[\u0600-\u06FF]+/g : /[A-Za-z]+/g;
+  return value.replace(pattern, "").replace(/\s{2,}/g, " ").trim() || value;
 }
 
-function getIngredientNote(item: RecipeIngredient) {
-  if (item.notes) return item.notes;
-  if (item.preparation) return item.preparation;
-  if (item.source === "web_research") return "WEB";
-  if (item.source === "video_ocr") return "OCR";
-  return null;
+function getLocalizedRecipeText(recipe: RecipeDetail, language: "en" | "ar", translate: (key: any) => string): LocalizedRecipeText {
+  const localized = recipe.localized[language];
+  return {
+    title: stripOppositeScriptFallback(localized?.title, language) ?? recipe.title,
+    description: stripOppositeScriptFallback(localized?.description, language) ?? recipe.description ?? undefined,
+    cuisine: stripOppositeScriptFallback(localized?.cuisine, language) ?? recipe.cuisine ?? translate("recipeCuisineFallback"),
+    meal_type: stripOppositeScriptFallback(localized?.meal_type, language) ?? recipe.meal_type ?? translate("recipeMealTypeFallback"),
+    ingredients: recipe.ingredients_json.map((ingredient, index) => {
+      const rawName = stripOppositeScriptFallback(localized?.ingredients[index]?.name, language) ?? ingredient.name;
+      return {
+        name: cleanLocalizedIngredientName(rawName, ingredient.quantity),
+        notes: stripOppositeScriptFallback(localized?.ingredients[index]?.notes, language) ?? ingredient.notes,
+      };
+    }),
+    steps: recipe.steps_json.map((step, index) => ({
+      ...step,
+      title: stripOppositeScriptFallback(localized?.steps[index]?.title, language) ?? step.title,
+      text: stripOppositeScriptFallback(localized?.steps[index]?.text, language) ?? step.text,
+      equipment: localized?.steps[index]?.equipment?.map((item) => stripOppositeScriptFallback(item, language) ?? item) ?? step.equipment,
+      ingredients_used: localized?.steps[index]?.ingredients_used?.map((item) => stripOppositeScriptFallback(item, language) ?? item) ?? step.ingredients_used,
+      tips: localized?.steps[index]?.tips?.map((tip) => stripOppositeScriptFallback(tip, language) ?? tip) ?? step.tips,
+    })),
+  };
 }
 
-function getSourceLabel(recipe: RecipeDetail) {
-  if (recipe.source_platform && recipe.source_platform !== "unknown") {
-    return recipe.source_platform[0].toUpperCase() + recipe.source_platform.slice(1);
-  }
-  return "Imported";
+function getIngredientAmount(item: RecipeIngredient, measurementSystem: MeasurementSystem | null, language: "en" | "ar") {
+  const converted = convertIngredientAmount(item, measurementSystem);
+  const unit = getLocalizedUnitLabel(converted.unit || item.size, language);
+  return [converted.quantity, unit].filter(Boolean).join(" ").trim();
 }
 
 export default function RecipeDetailsScreen() {
-  const { isRTL, t } = useLanguage();
+  const { isRTL, t, language } = useLanguage();
+  const { user } = useAuth();
   const params = useLocalSearchParams<{ id?: string }>();
   const recipeId = useMemo(() => (typeof params.id === "string" ? params.id : ""), [params.id]);
   const [recipe, setRecipe] = useState<RecipeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
-  const [toast, setToast] = useState<string | null>(null);
+  const [checkedIngredients, setCheckedIngredients] = useState<Set<number>>(() => new Set());
+  const [expandedTipSteps, setExpandedTipSteps] = useState<Set<number>>(() => new Set());
+  const [servingInput, setServingInput] = useState("");
+  const [recalculationMessage, setRecalculationMessage] = useState<string | null>(null);
+  const [preferences, setPreferences] = useState<RecipePreferences>({
+    diet: [],
+    allergies: [],
+    measurementSystem: null,
+    nutritionDisplay: "show",
+  });
+  const recalculationRequestRef = useRef(0);
 
   const insets = useSafeAreaInsets();
   const align = isRTL ? "right" : "left";
+  const writingDirection = isRTL ? "rtl" : "ltr";
 
   const load = useCallback(async () => {
     if (!recipeId) {
@@ -99,6 +146,9 @@ export default function RecipeDetailsScreen() {
         setRecipe(null);
       } else {
         setRecipe(row);
+        setServingInput(row.servings ? String(row.servings) : "");
+        setCheckedIngredients(new Set());
+        setExpandedTipSteps(new Set());
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("recipeNotFound"));
@@ -111,10 +161,51 @@ export default function RecipeDetailsScreen() {
     void load();
   }, [load]);
 
-  const showToast = (message: string) => {
-    setToast(message);
-    setTimeout(() => setToast(null), 2200);
-  };
+  useEffect(() => {
+    let isMounted = true;
+    void loadRecipePreferences(user?.id).then((value) => {
+      if (isMounted) setPreferences(value);
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, [user?.id]);
+
+  useEffect(() => {
+    if (!recipe) return;
+    const nextServings = Number(servingInput);
+    if (!Number.isFinite(nextServings) || nextServings < 1) return;
+    const normalizedServings = Math.trunc(nextServings);
+    if (normalizedServings === recipe.servings) {
+      setRecalculationMessage(null);
+      return;
+    }
+
+    const requestId = recalculationRequestRef.current + 1;
+    recalculationRequestRef.current = requestId;
+    setRecalculationMessage(t("recipeUpdatingIngredients" as any));
+
+    const timeout = setTimeout(() => {
+      void (async () => {
+        try {
+          const updated = await recalculateRecipeServings(recipe.id, normalizedServings);
+          if (recalculationRequestRef.current !== requestId) return;
+          setRecipe(updated);
+          setServingInput(updated.servings ? String(updated.servings) : "");
+          setCheckedIngredients(new Set());
+          setRecalculationMessage(t("recipeUpdatedIngredients" as any));
+          setTimeout(() => {
+            if (recalculationRequestRef.current === requestId) setRecalculationMessage(null);
+          }, 1400);
+        } catch (e) {
+          if (recalculationRequestRef.current !== requestId) return;
+          setRecalculationMessage(e instanceof Error ? e.message : t("recipeUpdateAmountsFailed" as any));
+        }
+      })();
+    }, 1000);
+
+    return () => clearTimeout(timeout);
+  }, [recipe, servingInput]);
 
   const handleDeleteRecipe = () => {
     if (!recipe) return;
@@ -140,26 +231,45 @@ export default function RecipeDetailsScreen() {
     ]);
   };
 
-  const handleAddToShoppingList = async () => {
+  const handleShareRecipe = async () => {
     if (!recipe) return;
+    const shareText = getLocalizedRecipeText(recipe, language, t);
+    const message = [shareText.title, shareText.description, recipe.source_url ?? recipe.source_reel_url]
+      .filter(Boolean)
+      .join("\n\n");
     try {
-      setWorking(true);
-      await addRecipeIngredientsToShoppingList(recipe);
-      showToast(t("ingredientsAdded"));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : t("recipeNotFound"));
-    } finally {
-      setWorking(false);
+      await Share.share({
+        title: shareText.title,
+        message,
+        url: recipe.source_url ?? recipe.source_reel_url ?? undefined,
+      });
+    } catch {
+      setError(t("couldNotShareRecipe" as any));
     }
   };
 
-  const handleOpenReel = async () => {
-    if (!recipe?.source_reel_url) return;
-    try {
-      await Linking.openURL(recipe.source_reel_url);
-    } catch {
-      setError(t("couldNotOpenLink"));
-    }
+  const toggleIngredientChecked = (index: number) => {
+    setCheckedIngredients((current) => {
+      const next = new Set(current);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  const toggleStepTips = (index: number) => {
+    setExpandedTipSteps((current) => {
+      const next = new Set(current);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
   };
 
   if (loading) {
@@ -187,14 +297,20 @@ export default function RecipeDetailsScreen() {
   const protein = getNutritionNumber(recipe, "protein_g");
   const carbs = getNutritionNumber(recipe, "carbs_g");
   const fat = getNutritionNumber(recipe, "fat_g");
-  const sourceLabel = getSourceLabel(recipe);
-  const ingredientCount = recipe.ingredients_json.length;
+  const showNutrition = preferences.nutritionDisplay !== "hide";
+  const recipeText = getLocalizedRecipeText(recipe, language, t);
+  const localizedIngredients: LocalizedIngredient[] = recipe.ingredients_json.map((item, index) => ({
+    ...item,
+    localizedName: recipeText.ingredients[index]?.name ?? item.name,
+    localizedNotes: recipeText.ingredients[index]?.notes,
+  }));
+  const localizedSteps = recipeText.steps.slice().sort((a, b) => a.order - b.order);
 
   return (
     <View style={styles.container}>
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: 96 + insets.bottom }]}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: 32 + insets.bottom }]}
         bounces={false}
         showsVerticalScrollIndicator={false}
       >
@@ -214,8 +330,8 @@ export default function RecipeDetailsScreen() {
               <FontAwesome name="angle-left" size={28} color="#FFFFFF" />
             </Pressable>
             <View style={styles.navActions}>
-              <Pressable onPress={() => void handleOpenReel()} style={styles.glassButton}>
-                <FontAwesome name="external-link" size={17} color="#FFFFFF" />
+              <Pressable onPress={() => void handleShareRecipe()} style={styles.glassButton}>
+                <FontAwesome name="share-square-o" size={17} color="#FFFFFF" />
               </Pressable>
               <Pressable onPress={handleDeleteRecipe} style={styles.glassButton}>
                 <FontAwesome name="trash-o" size={18} color="#FFFFFF" />
@@ -229,92 +345,97 @@ export default function RecipeDetailsScreen() {
             <View style={styles.titleRow}>
               <View style={styles.titleBlock}>
                 <Text style={[styles.recipeTitle, { textAlign: align }]} numberOfLines={3}>
-                  {recipe.title}
+                  {recipeText.title}
                 </Text>
-                {recipe.description ? (
+                {recipeText.description ? (
                   <Text style={[styles.description, { textAlign: align }]} numberOfLines={4}>
-                    {recipe.description}
+                    {recipeText.description}
                   </Text>
                 ) : null}
               </View>
 
               <View style={styles.tagColumn}>
                 <View style={styles.mintPill}>
-                  <Text style={styles.mintPillText}>{sourceLabel}</Text>
+                  <Text style={styles.mintPillText}>{recipeText.cuisine || t("recipeCuisineFallback")}</Text>
                 </View>
                 <View style={styles.greenPill}>
-                  <Text style={styles.greenPillText}>Recipe</Text>
-                </View>
-                <View style={styles.ratingRow}>
-                  <FontAwesome name="star" size={14} color={colors.yellow} />
-                  <Text style={styles.ratingText}>4.8</Text>
+                  <Text style={styles.greenPillText}>{recipeText.meal_type || t("recipeMealTypeFallback")}</Text>
                 </View>
               </View>
             </View>
 
             <View style={styles.metaWrap}>
-              <MetaPill icon="clock-o" label={formatDuration(recipe)} />
-              <MetaPill icon="users" label={`${recipe.servings ?? "-"} Servings`} />
-              <MetaPill icon="fire" label={calories ? `${calories} kcal` : "kcal"} />
+              <MetaPill icon="clock-o" label={formatDuration(recipe, t)} />
+              <View style={styles.servingsEditor}>
+                <FontAwesome name="users" size={15} color={colors.muted} />
+                <TextInput
+                  value={servingInput}
+                  onChangeText={(value) => setServingInput(value.replace(/[^0-9]/g, ""))}
+                  keyboardType="number-pad"
+                  style={styles.servingsInput}
+                  placeholder="-"
+                  placeholderTextColor={colors.muted}
+                />
+                <Text style={styles.metaPillText}>{t("servings")}</Text>
+              </View>
             </View>
 
-            <Pressable
-              style={[styles.primaryButton, working && styles.disabledButton]}
-              onPress={() => void handleAddToShoppingList()}
-              disabled={working}
-            >
-              {working ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <>
-                  <FontAwesome name="calendar-plus-o" size={17} color="#FFFFFF" />
-                  <Text style={styles.primaryButtonText}>Add to menu</Text>
-                </>
-              )}
-            </Pressable>
+            <View style={styles.preferenceHint}>
+              <FontAwesome name="info-circle" size={14} color={colors.primaryDark} />
+              <Text style={[styles.preferenceHintText, { textAlign: align, writingDirection }]}>
+                {t("recipeUnitsHint" as any)}
+              </Text>
+            </View>
+            {recalculationMessage ? (
+              <Text style={styles.recalculationText}>{recalculationMessage}</Text>
+            ) : null}
           </View>
 
-          <SectionTitle title="Nutrition" />
-          <View style={styles.nutritionGrid}>
-            <MacroCard label="Protein" value={protein ? `${protein}g` : "-"} tone="green" />
-            <MacroCard label="Carbs" value={carbs ? `${carbs}g` : "-"} tone="red" />
-            <MacroCard label="Fats" value={fat ? `${fat}g` : "-"} tone="yellow" />
-            <MacroCard label="Calories" value={calories ? `${calories}` : "-"} tone="orange" wide />
-          </View>
+          {showNutrition ? (
+            <>
+              <SectionTitle title={t("nutrition")} />
+              <View style={styles.nutritionGrid}>
+                <MacroCard label={t("protein")} value={protein ? `${protein}${t("macroGramSuffix" as any)}` : "-"} tone="green" />
+                <MacroCard label={t("carbs")} value={carbs ? `${carbs}${t("macroGramSuffix" as any)}` : "-"} tone="red" />
+                <MacroCard label={t("fats")} value={fat ? `${fat}${t("macroGramSuffix" as any)}` : "-"} tone="yellow" />
+                <MacroCard label={t("calories")} value={calories ? `${calories}` : "-"} tone="orange" wide />
+              </View>
+            </>
+          ) : null}
 
-          <SectionTitle title="Ingredients" />
+          <SectionTitle title={t("ingredients")} />
           <View style={styles.ingredientsList}>
-            {recipe.ingredients_json.map((item, index) => (
-              <IngredientRow key={`${item.name}-${index}`} item={item} />
+            {localizedIngredients.map((item, index) => (
+              <IngredientRow
+                key={`${item.localizedName}-${index}`}
+                item={item}
+                measurementSystem={preferences.measurementSystem}
+                checked={checkedIngredients.has(index)}
+                warnings={getIngredientWarnings(recipe.ingredients_json[index], preferences)}
+                suggestedAlternativeLabel={t("suggestedAlternative" as any)}
+                estimatedLabelText={t("estimatedIngredient" as any)}
+                isRTL={isRTL}
+                language={language}
+                onToggle={() => toggleIngredientChecked(index)}
+              />
             ))}
           </View>
 
-          <Pressable
-            style={[styles.secondaryAction, working && styles.disabledButton]}
-            onPress={() => void handleAddToShoppingList()}
-            disabled={working}
-          >
-            <FontAwesome name="cart-plus" size={18} color={colors.primaryDark} />
-            <Text style={styles.secondaryActionText}>Add {ingredientCount} to Grocery List</Text>
-          </Pressable>
-
-          <SectionTitle title="Instructions" />
+          <SectionTitle title={t("instructions")} />
           <View style={styles.stepsList}>
-            {recipe.steps_json
-              .slice()
-              .sort((a, b) => a.order - b.order)
-              .map((item, index) => (
-                <View key={`step-${index}`} style={styles.stepCard}>
-                  <View style={styles.stepBadge}>
-                    <Text style={styles.stepBadgeText}>{item.order || index + 1}</Text>
-                  </View>
-                  <View style={styles.stepContent}>
-                    <Text style={[styles.stepText, { textAlign: align }]}>{item.text}</Text>
-                    {typeof item.duration_minutes === "number" ? (
-                      <Text style={[styles.stepMeta, { textAlign: align }]}>~{item.duration_minutes} min</Text>
-                    ) : null}
-                  </View>
-                </View>
+            {localizedSteps.map((item, index) => (
+                <StepInstructionCard
+                  key={`step-${index}`}
+                  item={item}
+                  index={index}
+                  expanded={expandedTipSteps.has(index)}
+                  isRTL={isRTL}
+                  measurementSystem={preferences.measurementSystem}
+                  stepFallbackLabel={t("stepN").replace("{order}", String(item.order || index + 1))}
+                  tipLabel={t("tipLabel")}
+                  minuteLabel={t("homeMinuteShort")}
+                  onToggleTips={() => toggleStepTips(index)}
+                />
               ))}
           </View>
 
@@ -322,28 +443,15 @@ export default function RecipeDetailsScreen() {
             <Image source={onboardingImages.mascotReading} style={styles.tipMascot} resizeMode="contain" />
             <View style={styles.tipTitleRow}>
               <FontAwesome name="lightbulb-o" size={18} color={colors.primaryDark} />
-              <Text style={styles.tipTitle}>Chef's Tip</Text>
+              <Text style={styles.tipTitle}>{t("chefTipTitle")}</Text>
             </View>
             <Text style={styles.tipText}>
-              Check the quantities before cooking, then add everything to your grocery list in one tap.
+              {t("chefTipBody")}
             </Text>
           </View>
         </View>
       </ScrollView>
 
-      <View style={[styles.bottomNavigation, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-        <BottomNavItem icon="home" label="Home" onPress={() => router.replace("/(tabs)")} />
-        <BottomNavItem icon="cutlery" label="Recipes" active onPress={() => router.replace("/(tabs)")} />
-        <BottomNavItem icon="calendar" label="Plan" onPress={() => router.replace("/(tabs)/planner")} />
-        <BottomNavItem icon="shopping-cart" label="Grocery" onPress={() => router.replace("/(tabs)/grocery")} />
-        <BottomNavItem icon="user-o" label="Profile" onPress={() => router.replace("/(tabs)/profile")} />
-      </View>
-
-      {toast ? (
-        <View style={[styles.toast, { bottom: Math.max(insets.bottom, 12) + 76 }]}>
-          <Text style={styles.toastText}>{toast}</Text>
-        </View>
-      ) : null}
     </View>
   );
 }
@@ -397,45 +505,143 @@ function MacroCard({
   );
 }
 
-function IngredientRow({ item }: { item: RecipeIngredient }) {
-  const amount = getIngredientAmount(item);
-  const note = getIngredientNote(item);
+function IngredientRow({
+  item,
+  measurementSystem,
+  checked,
+  warnings,
+  suggestedAlternativeLabel,
+  estimatedLabelText,
+  isRTL,
+  language,
+  onToggle,
+}: {
+  item: LocalizedIngredient;
+  measurementSystem: MeasurementSystem | null;
+  checked: boolean;
+  warnings: ReturnType<typeof getIngredientWarnings>;
+  suggestedAlternativeLabel: string;
+  estimatedLabelText: string;
+  isRTL: boolean;
+  language: "en" | "ar";
+  onToggle: () => void;
+}) {
+  const amount = getIngredientAmount(item, measurementSystem, language);
+  const showEstimated = getEstimatedIngredientLabel(item) !== null;
+  const align = isRTL ? "right" : "left";
+  const writingDirection = isRTL ? "rtl" : "ltr";
   return (
     <View style={styles.ingredientRow}>
       <View style={styles.ingredientLeft}>
-        <View style={styles.checkbox}>
-          <FontAwesome name="check" size={10} color={colors.primary} />
-        </View>
+        <Pressable
+          accessibilityRole="checkbox"
+          accessibilityState={{ checked }}
+          onPress={onToggle}
+          style={[styles.checkbox, checked && styles.checkboxChecked]}
+        >
+          {checked ? <FontAwesome name="check" size={10} color="#FFFFFF" /> : null}
+        </Pressable>
         <View style={styles.ingredientNameBlock}>
-          <Text style={styles.ingredientName}>{item.name}</Text>
-          {note ? (
-            <View style={styles.notePill}>
-              <Text style={styles.notePillText}>{note.toUpperCase()}</Text>
+          <View style={styles.ingredientTitleLine}>
+            <Text style={[styles.ingredientName, { textAlign: align, writingDirection }]}>{item.localizedName}</Text>
+            {showEstimated ? (
+              <View style={styles.estimatedIngredientBadge}>
+                <Text style={styles.estimatedIngredientText}>{estimatedLabelText}</Text>
+              </View>
+            ) : null}
+          </View>
+          {warnings.map((warning, index) => (
+            <View key={`${warning.kind}-${index}`} style={[styles.warningBlock, { alignItems: isRTL ? "flex-end" : "flex-start" }]}>
+              <View style={styles.notePill}>
+                <Text style={styles.notePillText}>{warning.label}</Text>
+              </View>
+              {warning.detail ? <Text style={[styles.warningDetail, { textAlign: align, writingDirection }]}>{warning.detail}</Text> : null}
+              {warning.suggestion ? (
+                <Text style={[styles.warningSuggestion, { textAlign: align, writingDirection }]}>
+                  {suggestedAlternativeLabel.replace("{name}", warning.suggestion)}
+                </Text>
+              ) : null}
             </View>
-          ) : null}
+          ))}
         </View>
       </View>
-      <Text style={styles.ingredientAmount}>{amount || "-"}</Text>
+      <Text style={[styles.ingredientAmount, { textAlign: align, writingDirection }]}>
+        {amount || "-"}
+      </Text>
     </View>
   );
 }
 
-function BottomNavItem({
-  icon,
-  label,
-  active,
-  onPress,
+function StepInstructionCard({
+  item,
+  index,
+  expanded,
+  isRTL,
+  measurementSystem,
+  stepFallbackLabel,
+  tipLabel,
+  minuteLabel,
+  onToggleTips,
 }: {
-  icon: ComponentProps<typeof FontAwesome>["name"];
-  label: string;
-  active?: boolean;
-  onPress: () => void;
+  item: RecipeStep;
+  index: number;
+  expanded: boolean;
+  isRTL: boolean;
+  measurementSystem: MeasurementSystem | null;
+  stepFallbackLabel: string;
+  tipLabel: string;
+  minuteLabel: string;
+  onToggleTips: () => void;
 }) {
+  const align = isRTL ? "right" : "left";
+  const writingDirection = isRTL ? "rtl" : "ltr";
+  const metaItems = formatStepMetaItems(item, measurementSystem, minuteLabel);
+  const tips = item.tips?.filter((tip) => tip.trim()) ?? [];
+
   return (
-    <Pressable style={[styles.bottomNavItem, active && styles.bottomNavItemActive]} onPress={onPress}>
-      <FontAwesome name={icon} size={18} color={active ? colors.primaryDark : colors.muted} />
-      <Text style={[styles.bottomNavText, active && styles.bottomNavTextActive]}>{label}</Text>
-    </Pressable>
+    <View style={styles.stepCard}>
+      <View style={styles.stepBadge}>
+        <Text style={styles.stepBadgeText}>{item.order || index + 1}</Text>
+      </View>
+      <View style={styles.stepContent}>
+        <Text style={[styles.stepTitle, { textAlign: align, writingDirection }]}>
+          {getSafeStepTitle(item, index, stepFallbackLabel)}
+        </Text>
+        {metaItems.length ? (
+          <View style={styles.stepMetaWrap}>
+            {metaItems.map((meta) => (
+              <View key={meta} style={styles.stepMetaPill}>
+                <Text style={[styles.stepMetaPillText, { writingDirection }]}>{meta}</Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        <Text style={[styles.stepText, { textAlign: align, writingDirection }]}>{item.text}</Text>
+        {tips.length ? (
+          <View style={styles.stepTipSection}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded }}
+              onPress={onToggleTips}
+              style={styles.stepTipToggle}
+            >
+              <FontAwesome name="lightbulb-o" size={14} color={colors.primaryDark} />
+              <Text style={styles.stepTipToggleText}>{tipLabel}</Text>
+              <FontAwesome name={expanded ? "angle-up" : "angle-down"} size={16} color={colors.primaryDark} />
+            </Pressable>
+            {expanded ? (
+              <View style={styles.stepTipBlock}>
+                {tips.map((tip, tipIndex) => (
+                  <Text key={`${tip}-${tipIndex}`} style={[styles.stepTipText, { textAlign: align, writingDirection }]}>
+                    {tip}
+                  </Text>
+                ))}
+              </View>
+            ) : null}
+          </View>
+        ) : null}
+      </View>
+    </View>
   );
 }
 
@@ -569,6 +775,7 @@ const styles = StyleSheet.create({
   tagColumn: {
     alignItems: "flex-end",
     gap: 8,
+    maxWidth: 132,
   },
   mintPill: {
     borderRadius: 999,
@@ -592,15 +799,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 20,
   },
-  ratingRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-  },
-  ratingText: {
-    color: colors.text,
-    fontSize: 14,
-  },
   metaWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
@@ -622,26 +820,46 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 14,
   },
-  primaryButton: {
-    minHeight: 56,
-    borderRadius: 999,
-    backgroundColor: colors.primary,
+  servingsEditor: {
+    minHeight: 44,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
-    gap: 12,
-    paddingHorizontal: 24,
-    paddingVertical: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.12,
-    shadowRadius: 6,
-    elevation: 3,
+    gap: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 17,
+    paddingVertical: 7,
   },
-  primaryButtonText: {
-    color: "#FFFFFF",
-    fontSize: 16,
+  servingsInput: {
+    minWidth: 30,
+    color: colors.muted,
+    fontSize: 14,
     fontWeight: "700",
+    padding: 0,
+    textAlign: "center",
+  },
+  preferenceHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.softGreen,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+  },
+  preferenceHintText: {
+    flex: 1,
+    color: colors.primaryDark,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  recalculationText: {
+    color: colors.muted,
+    fontSize: 13,
   },
   sectionHeader: {
     width: "100%",
@@ -735,22 +953,47 @@ const styles = StyleSheet.create({
   checkbox: {
     width: 20,
     height: 20,
-    borderRadius: 6,
+    borderRadius: 5,
     borderWidth: 1,
-    borderColor: "#72796F",
+    borderColor: colors.primary,
     backgroundColor: "#FFFFFF",
     alignItems: "center",
     justifyContent: "center",
+  },
+  checkboxChecked: {
+    backgroundColor: colors.primary,
   },
   ingredientNameBlock: {
     flex: 1,
     minWidth: 0,
     gap: 4,
   },
+  ingredientTitleLine: {
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
   ingredientName: {
+    flexShrink: 1,
     color: colors.text,
     fontSize: 16,
     lineHeight: 24,
+  },
+  estimatedIngredientBadge: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(245,166,35,0.26)",
+    backgroundColor: "rgba(245,166,35,0.16)",
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  estimatedIngredientText: {
+    color: colors.yellow,
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+    textTransform: "uppercase",
   },
   ingredientAmount: {
     color: colors.muted,
@@ -762,7 +1005,7 @@ const styles = StyleSheet.create({
     alignSelf: "flex-start",
     borderRadius: 4,
     borderWidth: 1,
-    borderColor: "rgba(186,26,26,0.2)",
+    borderColor: colors.warningBorder,
     backgroundColor: colors.warningBg,
     paddingHorizontal: 9,
     paddingVertical: 3,
@@ -771,23 +1014,20 @@ const styles = StyleSheet.create({
     color: colors.warningText,
     fontSize: 10,
     fontWeight: "800",
-    letterSpacing: 0.5,
   },
-  secondaryAction: {
-    minHeight: 48,
-    borderRadius: 999,
-    backgroundColor: colors.softGreen,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+  warningBlock: {
+    alignItems: "flex-start",
+    gap: 3,
   },
-  secondaryActionText: {
+  warningDetail: {
+    color: colors.warningText,
+    fontSize: 12,
+    lineHeight: 16,
+  },
+  warningSuggestion: {
     color: colors.primaryDark,
-    fontSize: 16,
-    fontWeight: "700",
+    fontSize: 12,
+    lineHeight: 16,
   },
   stepsList: {
     gap: 16,
@@ -818,6 +1058,32 @@ const styles = StyleSheet.create({
   stepContent: {
     flex: 1,
     minWidth: 0,
+    gap: 10,
+  },
+  stepTitle: {
+    color: colors.primaryDark,
+    fontSize: 17,
+    lineHeight: 23,
+    fontWeight: "800",
+  },
+  stepMetaWrap: {
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  stepMetaPill: {
+    alignSelf: "flex-start",
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: "rgba(255,255,255,0.55)",
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  stepMetaPillText: {
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
   },
   stepText: {
     color: colors.text,
@@ -828,6 +1094,39 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontSize: 13,
     marginTop: 6,
+  },
+  stepTipSection: {
+    gap: 8,
+  },
+  stepTipToggle: {
+    alignSelf: "flex-start",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: "rgba(90,138,90,0.22)",
+    backgroundColor: "rgba(232,245,224,0.65)",
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  stepTipToggleText: {
+    color: colors.primaryDark,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  stepTipBlock: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "rgba(90,138,90,0.16)",
+    backgroundColor: "rgba(232,245,224,0.45)",
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  stepTipText: {
+    color: "#424940",
+    fontSize: 14,
+    lineHeight: 20,
   },
   chefTipCard: {
     borderRadius: 16,
@@ -860,59 +1159,7 @@ const styles = StyleSheet.create({
     lineHeight: 26,
     textAlign: "center",
   },
-  bottomNavigation: {
-    position: "absolute",
-    left: 0,
-    right: 0,
-    bottom: 0,
-    borderTopWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.background,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-around",
-    paddingTop: 12,
-    paddingHorizontal: 6,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: -4 },
-    shadowOpacity: 0.05,
-    shadowRadius: 10,
-    elevation: 8,
-  },
-  bottomNavItem: {
-    minWidth: 58,
-    minHeight: 50,
-    borderRadius: 16,
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 3,
-    paddingHorizontal: 8,
-  },
-  bottomNavItemActive: {
-    backgroundColor: colors.softGreen,
-  },
-  bottomNavText: {
-    color: colors.muted,
-    fontSize: 11,
-    lineHeight: 16,
-  },
-  bottomNavTextActive: {
-    color: colors.primaryDark,
-  },
   disabledButton: {
     opacity: 0.6,
-  },
-  toast: {
-    position: "absolute",
-    alignSelf: "center",
-    borderRadius: 999,
-    backgroundColor: colors.text,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  toastText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "700",
   },
 });

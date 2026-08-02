@@ -5,8 +5,11 @@ import { z } from "npm:zod@3.24.2";
 import type { IngredientItem, NutritionEstimate, RecipeDraft, SourcePlatform } from "./types.ts";
 import {
   hasIngredientsNeedingReview,
+  isIngredientDetailComplete,
   markIngredientReviewStates,
+  MEASURE_UNITS,
   mergeIngredientSources,
+  normalizeUnit,
 } from "./ingredient-details.ts";
 import { validateRecipeDraft } from "./validation.ts";
 
@@ -23,24 +26,21 @@ type RecipeInput = {
   sourceText: string;
 };
 
-export type VisualRecipeTextResult = {
-  text: string;
-  ingredients: IngredientItem[];
-  visibleTextCount: number;
-  model: string;
-};
-
 type IngredientResearchResult = {
   ingredients: IngredientItem[];
   citations: string[];
   model: string;
 };
 
-const GEMINI_PARSER_MODEL = "google/gemini-2.5-flash";
-const GEMINI_TRANSLATE_MODEL = "google/gemini-2.5-flash";
-const GEMINI_NUTRITION_MODEL = "google/gemini-2.5-flash";
-const GEMINI_VISUAL_MODEL = "google/gemini-2.5-flash";
-const GEMINI_RESEARCH_MODEL = "google/gemini-2.5-flash";
+const EXTRACTION_MODELS = [
+  "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-haiku-4.5",
+  "google/gemini-3-flash-preview",
+];
+const GEMINI_PARSER_MODEL = "google/gemini-3-flash-preview";
+const GEMINI_TRANSLATE_MODEL = "google/gemini-3-flash-preview";
+const GEMINI_NUTRITION_MODEL = "google/gemini-3-flash-preview";
+const WEB_RESEARCH_MODEL = "google/gemini-2.5-pro";
 
 const defaultNutritionDisclaimer =
   "Estimated nutrition values only. Verify with a certified nutrition source before medical use.";
@@ -48,6 +48,8 @@ const defaultNutritionDisclaimer =
 const recipeObjectSchema = z.object({
   title: z.string().min(1),
   description: z.string().nullable().optional(),
+  cuisine: z.string().nullable().optional(),
+  meal_type: z.string().nullable().optional(),
   servings: z.number().nullable().optional(),
   prep_minutes: z.number().nullable().optional(),
   cook_minutes: z.number().nullable().optional(),
@@ -59,17 +61,34 @@ const recipeObjectSchema = z.object({
       preparation: z.string().nullable().optional(),
       size: z.string().nullable().optional(),
       notes: z.string().nullable().optional(),
-      source: z.enum(["caption", "transcript", "video_ocr", "web_research", "user_edit"]).nullable().optional(),
+      dietary_flags: z.array(z.string()).nullable().optional(),
+      allergen_hints: z.array(z.string()).nullable().optional(),
+      is_halal: z.boolean().nullable().optional(),
+      halal_concern: z.string().nullable().optional(),
+      suggested_alternative: z.string().nullable().optional(),
+      source: z.enum(["caption", "transcript", "web_research", "ai_estimate", "user_edit"]).nullable().optional(),
       confidence: z.number().min(0).max(1).nullable().optional(),
       evidence_text: z.string().nullable().optional(),
       citation_url: z.string().nullable().optional(),
+      is_estimated: z.boolean().nullable().optional(),
     })
   ),
   steps: z.array(
     z.object({
       order: z.number().int().positive().optional(),
+      title: z.string().nullable().optional(),
       text: z.string().min(1),
       duration_minutes: z.number().nullable().optional(),
+      temperature: z
+        .object({
+          value: z.number(),
+          unit: z.enum(["C", "F"]),
+        })
+        .nullable()
+        .optional(),
+      equipment: z.array(z.string()).nullable().optional(),
+      ingredients_used: z.array(z.string()).nullable().optional(),
+      tips: z.array(z.string()).nullable().optional(),
     })
   ),
   source: z.object({
@@ -91,6 +110,8 @@ const nutritionObjectSchema = z.object({
 const localizedTextSchema = z.object({
   title: z.string().min(1),
   description: z.string().nullable().optional(),
+  cuisine: z.string().nullable().optional(),
+  meal_type: z.string().nullable().optional(),
   ingredients: z.array(
     z.object({
       name: z.string().min(1),
@@ -100,7 +121,19 @@ const localizedTextSchema = z.object({
   steps: z.array(
     z.object({
       order: z.number().int().positive(),
+      title: z.string().nullable().optional(),
       text: z.string().min(1),
+      duration_minutes: z.number().nullable().optional(),
+      temperature: z
+        .object({
+          value: z.number(),
+          unit: z.enum(["C", "F"]),
+        })
+        .nullable()
+        .optional(),
+      equipment: z.array(z.string()).nullable().optional(),
+      ingredients_used: z.array(z.string()).nullable().optional(),
+      tips: z.array(z.string()).nullable().optional(),
     })
   ),
 });
@@ -111,13 +144,8 @@ const missingDetailsSchema = z.object({
   cook_minutes: z.number().nullable().optional(),
 });
 
-const visualRecipeTextSchema = z.object({
-  visible_text: z.array(
-    z.object({
-      timestamp_seconds: z.number().nullable().optional(),
-      text: z.string().min(1),
-    })
-  ),
+const servingRecalculationSchema = z.object({
+  servings: z.number().int().positive(),
   ingredients: z.array(
     z.object({
       name: z.string().min(1),
@@ -125,11 +153,43 @@ const visualRecipeTextSchema = z.object({
       unit: z.string().nullable().optional(),
       preparation: z.string().nullable().optional(),
       size: z.string().nullable().optional(),
-      alternatives: z.array(z.string()).optional(),
+      notes: z.string().nullable().optional(),
+      dietary_flags: z.array(z.string()).nullable().optional(),
+      allergen_hints: z.array(z.string()).nullable().optional(),
+      is_halal: z.boolean().nullable().optional(),
+      halal_concern: z.string().nullable().optional(),
+      suggested_alternative: z.string().nullable().optional(),
+      source: z.enum(["caption", "transcript", "web_research", "ai_estimate", "user_edit"]).nullable().optional(),
       confidence: z.number().min(0).max(1).nullable().optional(),
       evidence_text: z.string().nullable().optional(),
+      citation_url: z.string().nullable().optional(),
+      needs_review: z.boolean().nullable().optional(),
+      is_estimated: z.boolean().nullable().optional(),
     })
   ),
+  steps: z.array(
+    z.object({
+      order: z.number().int().positive().optional(),
+      title: z.string().nullable().optional(),
+      text: z.string().min(1),
+      duration_minutes: z.number().nullable().optional(),
+      temperature: z
+        .object({
+          value: z.number(),
+          unit: z.enum(["C", "F"]),
+        })
+        .nullable()
+        .optional(),
+      equipment: z.array(z.string()).nullable().optional(),
+      ingredients_used: z.array(z.string()).nullable().optional(),
+      tips: z.array(z.string()).nullable().optional(),
+    })
+  ),
+});
+
+const localizedStepRewriteSchema = z.object({
+  en: z.object({ steps: localizedTextSchema.shape.steps }),
+  ar: z.object({ steps: localizedTextSchema.shape.steps }),
 });
 
 const ingredientResearchSchema = z.object({
@@ -147,6 +207,20 @@ const ingredientResearchSchema = z.object({
     })
   ),
   citations: z.array(z.string()).optional(),
+});
+
+const forcedIngredientMeasurementSchema = z.object({
+  ingredients: z.array(
+    z.object({
+      name: z.string().min(1),
+      quantity: z.string().min(1),
+      unit: z.string().min(1),
+      preparation: z.string().nullable().optional(),
+      size: z.string().nullable().optional(),
+      notes: z.string().nullable().optional(),
+      confidence: z.number().min(0).max(1).nullable().optional(),
+    })
+  ),
 });
 
 function requiredEnv(name: string): string {
@@ -185,16 +259,6 @@ function parseJsonLenient(raw: string): unknown {
     if (lastIndex <= firstIndex) throw new Error("OPENROUTER_JSON_NOT_FOUND");
     return JSON.parse(normalized.slice(firstIndex, lastIndex + 1));
   }
-}
-
-function uint8ToBase64(bytes: Uint8Array): string {
-  let binary = "";
-  const chunkSize = 8192;
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
-    binary += String.fromCharCode(...chunk);
-  }
-  return btoa(binary);
 }
 
 async function openRouterChatCompletion(body: Record<string, unknown>): Promise<string> {
@@ -237,12 +301,17 @@ function buildExtractionPrompt(input: RecipeInput): string {
   return `Extract a cooking recipe from the provided video source context.
 Rules:
 - Return only recipe information in the requested schema.
+- Include cuisine and meal_type. Use cuisine="General" and meal_type="Meal" only when the source is unclear.
 - Infer servings, ingredient quantities, and ordered steps from transcript + caption + metadata + video OCR context.
 - Ingredient names alone are incomplete. For each ingredient, preserve exact quantity/unit/size details such as 150 g, 2 tbsp, 3 slices, 1 piece, 1 whole, 500 ml, 1 can, 2 cloves, etc.
 - Put preparation details like cooked, diced, chopped, or sliced in preparation, not in the ingredient name when possible.
-- Use source="video_ocr" for ingredient details found in visible on-screen text, source="caption" for caption text, source="transcript" for speech, and source="web_research" for cited web fallback text.
+- For each ingredient, include allergen_hints when obvious (dairy, egg, gluten, wheat, peanut, tree_nut, seafood, shellfish).
+- For each ingredient, include dietary_flags when obvious (pork, alcohol, meat, dairy, egg, gluten).
+- Set is_halal=false for clearly non-halal ingredients such as pork or alcohol, include halal_concern, and suggest a practical halal alternative.
+- Use source="caption" for caption text, source="transcript" for speech, source="web_research" for cited web fallback text, and source="ai_estimate" only when nothing in the source text supports the amount.
 - Include evidence_text when the source text explicitly contains the amount or visible overlay line.
-- Preserve original language wording where possible.
+- Each step must include a short imperative title (3-6 words, e.g. "Sear the chicken") plus a procedural text body. Optionally include duration_minutes, temperature, equipment, ingredients_used (names from the ingredient list), and tips.
+- Use exactly one language per field. Never mix scripts inside a single string.
 - If unknown, use null.
 Source URL: ${input.sourceUrl}
 Source platform: ${input.sourcePlatform}
@@ -267,20 +336,48 @@ ${draft.ingredients
 `;
 }
 
+function buildServingRecalculationPrompt(draft: RecipeDraft, servings: number): string {
+  return `Scale this recipe from ${draft.servings ?? "unknown"} servings to ${servings} servings.
+Rules:
+- Return only servings, ingredients, and steps in the requested schema.
+- Update ingredient quantities for the whole recipe.
+- Preserve ingredient names, units, preparation, dietary flags, allergen hints, halal fields, suggested alternatives, evidence, and citations unless scaling requires a quantity/unit wording change.
+- Update steps only when the serving change makes instructions misleading, such as pan size, batch count, or cooking time notes.
+- Nutrition is per serving and must not be returned or changed here.
+
+Recipe title: ${draft.title}
+Cuisine: ${draft.cuisine}
+Meal type: ${draft.meal_type}
+Current servings: ${draft.servings ?? "unknown"}
+Target servings: ${servings}
+Ingredients:
+${draft.ingredients
+  .map((ingredient) =>
+    `${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""} ${ingredient.name} ${ingredient.preparation ?? ""}`.trim()
+  )
+  .join("\n")}
+Steps:
+${draft.steps.map((step) => `${step.order}. ${step.text}`).join("\n")}`;
+}
+
 function buildLocalizationPrompt(draft: RecipeDraft, targetLanguage: "en" | "ar"): string {
   const targetLabel = targetLanguage === "ar" ? "Arabic" : "English";
   return `Translate this recipe into ${targetLabel}.
 Rules:
 - Preserve culinary meaning and order.
-- Keep ingredient quantities and units semantically consistent.
 - Keep the same ingredient and step count.
+- For each ingredient, the "name" field MUST contain ONLY the ingredient noun (and optional descriptive adjectives like color/freshness). DO NOT include numeric quantities, unit words (g, ml, tbsp, جرام, ملعقة, كوب, etc.), or parenthetical conversions inside the name. Quantity and unit are tracked in separate fields outside the translation; they are not your responsibility.
+- Example correct Arabic name: "صدور دجاج" (NOT "40 أونصة (1135 جرام) صدور دجاج"). Example correct English name: "chicken breast" (NOT "40 oz (1135 g) chicken breast").
+- Notes/preparation/tips can stay descriptive but must not duplicate quantity numbers from the source.
 Recipe:
 Title: ${draft.title}
 Description: ${draft.description ?? ""}
-Ingredients:
+Cuisine: ${draft.cuisine}
+Meal type: ${draft.meal_type}
+Ingredients (translate name + notes only; quantities shown for context):
 ${draft.ingredients
   .map((ingredient, index) =>
-    `${index + 1}. ${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""} ${ingredient.name} ${ingredient.preparation ?? ""} ${ingredient.notes ?? ""}`.trim()
+    `${index + 1}. name="${ingredient.name}"${ingredient.preparation ? ` preparation="${ingredient.preparation}"` : ""}${ingredient.notes ? ` notes="${ingredient.notes}"` : ""} (context-only quantity: ${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""})`.trim()
   )
   .join("\n")}
 Steps:
@@ -323,14 +420,14 @@ function buildIngredientResearchPrompt(params: {
     .map((ingredient) => `- ${ingredient.name}`)
     .join("\n");
 
-  return `Research missing recipe ingredient quantities for the same social recipe.
+  return `Fill missing recipe ingredient quantities for the same social recipe.
 Rules:
-- Use web search only to find the same recipe, same creator page, or a repost containing the same recipe.
+- Search by recipe title and source context. Prefer the same creator page, the same recipe, or a repost containing the same recipe.
 - Return JSON only using this shape: {"ingredients":[],"citations":[]}.
 - Fill quantity/unit/size only when a matching source explicitly shows the amount.
-- Every filled ingredient must include evidence_text and citation_url.
-- Do not infer from general cooking knowledge.
-- If no cited evidence is found, return the ingredient without quantity/unit/size.
+- When cited evidence exists, include evidence_text and citation_url.
+- If no cited evidence is found, fall back to standard cooking proportions, include evidence_text="AI estimated from standard recipe proportions", and leave citation_url null.
+- Do not invent new ingredients. Return only ingredients listed under Missing ingredient details.
 
 Source URL: ${params.sourceUrl}
 Source platform: ${params.sourcePlatform}
@@ -340,6 +437,62 @@ ${missing || "(none)"}
 
 Known source context:
 ${truncateForPrompt(params.sourceText)}`;
+}
+
+const ALLOWED_UNITS_FOR_PROMPT = [
+  "g",
+  "kg",
+  "ml",
+  "l",
+  "tsp",
+  "tbsp",
+  "cup",
+  "oz",
+  "lb",
+  "slice",
+  "piece",
+  "whole",
+  "can",
+  "pack",
+  "clove",
+  "bunch",
+  "pinch",
+  "dash",
+  "splash",
+  "drop",
+  "handful",
+  "stick",
+  "head",
+  "sprig",
+  "leaf",
+];
+
+function buildForcedMeasurementPrompt(draft: RecipeDraft): string {
+  const missing = draft.ingredients
+    .filter((ingredient) => !isIngredientDetailComplete(ingredient))
+    .map((ingredient) => `- ${ingredient.name}${ingredient.preparation ? `, ${ingredient.preparation}` : ""}`)
+    .join("\n");
+
+  return `Estimate practical cooking measurements for the incomplete ingredients.
+Rules:
+- Return ONLY ingredients listed under Incomplete ingredients.
+- Every returned ingredient MUST include a non-empty numeric quantity (digits only, e.g. "2", "1.5", "0.25") and a unit chosen STRICTLY from this allowlist: ${ALLOWED_UNITS_FOR_PROMPT.join(", ")}.
+- Do NOT use units outside the allowlist. Do NOT use phrases like "to taste", "as needed", or descriptive words. If you would say "to taste", convert to "1 pinch".
+- Use lowercase singular form for the unit (e.g. "tbsp" not "Tbsp." or "tablespoons").
+- Prefer common recipe proportions for the dish and serving count.
+- Do not change ingredient names.
+
+Recipe title: ${draft.title}
+Cuisine: ${draft.cuisine}
+Meal type: ${draft.meal_type}
+Servings: ${draft.servings ?? "unknown"}
+Complete context:
+${draft.ingredients
+  .map((ingredient) => `${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""} ${ingredient.name}`.trim())
+  .join("\n")}
+
+Incomplete ingredients:
+${missing || "(none)"}`;
 }
 
 function createOpenRouterClient() {
@@ -358,6 +511,13 @@ function optionalString(value: string | null | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function optionalStringArray(value: string[] | null | undefined): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => optionalString(entry))
+    .filter((entry): entry is string => !!entry);
 }
 
 function optionalPositiveInt(value: number | null | undefined): number | undefined {
@@ -387,13 +547,21 @@ function toLocalizedTextFromDraft(draft: RecipeDraft): NonNullable<RecipeDraft["
   return {
     title: draft.title,
     description: draft.description,
+    cuisine: draft.cuisine,
+    meal_type: draft.meal_type,
     ingredients: draft.ingredients.map((item) => ({
       name: item.name,
       notes: item.notes,
     })),
     steps: draft.steps.map((step) => ({
       order: step.order,
+      title: step.title,
       text: step.text,
+      duration_minutes: step.duration_minutes,
+      temperature: step.temperature,
+      equipment: step.equipment,
+      ingredients_used: step.ingredients_used,
+      tips: step.tips,
     })),
   };
 }
@@ -404,13 +572,21 @@ function cloneLocalizedText(
   return {
     title: value.title,
     description: value.description,
+    cuisine: value.cuisine,
+    meal_type: value.meal_type,
     ingredients: value.ingredients.map((item) => ({
       name: item.name,
       notes: item.notes,
     })),
     steps: value.steps.map((step) => ({
       order: step.order,
+      title: step.title,
       text: step.text,
+      duration_minutes: step.duration_minutes,
+      temperature: step.temperature,
+      equipment: step.equipment,
+      ingredients_used: step.ingredients_used,
+      tips: step.tips,
     })),
   };
 }
@@ -422,6 +598,8 @@ function normalizeRecipeCandidate(
   const normalized = {
     title: candidate.title,
     description: optionalString(candidate.description),
+    cuisine: optionalString(candidate.cuisine) ?? "General",
+    meal_type: optionalString(candidate.meal_type) ?? "Meal",
     servings: optionalPositiveInt(candidate.servings),
     prep_minutes: optionalPositiveInt(candidate.prep_minutes),
     cook_minutes: optionalPositiveInt(candidate.cook_minutes),
@@ -432,16 +610,30 @@ function normalizeRecipeCandidate(
       preparation: optionalString(item.preparation),
       size: optionalString(item.size),
       notes: optionalString(item.notes),
+      dietary_flags: optionalStringArray(item.dietary_flags),
+      allergen_hints: optionalStringArray(item.allergen_hints),
+      is_halal: typeof item.is_halal === "boolean" ? item.is_halal : undefined,
+      halal_concern: optionalString(item.halal_concern),
+      suggested_alternative: optionalString(item.suggested_alternative),
       source: item.source ?? undefined,
       confidence: optionalPositiveNumber(item.confidence),
       evidence_text: optionalString(item.evidence_text),
       citation_url: optionalString(item.citation_url),
+      is_estimated: item.is_estimated === true,
     })),
-    steps: candidate.steps.map((item, index) => ({
-      order: item.order ?? index + 1,
-      text: item.text.trim(),
-      duration_minutes: optionalPositiveInt(item.duration_minutes),
-    })),
+    steps: candidate.steps.map((item, index) => {
+      const order = item.order ?? index + 1;
+      return {
+        order,
+        title: optionalString(item.title) ?? `Step ${order}`,
+        text: item.text.trim(),
+        duration_minutes: optionalPositiveInt(item.duration_minutes),
+        temperature: item.temperature ?? undefined,
+        equipment: optionalStringArray(item.equipment),
+        ingredients_used: optionalStringArray(item.ingredients_used),
+        tips: optionalStringArray(item.tips),
+      };
+    }),
     source: {
       platform: input.sourcePlatform,
       url: input.sourceUrl,
@@ -449,82 +641,37 @@ function normalizeRecipeCandidate(
     },
   };
 
-  return validateRecipeDraft(normalized);
+  return validateRecipeDraft(normalized, { requireMeasurements: false });
 }
 
 function normalizeResearchIngredients(
   ingredients: z.infer<typeof ingredientResearchSchema>["ingredients"]
 ): IngredientItem[] {
-  return ingredients.map((ingredient) => ({
-    name: ingredient.name.trim(),
-    quantity: optionalString(ingredient.quantity),
-    unit: optionalString(ingredient.unit),
-    preparation: optionalString(ingredient.preparation),
-    size: optionalString(ingredient.size),
-    notes: optionalString(ingredient.notes),
-    source: "web_research",
-    confidence: optionalPositiveNumber(ingredient.confidence),
-    evidence_text: optionalString(ingredient.evidence_text),
-    citation_url: optionalString(ingredient.citation_url),
-  }));
-}
-
-export async function extractVisualRecipeText(media: {
-  buffer: Uint8Array;
-  mimeType: string;
-  filename: string;
-}): Promise<VisualRecipeTextResult> {
-  const videoDataUrl = `data:${media.mimeType || "video/mp4"};base64,${uint8ToBase64(media.buffer)}`;
-  const content = await openRouterChatCompletion({
-    model: GEMINI_VISUAL_MODEL,
-    messages: [
-      {
-        role: "user",
-        content: [
-          {
-            type: "text",
-            text:
-              "Read visible on-screen recipe text from this short cooking video. Focus on ingredient overlays and exact measurements. Return JSON only with visible_text and ingredients. Do not infer missing amounts.",
-          },
-          {
-            type: "video_url",
-            video_url: {
-              url: videoDataUrl,
-            },
-          },
-        ],
-      },
-    ],
-  });
-
-  const parsed = visualRecipeTextSchema.parse(parseJsonLenient(content));
-  const visibleLines = parsed.visible_text.map((entry) => {
-    const prefix =
-      typeof entry.timestamp_seconds === "number" ? `[${entry.timestamp_seconds}s] ` : "";
-    return `${prefix}${entry.text.trim()}`;
-  });
-  const ingredients = parsed.ingredients.map((ingredient) => {
-    const alternatives = ingredient.alternatives?.filter((value) => value.trim()).join(", ");
-    const notes = alternatives ? `Alternatives: ${alternatives}` : undefined;
-    return {
+  return ingredients.map((ingredient) => {
+    const citationUrl = optionalString(ingredient.citation_url);
+    const base = {
       name: ingredient.name.trim(),
       quantity: optionalString(ingredient.quantity),
       unit: optionalString(ingredient.unit),
       preparation: optionalString(ingredient.preparation),
       size: optionalString(ingredient.size),
-      notes,
-      source: "video_ocr" as const,
+      notes: optionalString(ingredient.notes),
       confidence: optionalPositiveNumber(ingredient.confidence),
       evidence_text: optionalString(ingredient.evidence_text),
+      citation_url: citationUrl,
+      is_estimated: true,
+    };
+    if (!citationUrl) {
+      return {
+        ...base,
+        source: "ai_estimate",
+      };
+    }
+    return {
+      ...base,
+      source: "web_research",
     };
   });
-
-  return {
-    text: [...visibleLines, ...ingredients.map((ingredient) => ingredient.evidence_text).filter(Boolean)].join("\n"),
-    ingredients: markIngredientReviewStates(ingredients),
-    visibleTextCount: visibleLines.length,
-    model: GEMINI_VISUAL_MODEL,
-  };
 }
 
 async function translateRecipeText(
@@ -554,14 +701,25 @@ async function translateRecipeText(
   return {
     title: object.title.trim(),
     description: optionalString(object.description),
+    cuisine: optionalString(object.cuisine),
+    meal_type: optionalString(object.meal_type),
     ingredients: object.ingredients.map((ingredient) => ({
       name: ingredient.name.trim(),
       notes: optionalString(ingredient.notes),
     })),
-    steps: object.steps.map((step, index) => ({
-      order: step.order || index + 1,
-      text: step.text.trim(),
-    })),
+    steps: object.steps.map((step, index) => {
+      const order = step.order || index + 1;
+      return {
+        order,
+        title: optionalString(step.title) ?? `Step ${order}`,
+        text: step.text.trim(),
+        duration_minutes: optionalPositiveInt(step.duration_minutes),
+        temperature: step.temperature ?? undefined,
+        equipment: optionalStringArray(step.equipment),
+        ingredients_used: optionalStringArray(step.ingredients_used),
+        tips: optionalStringArray(step.tips),
+      };
+    }),
   };
 }
 
@@ -652,13 +810,13 @@ async function fillMissingRecipeDetails(
   }
 }
 
-async function researchMissingIngredientDetails(params: {
+async function fillMissingMeasurements(params: {
   draft: RecipeDraft;
   input: RecipeInput;
 }): Promise<IngredientResearchResult> {
   const content = await openRouterChatCompletion({
-    model: GEMINI_RESEARCH_MODEL,
-    tools: [{ type: "openrouter:web_search" }],
+    model: WEB_RESEARCH_MODEL,
+    plugins: [{ id: "web" }],
     messages: [
       {
         role: "user",
@@ -676,7 +834,77 @@ async function researchMissingIngredientDetails(params: {
   return {
     ingredients: normalizeResearchIngredients(parsed.ingredients),
     citations: parsed.citations ?? [],
-    model: GEMINI_RESEARCH_MODEL,
+    model: WEB_RESEARCH_MODEL,
+  };
+}
+
+const FORCE_FILL_MAX_ATTEMPTS = 3;
+
+async function forceFillIngredientMeasurements(draft: RecipeDraft): Promise<RecipeDraft> {
+  let nextDraft = {
+    ...draft,
+    ingredients: mergeIngredientSources(draft.ingredients),
+  };
+
+  for (let attempt = 0; attempt < FORCE_FILL_MAX_ATTEMPTS; attempt++) {
+    if (!hasIngredientsNeedingReview(nextDraft.ingredients)) return nextDraft;
+
+    const providerClient = createOpenRouterClient();
+    const { object } = await generateObject({
+      model: providerClient(GEMINI_PARSER_MODEL),
+      schema: forcedIngredientMeasurementSchema,
+      temperature: 0.2,
+      system: "You estimate missing recipe measurements conservatively and return complete JSON only.",
+      prompt: buildForcedMeasurementPrompt(nextDraft),
+    });
+
+    const estimates = object.ingredients.map((ingredient) => ({
+      name: ingredient.name.trim(),
+      quantity: ingredient.quantity.trim(),
+      unit: normalizeUnit(ingredient.unit) || ingredient.unit.trim(),
+      preparation: optionalString(ingredient.preparation),
+      size: optionalString(ingredient.size),
+      notes: optionalString(ingredient.notes),
+      confidence: optionalPositiveNumber(ingredient.confidence) ?? 0.35,
+      evidence_text: "AI estimated from standard recipe proportions",
+      source: "ai_estimate" as const,
+      is_estimated: true,
+    }));
+
+    if (estimates.length === 0) break;
+
+    nextDraft = {
+      ...nextDraft,
+      ingredients: mergeIngredientSources([...nextDraft.ingredients, ...estimates]),
+    };
+  }
+
+  if (!hasIngredientsNeedingReview(nextDraft.ingredients)) return nextDraft;
+
+  // Final fallback: accept whatever measurement is on the ingredient (even with
+  // a non-whitelisted unit) by force-clearing needs_review. The user prefers
+  // showing an estimate over hanging the import.
+  const fallbackIngredients = nextDraft.ingredients.map((ingredient) => {
+    if (isIngredientDetailComplete(ingredient)) return ingredient;
+    const quantity = ingredient.quantity?.trim() || "1";
+    const unit = ingredient.unit?.trim() || ingredient.size?.trim() || "piece";
+    return {
+      ...ingredient,
+      quantity,
+      unit,
+      source: ingredient.source ?? ("ai_estimate" as const),
+      is_estimated: true,
+      evidence_text: ingredient.evidence_text ?? "AI estimated from standard recipe proportions",
+      needs_review: false,
+    };
+  });
+
+  return {
+    ...nextDraft,
+    ingredients: markIngredientReviewStates(fallbackIngredients).map((ingredient) => ({
+      ...ingredient,
+      needs_review: false,
+    })),
   };
 }
 
@@ -706,7 +934,7 @@ async function enrichMissingIngredientDetails(
   }
 
   try {
-    const research = await researchMissingIngredientDetails({
+    const research = await fillMissingMeasurements({
       draft: reviewedDraft,
       input,
     });
@@ -714,11 +942,12 @@ async function enrichMissingIngredientDetails(
       ...reviewedDraft.ingredients,
       ...research.ingredients,
     ]);
+    const filledDraft = await forceFillIngredientMeasurements({
+      ...reviewedDraft,
+      ingredients: mergedIngredients,
+    });
     return {
-      draft: {
-        ...reviewedDraft,
-        ingredients: mergedIngredients,
-      },
+      draft: filledDraft,
       researchAttempted: true,
       researchIngredients: research.ingredients.length,
       researchCitations: research.citations,
@@ -726,7 +955,7 @@ async function enrichMissingIngredientDetails(
     };
   } catch {
     return {
-      draft: reviewedDraft,
+      draft: await forceFillIngredientMeasurements(reviewedDraft),
       researchAttempted: true,
       researchIngredients: 0,
       researchCitations: [],
@@ -737,30 +966,47 @@ async function enrichMissingIngredientDetails(
 
 export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> {
   const providerClient = createOpenRouterClient();
-  const model = providerClient(GEMINI_PARSER_MODEL);
+  let lastError: unknown;
+  let object: z.infer<typeof recipeObjectSchema> | null = null;
+  let modelUsed: string | null = null;
 
-  const { object } = await generateObject({
-    model,
-    schema: recipeObjectSchema,
-    temperature: 0.2,
-    system:
-      "You are a recipe extraction engine. Return accurate recipe objects and avoid hallucinations.",
-    prompt: buildExtractionPrompt(input),
-  });
+  for (const candidateModel of EXTRACTION_MODELS) {
+    try {
+      const result = await generateObject({
+        model: providerClient(candidateModel),
+        schema: recipeObjectSchema,
+        temperature: 0.2,
+        system:
+          "You are a recipe extraction engine. Return accurate recipe objects as JSON and avoid hallucinations.",
+        prompt: buildExtractionPrompt(input),
+      });
+      object = result.object;
+      modelUsed = candidateModel;
+      break;
+    } catch (error) {
+      lastError = error;
+      console.warn("[import][extract] model failed", { model: candidateModel, error: truncateForLog(String(error)) });
+    }
+  }
+
+  if (!object || !modelUsed) {
+    throw new Error(`OPENROUTER_EXTRACTION_FAILED ${truncateForLog(String(lastError))}`);
+  }
 
   const draft = normalizeRecipeCandidate(object, input);
   if (!draft) throw new Error("Generated recipe did not pass validation constraints.");
 
   const detailCompletion = await enrichMissingIngredientDetails(draft, input);
   const completion = await fillMissingRecipeDetails(detailCompletion.draft, input);
-  const finalDraft = completion.draft;
+  const finalDraft = validateRecipeDraft(completion.draft);
+  if (!finalDraft) throw new Error("Generated recipe did not pass final validation constraints.");
   finalDraft.localized = await buildBilingualLocalization(finalDraft);
 
   return {
     draft: finalDraft,
     confidence: {
       provider: "openrouter",
-      model: GEMINI_PARSER_MODEL,
+      model: modelUsed,
       extraction_mode: "schema",
       missing_fields_completed: {
         description: completion.filledDescription,
@@ -773,11 +1019,11 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
         web_research_failed: detailCompletion.researchFailed,
         web_research_ingredients: detailCompletion.researchIngredients,
         web_research_citations: detailCompletion.researchCitations,
-        web_research_model: detailCompletion.researchAttempted ? GEMINI_RESEARCH_MODEL : null,
+        web_research_model: detailCompletion.researchAttempted ? WEB_RESEARCH_MODEL : null,
       },
     },
     provider: "openrouter",
-    model: GEMINI_PARSER_MODEL,
+    model: modelUsed,
   };
 }
 
@@ -813,4 +1059,139 @@ export async function estimateNutrition(
       estimated: true,
     };
   }
+}
+
+function scaleQuantityString(quantity: string | undefined, factor: number): string | undefined {
+  if (!quantity || !Number.isFinite(factor) || factor <= 0) return quantity;
+  const trimmed = quantity.trim();
+  const match = trimmed.match(/^\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?$/);
+  if (!match) return quantity;
+  let numeric: number;
+  if (trimmed.includes("/")) {
+    const [numerator, denominator] = trimmed.split("/").map(Number);
+    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return quantity;
+    numeric = numerator / denominator;
+  } else {
+    numeric = Number(trimmed);
+  }
+  const scaled = numeric * factor;
+  const rounded = scaled >= 10 ? Math.round(scaled) : Math.round(scaled * 100) / 100;
+  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function scaleIngredientQuantities(draft: RecipeDraft, servings: number): IngredientItem[] {
+  const factor = draft.servings && draft.servings > 0 ? servings / draft.servings : 1;
+  return draft.ingredients.map((ingredient) => ({
+    ...ingredient,
+    quantity: scaleQuantityString(ingredient.quantity, factor),
+  }));
+}
+
+function buildStepRewritePrompt(draft: RecipeDraft, servings: number): string {
+  return `Rewrite only step wording that needs serving-count changes.
+Rules:
+- Return both English and Arabic localized step arrays.
+- Keep step order and count unchanged.
+- Preserve duration, temperature, equipment, ingredients_used, and tips unless the serving change makes them misleading.
+- Do not return ingredients or nutrition.
+
+Recipe title: ${draft.title}
+Current servings: ${draft.servings ?? "unknown"}
+Target servings: ${servings}
+English steps:
+${(draft.localized?.en?.steps ?? draft.steps).map((step) => `${step.order}. ${step.text}`).join("\n")}
+Arabic steps:
+${(draft.localized?.ar?.steps ?? draft.steps).map((step) => `${step.order}. ${step.text}`).join("\n")}`;
+}
+
+async function rewriteLocalizedStepsForServings(
+  draft: RecipeDraft,
+  servings: number
+): Promise<NonNullable<RecipeDraft["localized"]>> {
+  const fallback = {
+    en: localizedTextWithFallback(draft, "en"),
+    ar: localizedTextWithFallback(draft, "ar"),
+  };
+
+  try {
+    const providerClient = createOpenRouterClient();
+    const { object } = await generateObject({
+      model: providerClient(GEMINI_PARSER_MODEL),
+      schema: localizedStepRewriteSchema,
+      temperature: 0.2,
+      system: "You rewrite recipe steps for serving changes without changing ingredients.",
+      prompt: buildStepRewritePrompt(draft, servings),
+    });
+
+    return {
+      en: { ...fallback.en, steps: normalizeLocalizedSteps(object.en.steps, fallback.en.steps) },
+      ar: { ...fallback.ar, steps: normalizeLocalizedSteps(object.ar.steps, fallback.ar.steps) },
+    };
+  } catch {
+    return fallback;
+  }
+}
+
+function localizedTextWithFallback(draft: RecipeDraft, language: "en" | "ar") {
+  const localized = draft.localized?.[language];
+  return {
+    title: localized?.title ?? draft.title,
+    description: localized?.description ?? draft.description,
+    cuisine: localized?.cuisine ?? draft.cuisine,
+    meal_type: localized?.meal_type ?? draft.meal_type,
+    ingredients:
+      localized?.ingredients ??
+      draft.ingredients.map((ingredient) => ({
+        name: ingredient.name,
+        notes: ingredient.notes,
+      })),
+    steps: localized?.steps ?? draft.steps,
+  };
+}
+
+function normalizeLocalizedSteps(
+  steps: z.infer<typeof localizedTextSchema>["steps"],
+  fallback: NonNullable<RecipeDraft["localized"]>["en"]["steps"]
+) {
+  if (steps.length !== fallback.length) return fallback;
+  return steps.map((step, index) => ({
+    ...fallback[index],
+    order: step.order || fallback[index].order,
+    title: optionalString(step.title) ?? fallback[index].title,
+    text: step.text.trim() || fallback[index].text,
+    duration_minutes: optionalPositiveInt(step.duration_minutes) ?? fallback[index].duration_minutes,
+    temperature: step.temperature ?? fallback[index].temperature,
+    equipment: optionalStringArray(step.equipment) ?? fallback[index].equipment,
+    ingredients_used: optionalStringArray(step.ingredients_used) ?? fallback[index].ingredients_used,
+    tips: optionalStringArray(step.tips) ?? fallback[index].tips,
+  }));
+}
+
+export async function recalculateRecipeServings(
+  draft: RecipeDraft,
+  servings: number
+): Promise<Pick<RecipeDraft, "servings" | "ingredients" | "steps" | "localized">> {
+  const scaledIngredients = scaleIngredientQuantities(draft, servings);
+  const draftWithScaledIngredients = {
+    ...draft,
+    servings,
+    ingredients: scaledIngredients,
+  };
+  const rewrittenLocalized = await rewriteLocalizedStepsForServings(draftWithScaledIngredients, servings);
+  const sourceLanguage = getSourceRecipeLanguage(draft);
+  const sourceSteps = rewrittenLocalized[sourceLanguage]?.steps ?? draft.steps;
+
+  const candidate = validateRecipeDraft({
+    ...draftWithScaledIngredients,
+    steps: sourceSteps,
+    localized: rewrittenLocalized,
+  });
+  if (!candidate) throw new Error("Serving recalculation failed validation.");
+
+  return {
+    servings: candidate.servings,
+    ingredients: candidate.ingredients,
+    steps: candidate.steps,
+    localized: rewrittenLocalized,
+  };
 }

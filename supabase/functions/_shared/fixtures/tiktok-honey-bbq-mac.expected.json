@@ -1,0 +1,83 @@
+{
+  "source_platform": "tiktok",
+  "events": [
+    {
+      "stage": "tiktok_apify_transcript_used",
+      "transcript_chars": 284
+    },
+    {
+      "stage": "step_rewrite"
+    },
+    {
+      "stage": "sanity_check"
+    }
+  ],
+  "status": "confirmed",
+  "recipe": {
+    "title": "Honey BBQ Mac and Cheese",
+    "cuisine": "American",
+    "meal_type": "Dinner",
+    "servings": 4,
+    "ingredients": [
+      {
+        "name": "elbow macaroni",
+        "quantity": "12",
+        "unit": "oz",
+        "is_estimated": false
+      },
+      {
+        "name": "honey BBQ sauce",
+        "quantity": "0.5",
+        "unit": "cup",
+        "is_estimated": true
+      }
+    ],
+    "localized": {
+      "en": {
+        "ingredients": [
+          {
+            "name": "elbow macaroni"
+          },
+          {
+            "name": "honey BBQ sauce"
+          }
+        ],
+        "steps": [
+          {
+            "order": 1,
+            "title": "Boil the pasta",
+            "text": "Cook the macaroni in salted water until al dente.",
+            "equipment": ["large pot"],
+            "ingredients_used": ["elbow macaroni"],
+            "tips": ["Reserve a splash of pasta water before draining."]
+          }
+        ]
+      },
+      "ar": {
+        "ingredients": [
+          {
+            "name": "مكرونة كوع"
+          },
+          {
+            "name": "صلصة باربكيو بالعسل"
+          }
+        ],
+        "steps": [
+          {
+            "order": 1,
+            "title": "اسلقي المكرونة",
+            "text": "اسلقي المكرونة في ماء مملح حتى تصبح طرية مع تماسك خفيف.",
+            "equipment": ["قدر كبير"],
+            "ingredients_used": ["elbow macaroni"],
+            "tips": ["احتفظي بقليل من ماء السلق قبل التصفية."]
+          }
+        ]
+      }
+    },
+    "nutrition_estimate": {
+      "calories": 620,
+      "confidence": 0.55,
+      "estimated": true
+    }
+  }
+}

@@ -9,7 +9,6 @@ import {
   logJobEvent,
   updateJobStatus,
 } from "../_shared/db.ts";
-import { hasIngredientsNeedingReview } from "../_shared/ingredient-details.ts";
 import type { RecipeDraft } from "../_shared/types.ts";
 import { validateRecipeDraft } from "../_shared/validation.ts";
 
@@ -75,13 +74,6 @@ Deno.serve(async (req) => {
       422
     );
   }
-  if (hasIngredientsNeedingReview(validated.ingredients)) {
-    return jsonResponse(
-      { error: "Every ingredient needs a specific quantity, unit, or size before saving." },
-      422
-    );
-  }
-
   const recipeId = await confirmRecipeFromDraft(adminClient, {
     job,
     payload: validated,

@@ -1,0 +1,32 @@
+{
+  "first_import": {
+    "user_id": "user-a",
+    "recipe_id": "recipe-a",
+    "source_url": "https://www.instagram.com/reel/ABC123/?utm_source=ig_web_copy_link",
+    "normalized_source_url": "https://www.instagram.com/reel/ABC123",
+    "cache_written": true,
+    "events": ["cache_lookup", "metadata_fetch", "gemini_parse", "step_rewrite", "cache_write", "confirmed"]
+  },
+  "second_import": {
+    "user_id": "user-b",
+    "recipe_id": "recipe-b",
+    "source_url": "https://instagram.com/reel/ABC123/",
+    "normalized_source_url": "https://www.instagram.com/reel/ABC123",
+    "cache_hit": true,
+    "fresh_recipe_row_created": true,
+    "events": ["cache_lookup", "confirmed"],
+    "skipped_events": [
+      "metadata_fetch",
+      "openrouter_transcribe",
+      "gemini_parse",
+      "step_rewrite",
+      "sanity_check",
+      "cache_write"
+    ],
+    "confidence": {
+      "cache_hit": true,
+      "cache_source_url": "https://www.instagram.com/reel/ABC123",
+      "extraction_model_used": "anthropic/claude-sonnet-4.6"
+    }
+  }
+}

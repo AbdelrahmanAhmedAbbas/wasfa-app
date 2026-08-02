@@ -12,7 +12,10 @@ const SUPPORTED_HOSTS = [
   "tiktok.com",
   "www.tiktok.com",
   "vm.tiktok.com",
+  "vt.tiktok.com",
 ];
+
+type FetchLike = (input: string, init?: RequestInit) => Promise<{ url?: string }>;
 
 export function detectSourcePlatform(url: string): SourcePlatform {
   try {
@@ -39,6 +42,59 @@ export function normalizeSourceUrl(input: string): string | null {
   }
 }
 
+function normalizeTikTokVideoUrl(input: string): string | null {
+  const normalized = normalizeSourceUrl(input);
+  if (!normalized) return null;
+
+  try {
+    const url = new URL(normalized);
+    const host = url.hostname.toLowerCase();
+    if (!host.includes("tiktok")) return normalized;
+    if (/^\/@[^/]+\/video\/\d+\/?$/.test(url.pathname)) {
+      url.search = "";
+      url.hash = "";
+    }
+    return url.toString();
+  } catch {
+    return normalized;
+  }
+}
+
+function isTikTokShareUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    const host = url.hostname.toLowerCase();
+    return host === "vm.tiktok.com" || host === "vt.tiktok.com" || url.pathname.startsWith("/t/");
+  } catch {
+    return false;
+  }
+}
+
+export async function resolveTikTokSourceUrl(
+  sourceUrl: string,
+  fetcher: FetchLike = fetch
+): Promise<{ url: string; resolved: boolean }> {
+  const originalUrl = normalizeTikTokVideoUrl(sourceUrl) ?? sourceUrl;
+  if (!isTikTokShareUrl(originalUrl)) return { url: originalUrl, resolved: false };
+
+  try {
+    const response = await fetcher(originalUrl, {
+      method: "GET",
+      headers: {
+        "User-Agent": "Mozilla/5.0 (MealPlannerBot/1.0)",
+      },
+      redirect: "follow",
+    });
+    const resolvedUrl = response.url ? normalizeTikTokVideoUrl(response.url) : null;
+    if (!resolvedUrl || !isSupportedSource(resolvedUrl) || detectSourcePlatform(resolvedUrl) !== "tiktok") {
+      return { url: originalUrl, resolved: false };
+    }
+    return { url: resolvedUrl, resolved: resolvedUrl !== originalUrl };
+  } catch {
+    return { url: originalUrl, resolved: false };
+  }
+}
+
 export function extractFirstUrl(text: string): string | null {
   const match = text.match(/https?:\/\/[^\s]+/i);
   if (!match) return null;
@@ -54,7 +110,10 @@ export function isSupportedSource(url: string): boolean {
   }
 }
 
-export function validateRecipeDraft(input: unknown): RecipeDraft | null {
+export function validateRecipeDraft(
+  input: unknown,
+  options: { requireMeasurements?: boolean } = {}
+): RecipeDraft | null {
   if (!input || typeof input !== "object") return null;
   const candidate = input as Partial<RecipeDraft>;
 
@@ -70,10 +129,15 @@ export function validateRecipeDraft(input: unknown): RecipeDraft | null {
     .filter((item): item is StepItem => !!item);
 
   if (ingredients.length < 2 || steps.length < 2) return null;
+  if (options.requireMeasurements !== false && ingredients.some((ingredient) => !isIngredientDetailComplete(ingredient))) {
+    return null;
+  }
 
   return {
     title: candidate.title.trim(),
     description: optionalString(candidate.description),
+    cuisine: optionalString(candidate.cuisine) ?? "General",
+    meal_type: optionalString(candidate.meal_type) ?? "Meal",
     servings: optionalPositiveInt(candidate.servings),
     prep_minutes: optionalPositiveInt(candidate.prep_minutes),
     cook_minutes: optionalPositiveInt(candidate.cook_minutes),
@@ -89,6 +153,81 @@ export function validateRecipeDraft(input: unknown): RecipeDraft | null {
   };
 }
 
+const MEASURE_UNITS = new Set([
+  "g",
+  "gram",
+  "grams",
+  "kg",
+  "oz",
+  "ounce",
+  "ounces",
+  "lb",
+  "lbs",
+  "pound",
+  "pounds",
+  "ml",
+  "l",
+  "liter",
+  "liters",
+  "litre",
+  "litres",
+  "tsp",
+  "teaspoon",
+  "teaspoons",
+  "tbsp",
+  "tablespoon",
+  "tablespoons",
+  "cup",
+  "cups",
+  "slice",
+  "slices",
+  "piece",
+  "pieces",
+  "whole",
+  "can",
+  "cans",
+  "pack",
+  "packs",
+  "clove",
+  "cloves",
+  "bunch",
+  "bunches",
+  "pinch",
+  "pinches",
+  "dash",
+  "dashes",
+  "splash",
+  "splashes",
+  "drop",
+  "drops",
+  "handful",
+  "handfuls",
+  "stick",
+  "sticks",
+  "head",
+  "heads",
+  "sprig",
+  "sprigs",
+  "leaf",
+  "leaves",
+]);
+
+const QUANTITY_WITH_UNIT_PATTERN =
+  /\b\d+(?:[./]\d+)?\s*(?:g|grams?|kg|oz|ounces?|lb|lbs|pounds?|ml|l|liters?|litres?|tsp|teaspoons?|tbsp|tablespoons?|cups?|slices?|pieces?|whole|cans?|packs?|cloves?|bunches?|pinches?|dashes?|splashes?|drops?|handfuls?|sticks?|heads?|sprigs?|leaves|leaf)\b/i;
+
+function isIngredientDetailComplete(ingredient: Pick<IngredientItem, "quantity" | "unit" | "size">): boolean {
+  const quantity = optionalString(ingredient.quantity) ?? "";
+  const unit = optionalString(ingredient.unit)?.toLowerCase().replace(/\.$/, "") ?? "";
+  const size = optionalString(ingredient.size) ?? "";
+
+  if (quantity && unit && MEASURE_UNITS.has(unit)) return true;
+  if (quantity && unit) return true;
+  if (quantity && size) return true;
+  if (quantity && QUANTITY_WITH_UNIT_PATTERN.test(quantity)) return true;
+  if (size && QUANTITY_WITH_UNIT_PATTERN.test(size)) return true;
+  return false;
+}
+
 function sanitizeIngredient(input: unknown): IngredientItem | null {
   if (!input || typeof input !== "object") return null;
   const item = input as Partial<IngredientItem>;
@@ -100,6 +239,7 @@ function sanitizeIngredient(input: unknown): IngredientItem | null {
       : undefined;
   const result: IngredientItem = {
     name: item.name.trim(),
+    is_estimated: item.is_estimated === true,
   };
   const quantity = optionalString(item.quantity);
   const unit = optionalString(item.unit);
@@ -108,11 +248,20 @@ function sanitizeIngredient(input: unknown): IngredientItem | null {
   const size = optionalString(item.size);
   const evidenceText = optionalString(item.evidence_text);
   const citationUrl = optionalString(item.citation_url);
+  const dietaryFlags = optionalStringArray(item.dietary_flags);
+  const allergenHints = optionalStringArray(item.allergen_hints);
+  const halalConcern = optionalString(item.halal_concern);
+  const suggestedAlternative = optionalString(item.suggested_alternative);
   if (quantity) result.quantity = quantity;
   if (unit) result.unit = unit;
   if (notes) result.notes = notes;
   if (preparation) result.preparation = preparation;
   if (size) result.size = size;
+  if (dietaryFlags.length) result.dietary_flags = dietaryFlags;
+  if (allergenHints.length) result.allergen_hints = allergenHints;
+  if (typeof item.is_halal === "boolean") result.is_halal = item.is_halal;
+  if (halalConcern) result.halal_concern = halalConcern;
+  if (suggestedAlternative) result.suggested_alternative = suggestedAlternative;
   if (source) result.source = source;
   if (typeof confidence === "number") result.confidence = confidence;
   if (evidenceText) result.evidence_text = evidenceText;
@@ -125,8 +274,8 @@ function isIngredientSource(value: unknown): value is NonNullable<IngredientItem
   return (
     value === "caption" ||
     value === "transcript" ||
-    value === "video_ocr" ||
     value === "web_research" ||
+    value === "ai_estimate" ||
     value === "user_edit"
   );
 }
@@ -139,10 +288,32 @@ function sanitizeStep(input: unknown, index: number): StepItem | null {
     typeof item.order === "number" && Number.isFinite(item.order) && item.order > 0
       ? Math.trunc(item.order)
       : index + 1;
-  return {
+  const title = optionalString(item.title) ?? `Step ${order}`;
+  const result: StepItem = {
     order,
+    title,
     text: item.text.trim(),
     duration_minutes: optionalPositiveInt(item.duration_minutes),
+  };
+  const temperature = sanitizeTemperature(item.temperature);
+  const equipment = optionalStringArray(item.equipment);
+  const ingredientsUsed = optionalStringArray(item.ingredients_used);
+  const tips = optionalStringArray(item.tips);
+  if (temperature) result.temperature = temperature;
+  if (equipment.length) result.equipment = equipment;
+  if (ingredientsUsed.length) result.ingredients_used = ingredientsUsed;
+  if (tips.length) result.tips = tips;
+  return result;
+}
+
+function sanitizeTemperature(input: unknown): StepItem["temperature"] | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const item = input as Record<string, unknown>;
+  if (typeof item.value !== "number" || !Number.isFinite(item.value)) return undefined;
+  if (item.unit !== "C" && item.unit !== "F") return undefined;
+  return {
+    value: item.value,
+    unit: item.unit,
   };
 }
 
@@ -202,15 +373,32 @@ function sanitizeLocalized(input: unknown): RecipeDraft["localized"] | undefined
           typeof step.order === "number" && Number.isFinite(step.order)
             ? Math.max(1, Math.trunc(step.order))
             : index + 1;
-        return { order, text };
+        return {
+          order,
+          title: optionalString(step.title) ?? `Step ${order}`,
+          text,
+          duration_minutes: optionalPositiveInt(step.duration_minutes),
+          temperature: sanitizeTemperature(step.temperature),
+          equipment: optionalStringArray(step.equipment),
+          ingredients_used: optionalStringArray(step.ingredients_used),
+          tips: optionalStringArray(step.tips),
+        };
       })
-      .filter((entry): entry is { order: number; text: string } => !!entry);
+      .filter((entry): entry is StepItem => !!entry)
+      .map((step) => ({
+        ...step,
+        equipment: step.equipment?.length ? step.equipment : undefined,
+        ingredients_used: step.ingredients_used?.length ? step.ingredients_used : undefined,
+        tips: step.tips?.length ? step.tips : undefined,
+      }));
 
     if (ingredients.length < 2 || steps.length < 2) continue;
 
     result[language] = {
       title,
       description: optionalString(item.description),
+      cuisine: optionalString(item.cuisine),
+      meal_type: optionalString(item.meal_type),
       ingredients,
       steps,
     };
@@ -224,6 +412,13 @@ function optionalString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function optionalStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => optionalString(entry))
+    .filter((entry): entry is string => !!entry);
 }
 
 function optionalPositiveInt(value: unknown): number | undefined {
