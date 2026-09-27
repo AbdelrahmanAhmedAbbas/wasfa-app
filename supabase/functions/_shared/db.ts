@@ -262,6 +262,29 @@ export async function getRecipeDraftByJobId(
   return data;
 }
 
+export async function getLatestJobStage(
+  adminClient: ReturnType<typeof createClient>,
+  jobId: string
+): Promise<string | null> {
+  const { data, error } = await adminClient
+    .from("job_events")
+    .select("payload, created_at")
+    .eq("job_id", jobId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) throw error;
+
+  for (const row of data ?? []) {
+    const payload = row?.payload as Record<string, unknown> | null;
+    if (payload && typeof payload.stage === "string" && payload.stage.trim().length > 0) {
+      return payload.stage;
+    }
+  }
+
+  return null;
+}
+
 export async function findCachedExtractionByUrl(
   adminClient: ReturnType<typeof createClient>,
   normalizedUrl: string

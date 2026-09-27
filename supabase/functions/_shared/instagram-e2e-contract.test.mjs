@@ -14,7 +14,8 @@ test("Instagram path verifies Apify metadata plus OpenRouter transcription witho
   assert.match(pipeline, /stage:\s*"openrouter_transcribe"/);
   assert.doesNotMatch(pipeline, /video_ocr|extractVisualRecipeText|openrouter_video_ocr/);
 
-  assert.match(pipeline, /rewriteProceduralSteps/);
+  assert.match(pipeline, /generateRecipeContent/);
+  assert.match(pipeline, /Promise\.all\(\[/);
   assert.match(pipeline, /has_localized_ar/);
   assert.match(pipeline, /has_localized_en/);
   assert.match(pipeline, /status:\s*"confirmed"/);

@@ -15,7 +15,10 @@
     },
     "ios": {
       "bundleIdentifier": "com.abdelrahmanahmed.mealplanner",
-      "supportsTablet": true
+      "supportsTablet": true,
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -112,10 +115,14 @@
       "expo-localization"
     ],
     "extra": {
-      "supportsRTL": true
+      "supportsRTL": true,
+      "eas": {
+        "projectId": "075d17be-4232-4a07-a8c7-42275d6cf110"
+      }
     },
     "experiments": {
       "typedRoutes": true
-    }
+    },
+    "owner": "abdelrahmanabas11493"
   }
 }

@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   mergeIngredientSources,
   markIngredientReviewStates,
+  normalizeIngredientKey,
 } from "./ingredient-details.ts";
 
 test("AI-estimated ingredient details override name-only transcript ingredients", () => {
@@ -68,4 +69,19 @@ test("review state is applied to every ingredient", () => {
       { name: "salt", needs_review: true },
     ]
   );
+});
+
+test("ingredient normalization preserves Arabic letters for deduping", () => {
+  assert.equal(normalizeIngredientKey("بصل مفروم"), "بصل");
+  assert.equal(normalizeIngredientKey("طماطم-كرزية!!"), "طماطم كرزية");
+
+  const merged = mergeIngredientSources([
+    { name: "بصل", source: "transcript" },
+    { name: "بصل مفروم", quantity: "1", unit: "حبة", source: "ai_estimate" },
+  ]);
+
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].name, "بصل مفروم");
+  assert.equal(merged[0].quantity, "1");
+  assert.equal(merged[0].unit, "حبة");
 });

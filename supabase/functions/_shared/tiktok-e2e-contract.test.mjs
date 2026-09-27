@@ -14,7 +14,8 @@ test("TikTok transcript path verifies confirmed bilingual rich recipe without au
   assert.doesNotMatch(transcriptBranch[1], /openrouter_transcribe/);
 
   assert.match(pipeline, /extractRecipe/);
-  assert.match(pipeline, /rewriteProceduralSteps/);
+  assert.match(pipeline, /generateRecipeContent/);
+  assert.match(pipeline, /Promise\.all\(\[/);
   assert.match(pipeline, /estimateNutrition/);
   assert.match(pipeline, /has_localized_ar/);
   assert.match(pipeline, /has_localized_en/);

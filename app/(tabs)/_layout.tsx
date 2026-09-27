@@ -30,6 +30,7 @@ const TAB_CONFIG = {
 type TabRouteName = keyof typeof TAB_CONFIG;
 
 const ACTIVE_EASING = Easing.bezier(0.22, 1, 0.36, 1);
+const DOCK_HEIGHT = 74;
 
 type TabBarItemProps = {
   label: string;
@@ -146,6 +147,11 @@ function CustomTabBar({
   const activeIndex = useSharedValue(state.index);
   const rowWidth = useSharedValue(0);
   const activeRouteName = state.routes[state.index]?.name as TabRouteName | undefined;
+  // Keep the bar floating (absolute, zero layout height) but give the root a real
+  // frame that fully contains the dock. A zero-height absoluteFill root leaves the
+  // dock painted outside its ancestor bounds, which iOS 27 hit-testing rejects.
+  const bottomOffset = Math.max(insets.bottom - 4, 8);
+  const tabBarTouchHeight = DOCK_HEIGHT + bottomOffset;
 
   useEffect(() => {
     const visualIndex =
@@ -176,15 +182,8 @@ function CustomTabBar({
   });
 
   return (
-    <View pointerEvents="box-none" style={styles.outerFrame}>
-      <View
-        style={[
-          styles.dock,
-          {
-            bottom: Math.max(insets.bottom - 4, 8),
-          },
-        ]}
-      >
+    <View pointerEvents="box-none" style={[styles.outerFrame, { height: tabBarTouchHeight }]}>
+      <View style={styles.dock}>
         <View
           style={styles.dockRow}
           onLayout={(event) => {
@@ -293,14 +292,15 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   outerFrame: {
-    ...StyleSheet.absoluteFillObject,
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   dock: {
-    position: "absolute",
-    left: 14,
-    right: 14,
+    marginHorizontal: 14,
     direction: "ltr",
-    height: 74,
+    height: DOCK_HEIGHT,
     borderRadius: 22,
     borderWidth: 1,
     borderColor: "#D7E3F5",

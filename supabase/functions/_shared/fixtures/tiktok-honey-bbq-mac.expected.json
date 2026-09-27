@@ -6,7 +6,7 @@
       "transcript_chars": 284
     },
     {
-      "stage": "step_rewrite"
+      "stage": "content_generation_en"
     },
     {
       "stage": "sanity_check"

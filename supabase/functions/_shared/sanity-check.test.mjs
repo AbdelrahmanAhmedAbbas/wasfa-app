@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { runSanityCheck } from "./sanity-check.ts";
+import { getArabicLocalizationIssues, runSanityCheck } from "./sanity-check.ts";
 
 const draft = {
   title: "Tomato Pasta",
@@ -36,5 +36,38 @@ test("sanity check returns structured issues instead of throwing on provider fai
   assert.equal(typeof result.passed, "boolean");
   assert.ok(Array.isArray(result.issues));
   assert.equal(result.passed, false);
-  assert.deepEqual(result.issues, ["sanity_check_unavailable"]);
+  assert.deepEqual(result.issues, ["localized_ar_missing", "sanity_check_unavailable"]);
+  assert.equal(result.shouldRetryArabic, true);
+  assert.deepEqual(result.arabicIssues, ["localized_ar_missing"]);
+});
+
+test("sanity check flags Arabic localization leakage before confirmation", async () => {
+  const arabicDraft = {
+    ...draft,
+    localized: {
+      en: {
+        title: "Tomato Pasta",
+        description: "A simple pasta.",
+        cuisine: "Italian",
+        meal_type: "Dinner",
+        ingredients: [{ name: "tomato" }],
+        steps: [{ order: 1, title: "Cook sauce", text: "Cook the tomatoes until saucy." }],
+      },
+      ar: {
+        title: "Tomato Pasta",
+        description: "Quick dinner",
+        cuisine: "Italian",
+        meal_type: "Dinner",
+        ingredients: [{ name: "tomato" }],
+        steps: [{ order: 1, title: "Cook sauce", text: "Cook the tomatoes until saucy." }],
+      },
+    },
+  };
+
+  assert.ok(getArabicLocalizationIssues(arabicDraft).includes("localized_ar_title_contains_latin"));
+
+  const result = await runSanityCheck(arabicDraft);
+  assert.equal(result.shouldRetryArabic, true);
+  assert.ok(result.arabicIssues.includes("localized_ar_title_contains_latin"));
+  assert.ok(result.issues.includes("sanity_check_unavailable"));
 });

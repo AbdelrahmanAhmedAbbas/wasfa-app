@@ -19,7 +19,7 @@ test("cross-user re-import hits normalized URL cache without model or Apify call
   assert.match(cacheHitBranch[1], /upsertRecipeDraft/);
   assert.match(cacheHitBranch[1], /confirmRecipeFromDraft/);
   assert.match(cacheHitBranch[1], /cache_hit:\s*true/);
-  assert.doesNotMatch(cacheHitBranch[1], /fetchApifyMetadata|extractRecipe|rewriteProceduralSteps|estimateNutrition|transcribeWithOpenRouter|openrouter_transcribe/);
+  assert.doesNotMatch(cacheHitBranch[1], /fetchApifyMetadata|extractRecipe|generateRecipeContent|estimateNutrition|transcribeWithOpenRouter|openrouter_transcribe/);
 
   assert.equal(expected.first_import.cache_written, true);
   assert.equal(expected.second_import.cache_hit, true);
@@ -31,7 +31,7 @@ test("cross-user re-import hits normalized URL cache without model or Apify call
     "metadata_fetch",
     "openrouter_transcribe",
     "gemini_parse",
-    "step_rewrite",
+    "content_generation_en",
     "sanity_check",
     "cache_write"
   ]);

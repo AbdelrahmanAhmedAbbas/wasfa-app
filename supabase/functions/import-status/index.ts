@@ -3,6 +3,7 @@ import {
   canAccessJob,
   createSupabaseClients,
   getImportJobById,
+  getLatestJobStage,
   getRecipeDraftByJobId,
   getRequestUser,
 } from "../_shared/db.ts";
@@ -27,6 +28,7 @@ Deno.serve(async (req) => {
   }
 
   const draft = await getRecipeDraftByJobId(adminClient, job.id);
+  const currentStage = await getLatestJobStage(adminClient, job.id);
   return jsonResponse({
     job: {
       id: job.id,
@@ -37,6 +39,7 @@ Deno.serve(async (req) => {
       error_message: job.error_message,
       created_at: job.created_at,
       updated_at: job.updated_at,
+      current_stage: currentStage,
     },
     draft: draft
       ? {

@@ -2,7 +2,13 @@ import { generateObject } from "npm:ai@4.1.56";
 import { createOpenAI } from "npm:@ai-sdk/openai@1.3.23";
 import { z } from "npm:zod@3.24.2";
 
-import type { IngredientItem, NutritionEstimate, RecipeDraft, SourcePlatform } from "./types.ts";
+import type {
+  IngredientItem,
+  LocalizedRecipeText,
+  NutritionEstimate,
+  RecipeDraft,
+  SourcePlatform,
+} from "./types.ts";
 import {
   hasIngredientsNeedingReview,
   isIngredientDetailComplete,
@@ -11,6 +17,7 @@ import {
   mergeIngredientSources,
   normalizeUnit,
 } from "./ingredient-details.ts";
+import { linkStepIngredients } from "./step-rewriter.ts";
 import { validateRecipeDraft } from "./validation.ts";
 
 type ExtractResult = {
@@ -38,9 +45,19 @@ const EXTRACTION_MODELS = [
   "google/gemini-3-flash-preview",
 ];
 const GEMINI_PARSER_MODEL = "google/gemini-3-flash-preview";
-const GEMINI_TRANSLATE_MODEL = "google/gemini-3-flash-preview";
+const ENGLISH_CONTENT_MODELS = [
+  "anthropic/claude-haiku-4.5",
+  "anthropic/claude-sonnet-4.6",
+  "google/gemini-3-flash-preview",
+];
+const ARABIC_CONTENT_MODELS = [
+  "anthropic/claude-sonnet-4.6",
+  "anthropic/claude-haiku-4.5",
+  "google/gemini-3-flash-preview",
+];
 const GEMINI_NUTRITION_MODEL = "google/gemini-3-flash-preview";
 const WEB_RESEARCH_MODEL = "google/gemini-2.5-pro";
+const OPENROUTER_TIMEOUT_MS = 90_000;
 
 const defaultNutritionDisclaimer =
   "Estimated nutrition values only. Verify with a certified nutrition source before medical use.";
@@ -239,6 +256,31 @@ function truncateForLog(value: string, max = 800): string {
   return `${value.slice(0, max)}...`;
 }
 
+async function withAbortTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timeoutMs = OPENROUTER_TIMEOUT_MS,
+  upstreamSignal?: AbortSignal
+): Promise<T> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort(upstreamSignal?.reason ?? new Error("OPENROUTER_ABORTED"));
+
+  if (upstreamSignal) {
+    if (upstreamSignal.aborted) onAbort();
+    else upstreamSignal.addEventListener("abort", onAbort, { once: true });
+  }
+
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error("OPENROUTER_TIMEOUT"));
+  }, timeoutMs);
+
+  try {
+    return await run(controller.signal);
+  } finally {
+    clearTimeout(timeoutId);
+    if (upstreamSignal) upstreamSignal.removeEventListener("abort", onAbort);
+  }
+}
+
 function parseJsonLenient(raw: string): unknown {
   const normalized = raw.trim().replace(/^\uFEFF/, "").replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
   try {
@@ -261,18 +303,27 @@ function parseJsonLenient(raw: string): unknown {
   }
 }
 
-async function openRouterChatCompletion(body: Record<string, unknown>): Promise<string> {
+async function openRouterChatCompletion(
+  body: Record<string, unknown>,
+  options: { abortSignal?: AbortSignal; timeoutMs?: number } = {}
+): Promise<string> {
   const apiKey = requiredEnv("OPENROUTER_API_KEY");
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://meal-planner.app",
-      "X-Title": "Meal Planner Import",
-    },
-    body: JSON.stringify(body),
-  });
+  const response = await withAbortTimeout(
+    (abortSignal) =>
+      fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://meal-planner.app",
+          "X-Title": "Meal Planner Import",
+        },
+        body: JSON.stringify(body),
+        signal: abortSignal,
+      }),
+    options.timeoutMs,
+    options.abortSignal
+  );
 
   const rawBody = await response.text();
   if (!response.ok) {
@@ -360,29 +411,60 @@ Steps:
 ${draft.steps.map((step) => `${step.order}. ${step.text}`).join("\n")}`;
 }
 
-function buildLocalizationPrompt(draft: RecipeDraft, targetLanguage: "en" | "ar"): string {
-  const targetLabel = targetLanguage === "ar" ? "Arabic" : "English";
-  return `Translate this recipe into ${targetLabel}.
+function buildRecipeContentPrompt(params: {
+  draft: RecipeDraft;
+  targetLanguage: "en" | "ar";
+  sourceText: string;
+}): string {
+  const targetLabel = params.targetLanguage === "ar" ? "Arabic" : "English";
+  const sourceLanguage = getSourceRecipeLanguage(params.draft);
+  const preserveOriginal = sourceLanguage === params.targetLanguage;
+  const languageRules =
+    params.targetLanguage === "ar"
+      ? [
+          'Write in simple, natural Modern Standard Arabic ("white" Arabic) for a home cook across the Gulf/MENA.',
+          "Use common Gulf-friendly cooking terminology. Avoid stiff formal fusha and avoid heavy dialect.",
+          "Never output English in Arabic fields.",
+          "Never mix Arabic and Latin scripts inside a single field.",
+          preserveOriginal
+            ? "The source recipe is already Arabic. Preserve the creator's wording and phrasing wherever possible, and only clean it up for clarity. Do not re-translate into different Arabic."
+            : "Write original Arabic copy from the source context, not a literal translation of English phrasing.",
+        ]
+      : [
+          "Write natural, concise home-cook English.",
+          preserveOriginal
+            ? "The source recipe is already English. Preserve the creator's wording where it is clear, and only clean it up for readability."
+            : "Write native English that reads naturally for a home cook, not word-for-word translated text.",
+        ];
+
+  return `Generate fully localized ${targetLabel} recipe content.
 Rules:
-- Preserve culinary meaning and order.
-- Keep the same ingredient and step count.
-- For each ingredient, the "name" field MUST contain ONLY the ingredient noun (and optional descriptive adjectives like color/freshness). DO NOT include numeric quantities, unit words (g, ml, tbsp, جرام, ملعقة, كوب, etc.), or parenthetical conversions inside the name. Quantity and unit are tracked in separate fields outside the translation; they are not your responsibility.
-- Example correct Arabic name: "صدور دجاج" (NOT "40 أونصة (1135 جرام) صدور دجاج"). Example correct English name: "chicken breast" (NOT "40 oz (1135 g) chicken breast").
-- Notes/preparation/tips can stay descriptive but must not duplicate quantity numbers from the source.
-Recipe:
-Title: ${draft.title}
-Description: ${draft.description ?? ""}
-Cuisine: ${draft.cuisine}
-Meal type: ${draft.meal_type}
-Ingredients (translate name + notes only; quantities shown for context):
-${draft.ingredients
+- Return JSON only in the requested schema.
+- Keep the same ingredient count and same step count.
+- Preserve the recipe's culinary meaning, sequence, and timing.
+- For each ingredient, the "name" field must be a pure noun phrase only. Do not include quantities, units, or parenthetical conversions in the name.
+- Notes, step tips, and equipment may be descriptive but must stay faithful to the recipe.
+- Keep halal concerns and suggested alternatives culturally accurate.
+- Use ingredient names in ingredients_used that match the localized ingredient list when possible.
+- Each step needs a short imperative title plus natural procedural text suitable for a home cook.
+${languageRules.map((rule) => `- ${rule}`).join("\n")}
+
+Current draft:
+Title: ${params.draft.title}
+Description: ${params.draft.description ?? ""}
+Cuisine: ${params.draft.cuisine}
+Meal type: ${params.draft.meal_type}
+Ingredients:
+${params.draft.ingredients
   .map((ingredient, index) =>
-    `${index + 1}. name="${ingredient.name}"${ingredient.preparation ? ` preparation="${ingredient.preparation}"` : ""}${ingredient.notes ? ` notes="${ingredient.notes}"` : ""} (context-only quantity: ${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""})`.trim()
+    `${index + 1}. ${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""} ${ingredient.name}${ingredient.preparation ? ` | preparation: ${ingredient.preparation}` : ""}${ingredient.notes ? ` | notes: ${ingredient.notes}` : ""}`.trim()
   )
   .join("\n")}
 Steps:
-${draft.steps.map((step) => `${step.order}. ${step.text}`).join("\n")}
-`;
+${params.draft.steps.map((step) => `${step.order}. ${step.title}: ${step.text}`).join("\n")}
+
+Source context:
+${truncateForPrompt(params.sourceText, 12000)}`;
 }
 
 function buildMissingDetailsPrompt(params: {
@@ -531,64 +613,16 @@ function optionalPositiveNumber(value: number | null | undefined): number | unde
   return value >= 0 ? value : undefined;
 }
 
-function containsArabic(text: string): boolean {
+export function containsArabic(text: string): boolean {
   return /[\u0600-\u06FF]/.test(text);
 }
 
-function getSourceRecipeLanguage(draft: RecipeDraft): "en" | "ar" {
+export function getSourceRecipeLanguage(draft: RecipeDraft): "en" | "ar" {
   if (draft.source.language) {
     return draft.source.language.toLowerCase().startsWith("ar") ? "ar" : "en";
   }
   const sample = `${draft.title} ${draft.steps.map((step) => step.text).join(" ")}`;
   return containsArabic(sample) ? "ar" : "en";
-}
-
-function toLocalizedTextFromDraft(draft: RecipeDraft): NonNullable<RecipeDraft["localized"]>["en"] {
-  return {
-    title: draft.title,
-    description: draft.description,
-    cuisine: draft.cuisine,
-    meal_type: draft.meal_type,
-    ingredients: draft.ingredients.map((item) => ({
-      name: item.name,
-      notes: item.notes,
-    })),
-    steps: draft.steps.map((step) => ({
-      order: step.order,
-      title: step.title,
-      text: step.text,
-      duration_minutes: step.duration_minutes,
-      temperature: step.temperature,
-      equipment: step.equipment,
-      ingredients_used: step.ingredients_used,
-      tips: step.tips,
-    })),
-  };
-}
-
-function cloneLocalizedText(
-  value: NonNullable<RecipeDraft["localized"]>["en"]
-): NonNullable<RecipeDraft["localized"]>["en"] {
-  return {
-    title: value.title,
-    description: value.description,
-    cuisine: value.cuisine,
-    meal_type: value.meal_type,
-    ingredients: value.ingredients.map((item) => ({
-      name: item.name,
-      notes: item.notes,
-    })),
-    steps: value.steps.map((step) => ({
-      order: step.order,
-      title: step.title,
-      text: step.text,
-      duration_minutes: step.duration_minutes,
-      temperature: step.temperature,
-      equipment: step.equipment,
-      ingredients_used: step.ingredients_used,
-      tips: step.tips,
-    })),
-  };
 }
 
 function normalizeRecipeCandidate(
@@ -674,82 +708,189 @@ function normalizeResearchIngredients(
   });
 }
 
-async function translateRecipeText(
-  modelName: string,
-  draft: RecipeDraft,
-  targetLanguage: "en" | "ar"
-) {
-  const providerClient = createOpenRouterClient();
-  const model = providerClient(modelName);
+function fallbackStepTitle(order: number, language: "en" | "ar") {
+  return language === "ar" ? `الخطوة ${order}` : `Step ${order}`;
+}
 
-  const { object } = await generateObject({
-    model,
-    schema: localizedTextSchema,
-    temperature: 0.2,
-    system:
-      "You are a culinary translator. Keep recipe accuracy and preserve list lengths/order.",
-    prompt: buildLocalizationPrompt(draft, targetLanguage),
+function fallbackLocalizedText(
+  draft: RecipeDraft,
+  language: "en" | "ar"
+): LocalizedRecipeText {
+  const localized = draft.localized?.[language];
+  return {
+    title: localized?.title ?? draft.title,
+    description: localized?.description ?? draft.description,
+    cuisine: localized?.cuisine ?? draft.cuisine,
+    meal_type: localized?.meal_type ?? draft.meal_type,
+    ingredients:
+      localized?.ingredients ??
+      draft.ingredients.map((ingredient) => ({
+        name: ingredient.name,
+        notes: ingredient.notes,
+      })),
+    steps:
+      localized?.steps ??
+      draft.steps.map((step) => ({
+        order: step.order,
+        title: step.title,
+        text: step.text,
+        duration_minutes: step.duration_minutes,
+        temperature: step.temperature,
+        equipment: step.equipment,
+        ingredients_used: step.ingredients_used,
+        tips: step.tips,
+      })),
+  };
+}
+
+function assertArabicContentQuality(localized: LocalizedRecipeText) {
+  const issues: string[] = [];
+  const latinPattern = /[A-Za-z]/;
+
+  const requireArabic = (value: string | undefined, issuePrefix: string) => {
+    const trimmed = optionalString(value);
+    if (!trimmed) return;
+    if (latinPattern.test(trimmed)) issues.push(`${issuePrefix}_contains_latin`);
+    if (!containsArabic(trimmed)) issues.push(`${issuePrefix}_missing_arabic`);
+  };
+
+  requireArabic(localized.title, "title");
+  requireArabic(localized.description, "description");
+  requireArabic(localized.cuisine, "cuisine");
+  requireArabic(localized.meal_type, "meal_type");
+
+  localized.ingredients.forEach((ingredient, index) => {
+    requireArabic(ingredient.name, `ingredient_${index + 1}_name`);
+    requireArabic(ingredient.notes, `ingredient_${index + 1}_notes`);
   });
 
-  if (
-    object.ingredients.length !== draft.ingredients.length ||
-    object.steps.length !== draft.steps.length
-  ) {
+  localized.steps.forEach((step, index) => {
+    requireArabic(step.title, `step_${index + 1}_title`);
+    requireArabic(step.text, `step_${index + 1}_text`);
+    step.equipment?.forEach((item, itemIndex) => {
+      requireArabic(item, `step_${index + 1}_equipment_${itemIndex + 1}`);
+    });
+    step.ingredients_used?.forEach((item, itemIndex) => {
+      requireArabic(item, `step_${index + 1}_ingredients_used_${itemIndex + 1}`);
+    });
+    step.tips?.forEach((item, itemIndex) => {
+      requireArabic(item, `step_${index + 1}_tip_${itemIndex + 1}`);
+    });
+  });
+
+  if (issues.length > 0) {
+    throw new Error(`ARABIC_CONTENT_QUALITY_FAILED ${issues.join(",")}`);
+  }
+}
+
+function normalizeGeneratedLocalizedText(
+  localized: z.infer<typeof localizedTextSchema>,
+  draft: RecipeDraft,
+  language: "en" | "ar"
+): LocalizedRecipeText {
+  const fallback = fallbackLocalizedText(draft, language);
+
+  if (localized.ingredients.length !== draft.ingredients.length || localized.steps.length !== draft.steps.length) {
     throw new Error("LOCALIZATION_SHAPE_MISMATCH");
   }
 
-  return {
-    title: object.title.trim(),
-    description: optionalString(object.description),
-    cuisine: optionalString(object.cuisine),
-    meal_type: optionalString(object.meal_type),
-    ingredients: object.ingredients.map((ingredient) => ({
-      name: ingredient.name.trim(),
-      notes: optionalString(ingredient.notes),
+  const normalizedSteps = localized.steps.map((step, index) => {
+    const order = step.order || fallback.steps[index]?.order || index + 1;
+    const equipment = optionalStringArray(step.equipment);
+    const ingredientsUsed = optionalStringArray(step.ingredients_used);
+    const tips = optionalStringArray(step.tips);
+    return {
+      order,
+      title: optionalString(step.title) ?? fallback.steps[index]?.title ?? fallbackStepTitle(order, language),
+      text: step.text.trim() || fallback.steps[index]?.text || "",
+      duration_minutes: optionalPositiveInt(step.duration_minutes) ?? fallback.steps[index]?.duration_minutes,
+      temperature: step.temperature ?? fallback.steps[index]?.temperature,
+      equipment: equipment.length > 0 ? equipment : fallback.steps[index]?.equipment,
+      ingredients_used:
+        ingredientsUsed.length > 0 ? ingredientsUsed : fallback.steps[index]?.ingredients_used,
+      tips: tips.length > 0 ? tips : fallback.steps[index]?.tips,
+    };
+  });
+
+  const normalized = {
+    title: localized.title.trim() || fallback.title,
+    description: optionalString(localized.description) ?? fallback.description,
+    cuisine: optionalString(localized.cuisine) ?? fallback.cuisine,
+    meal_type: optionalString(localized.meal_type) ?? fallback.meal_type,
+    ingredients: localized.ingredients.map((ingredient, index) => ({
+      name: ingredient.name.trim() || fallback.ingredients[index]?.name || draft.ingredients[index]?.name,
+      notes: optionalString(ingredient.notes) ?? fallback.ingredients[index]?.notes,
     })),
-    steps: object.steps.map((step, index) => {
-      const order = step.order || index + 1;
-      return {
-        order,
-        title: optionalString(step.title) ?? `Step ${order}`,
-        text: step.text.trim(),
-        duration_minutes: optionalPositiveInt(step.duration_minutes),
-        temperature: step.temperature ?? undefined,
-        equipment: optionalStringArray(step.equipment),
-        ingredients_used: optionalStringArray(step.ingredients_used),
-        tips: optionalStringArray(step.tips),
-      };
-    }),
-  };
-}
+    steps: linkStepIngredients(normalizedSteps, draft.ingredients),
+  } satisfies LocalizedRecipeText;
 
-async function buildBilingualLocalization(
-  draft: RecipeDraft
-): Promise<NonNullable<RecipeDraft["localized"]>> {
-  const sourceLanguage = getSourceRecipeLanguage(draft);
-  const sourceText = toLocalizedTextFromDraft(draft);
-  const targetLanguage: "en" | "ar" = sourceLanguage === "en" ? "ar" : "en";
-  const localized: NonNullable<RecipeDraft["localized"]> = {
-    en: cloneLocalizedText(sourceText),
-    ar: cloneLocalizedText(sourceText),
-  };
-
-  try {
-    localized[targetLanguage] = await translateRecipeText(
-      GEMINI_TRANSLATE_MODEL,
-      draft,
-      targetLanguage
-    );
-  } catch {
-    // If translation fails, both localized blocks are still present by design.
+  if (language === "ar") {
+    assertArabicContentQuality(normalized);
   }
 
-  return localized;
+  return normalized;
 }
 
-async function fillMissingRecipeDetails(
+export function getRecipeContentModelCandidates(language: "en" | "ar") {
+  return language === "ar" ? [...ARABIC_CONTENT_MODELS] : [...ENGLISH_CONTENT_MODELS];
+}
+
+export async function generateRecipeContent(
   draft: RecipeDraft,
-  input: RecipeInput
+  targetLanguage: "en" | "ar",
+  sourceText: string,
+  options: {
+    modelNames?: string[];
+    abortSignal?: AbortSignal;
+  } = {}
+): Promise<{ content: LocalizedRecipeText; model: string }> {
+  const providerClient = createOpenRouterClient();
+  let lastError: unknown;
+
+  for (const modelName of options.modelNames ?? getRecipeContentModelCandidates(targetLanguage)) {
+    try {
+      const { object } = await withAbortTimeout(
+        (abortSignal) =>
+          generateObject({
+            model: providerClient(modelName),
+            schema: localizedTextSchema,
+            temperature: 0.2,
+            system:
+              "You generate natural localized recipe content while preserving exact ingredient and step counts.",
+            prompt: buildRecipeContentPrompt({
+              draft,
+              targetLanguage,
+              sourceText,
+            }),
+            abortSignal,
+          }),
+        OPENROUTER_TIMEOUT_MS,
+        options.abortSignal
+      );
+
+      return {
+        content: normalizeGeneratedLocalizedText(object, draft, targetLanguage),
+        model: modelName,
+      };
+    } catch (error) {
+      lastError = error;
+      console.warn("[import][content-gen] model failed", {
+        language: targetLanguage,
+        model: modelName,
+        error: truncateForLog(String(error)),
+      });
+    }
+  }
+
+  throw new Error(
+    `RECIPE_CONTENT_GENERATION_FAILED ${targetLanguage} ${truncateForLog(String(lastError))}`
+  );
+}
+
+export async function fillMissingRecipeDetails(
+  draft: RecipeDraft,
+  sourceText: string,
+  options: { abortSignal?: AbortSignal } = {}
 ): Promise<{
   draft: RecipeDraft;
   filledDescription: boolean;
@@ -773,17 +914,23 @@ async function fillMissingRecipeDetails(
     const providerClient = createOpenRouterClient();
     const model = providerClient(GEMINI_PARSER_MODEL);
 
-    const { object } = await generateObject({
-      model,
-      schema: missingDetailsSchema,
-      temperature: 0.2,
-      system:
-        "You complete missing recipe metadata conservatively and never modify ingredients or steps.",
-      prompt: buildMissingDetailsPrompt({
-        draft,
-        sourceText: input.sourceText,
-      }),
-    });
+    const { object } = await withAbortTimeout(
+      (abortSignal) =>
+        generateObject({
+          model,
+          schema: missingDetailsSchema,
+          temperature: 0.2,
+          system:
+            "You complete missing recipe metadata conservatively and never modify ingredients or steps.",
+          prompt: buildMissingDetailsPrompt({
+            draft,
+            sourceText,
+          }),
+          abortSignal,
+        }),
+      OPENROUTER_TIMEOUT_MS,
+      options.abortSignal
+    );
 
     const description = optionalString(object.description);
     const prepMinutes = optionalPositiveInt(object.prep_minutes);
@@ -838,7 +985,7 @@ async function fillMissingMeasurements(params: {
   };
 }
 
-const FORCE_FILL_MAX_ATTEMPTS = 3;
+const FORCE_FILL_MAX_ATTEMPTS = 2;
 
 async function forceFillIngredientMeasurements(draft: RecipeDraft): Promise<RecipeDraft> {
   let nextDraft = {
@@ -850,13 +997,16 @@ async function forceFillIngredientMeasurements(draft: RecipeDraft): Promise<Reci
     if (!hasIngredientsNeedingReview(nextDraft.ingredients)) return nextDraft;
 
     const providerClient = createOpenRouterClient();
-    const { object } = await generateObject({
-      model: providerClient(GEMINI_PARSER_MODEL),
-      schema: forcedIngredientMeasurementSchema,
-      temperature: 0.2,
-      system: "You estimate missing recipe measurements conservatively and return complete JSON only.",
-      prompt: buildForcedMeasurementPrompt(nextDraft),
-    });
+    const { object } = await withAbortTimeout((abortSignal) =>
+      generateObject({
+        model: providerClient(GEMINI_PARSER_MODEL),
+        schema: forcedIngredientMeasurementSchema,
+        temperature: 0.2,
+        system: "You estimate missing recipe measurements conservatively and return complete JSON only.",
+        prompt: buildForcedMeasurementPrompt(nextDraft),
+        abortSignal,
+      })
+    );
 
     const estimates = object.ingredients.map((ingredient) => ({
       name: ingredient.name.trim(),
@@ -972,14 +1122,17 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
 
   for (const candidateModel of EXTRACTION_MODELS) {
     try {
-      const result = await generateObject({
-        model: providerClient(candidateModel),
-        schema: recipeObjectSchema,
-        temperature: 0.2,
-        system:
-          "You are a recipe extraction engine. Return accurate recipe objects as JSON and avoid hallucinations.",
-        prompt: buildExtractionPrompt(input),
-      });
+      const result = await withAbortTimeout((abortSignal) =>
+        generateObject({
+          model: providerClient(candidateModel),
+          schema: recipeObjectSchema,
+          temperature: 0.2,
+          system:
+            "You are a recipe extraction engine. Return accurate recipe objects as JSON and avoid hallucinations.",
+          prompt: buildExtractionPrompt(input),
+          abortSignal,
+        })
+      );
       object = result.object;
       modelUsed = candidateModel;
       break;
@@ -997,10 +1150,8 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
   if (!draft) throw new Error("Generated recipe did not pass validation constraints.");
 
   const detailCompletion = await enrichMissingIngredientDetails(draft, input);
-  const completion = await fillMissingRecipeDetails(detailCompletion.draft, input);
-  const finalDraft = validateRecipeDraft(completion.draft);
+  const finalDraft = validateRecipeDraft(detailCompletion.draft);
   if (!finalDraft) throw new Error("Generated recipe did not pass final validation constraints.");
-  finalDraft.localized = await buildBilingualLocalization(finalDraft);
 
   return {
     draft: finalDraft,
@@ -1008,11 +1159,6 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
       provider: "openrouter",
       model: modelUsed,
       extraction_mode: "schema",
-      missing_fields_completed: {
-        description: completion.filledDescription,
-        prep_minutes: completion.filledPrepMinutes,
-        cook_minutes: completion.filledCookMinutes,
-      },
       ingredient_review: {
         needs_review: hasIngredientsNeedingReview(finalDraft.ingredients),
         web_research_attempted: detailCompletion.researchAttempted,
@@ -1034,14 +1180,17 @@ export async function estimateNutrition(
   const model = providerClient(GEMINI_NUTRITION_MODEL);
 
   try {
-    const { object } = await generateObject({
-      model,
-      schema: nutritionObjectSchema,
-      temperature: 0.2,
-      system:
-        "You estimate recipe nutrition conservatively. Never claim medical precision and always include a disclaimer.",
-      prompt: buildNutritionPrompt(draft),
-    });
+    const { object } = await withAbortTimeout((abortSignal) =>
+      generateObject({
+        model,
+        schema: nutritionObjectSchema,
+        temperature: 0.2,
+        system:
+          "You estimate recipe nutrition conservatively. Never claim medical precision and always include a disclaimer.",
+        prompt: buildNutritionPrompt(draft),
+        abortSignal,
+      })
+    );
 
     return {
       calories: optionalPositiveNumber(object.calories),
@@ -1115,13 +1264,16 @@ async function rewriteLocalizedStepsForServings(
 
   try {
     const providerClient = createOpenRouterClient();
-    const { object } = await generateObject({
-      model: providerClient(GEMINI_PARSER_MODEL),
-      schema: localizedStepRewriteSchema,
-      temperature: 0.2,
-      system: "You rewrite recipe steps for serving changes without changing ingredients.",
-      prompt: buildStepRewritePrompt(draft, servings),
-    });
+    const { object } = await withAbortTimeout((abortSignal) =>
+      generateObject({
+        model: providerClient(GEMINI_PARSER_MODEL),
+        schema: localizedStepRewriteSchema,
+        temperature: 0.2,
+        system: "You rewrite recipe steps for serving changes without changing ingredients.",
+        prompt: buildStepRewritePrompt(draft, servings),
+        abortSignal,
+      })
+    );
 
     return {
       en: { ...fallback.en, steps: normalizeLocalizedSteps(object.en.steps, fallback.en.steps) },

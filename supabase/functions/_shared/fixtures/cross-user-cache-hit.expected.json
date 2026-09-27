@@ -5,7 +5,7 @@
     "source_url": "https://www.instagram.com/reel/ABC123/?utm_source=ig_web_copy_link",
     "normalized_source_url": "https://www.instagram.com/reel/ABC123",
     "cache_written": true,
-    "events": ["cache_lookup", "metadata_fetch", "gemini_parse", "step_rewrite", "cache_write", "confirmed"]
+    "events": ["cache_lookup", "metadata_fetch", "gemini_parse", "content_generation_en", "cache_write", "confirmed"]
   },
   "second_import": {
     "user_id": "user-b",
@@ -19,7 +19,7 @@
       "metadata_fetch",
       "openrouter_transcribe",
       "gemini_parse",
-      "step_rewrite",
+      "content_generation_en",
       "sanity_check",
       "cache_write"
     ],

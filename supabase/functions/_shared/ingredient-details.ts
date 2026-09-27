@@ -12,7 +12,14 @@ export const MEASURE_UNITS = new Set([
   "g",
   "gram",
   "grams",
+  "جم",
+  "غ",
+  "جرام",
+  "جرامات",
   "kg",
+  "كجم",
+  "كيلو",
+  "كيلوغرام",
   "oz",
   "ounce",
   "ounces",
@@ -21,50 +28,86 @@ export const MEASURE_UNITS = new Set([
   "pound",
   "pounds",
   "ml",
+  "مل",
+  "مليلتر",
   "l",
   "liter",
   "liters",
   "litre",
   "litres",
+  "لتر",
   "tsp",
   "teaspoon",
   "teaspoons",
+  "ملعقة صغيرة",
   "tbsp",
   "tablespoon",
   "tablespoons",
+  "ملعقة كبيرة",
   "cup",
   "cups",
+  "كوب",
+  "أكواب",
   "slice",
   "slices",
+  "شريحة",
+  "شرائح",
   "piece",
   "pieces",
+  "قطعة",
+  "قطع",
   "whole",
+  "حبة",
+  "حبات",
   "can",
   "cans",
+  "علبة",
+  "علب",
   "pack",
   "packs",
+  "عبوة",
+  "عبوات",
   "clove",
   "cloves",
+  "فص",
+  "فصوص",
   "bunch",
   "bunches",
+  "حزمة",
+  "حزم",
   "pinch",
   "pinches",
+  "رشة",
+  "رشات",
   "dash",
   "dashes",
+  "قليل",
   "splash",
   "splashes",
   "drop",
   "drops",
+  "قطرة",
+  "قطرات",
   "handful",
   "handfuls",
+  "حفنة",
+  "حفنات",
   "stick",
   "sticks",
+  "عود",
+  "أعواد",
   "head",
   "heads",
+  "رأس",
+  "رؤوس",
   "sprig",
   "sprigs",
+  "غصن",
+  "أغصان",
   "leaf",
   "leaves",
+  "ورقة",
+  "أوراق",
 ]);
 
 const UNIT_NORMALIZATION: Record<string, string> = {
@@ -82,12 +125,23 @@ const UNIT_NORMALIZATION: Record<string, string> = {
   "gr.": "g",
   "gm": "g",
   "gms": "g",
+  "غرام": "g",
+  "غرامات": "g",
+  "جرام": "g",
+  "جرامات": "g",
+  "كيلو": "kg",
+  "كيلوغرام": "kg",
   "kgs": "kg",
   "lb.": "lb",
   "lbs.": "lbs",
   "ml.": "ml",
   "mls": "ml",
+  "مليلتر": "ml",
   "l.": "l",
+  "لتر": "l",
+  "ملعقه صغيره": "ملعقة صغيرة",
+  "ملعقه كبيرة": "ملعقة كبيرة",
+  "ملعقة كبيره": "ملعقة كبيرة",
 };
 
 export function normalizeUnit(value: string | null | undefined): string {
@@ -102,7 +156,7 @@ export function normalizeUnit(value: string | null | undefined): string {
 }
 
 const QUANTITY_WITH_UNIT_PATTERN =
-  /\b\d+(?:[./]\d+)?\s*(?:g|grams?|kg|oz|ounces?|lb|lbs|pounds?|ml|l|liters?|litres?|tsp|teaspoons?|tbsp|tablespoons?|cups?|slices?|pieces?|whole|cans?|packs?|cloves?|bunches?|pinches?|dashes?|splashes?|drops?|handfuls?|sticks?|heads?|sprigs?|leaves|leaf)\b/i;
+  /\b[\d٠-٩]+(?:[./][\d٠-٩]+)?\s*(?:g|grams?|جم|غ|جرام(?:ات)?|kg|كجم|كيلو(?:غرام)?|oz|ounces?|lb|lbs|pounds?|ml|مل|مليلتر|l|liters?|litres?|لتر|tsp|teaspoons?|ملعقة صغيرة|tbsp|tablespoons?|ملعقة كبيرة|cups?|كوب|أكواب|slices?|شرائح?|pieces?|قطع(?:ة)?|whole|حبات?|cans?|علب(?:ة)?|packs?|عبوات?|cloves?|فصوص?|bunches?|حزم(?:ة)?|pinches?|رشات?|dashes?|قليل|splashes?|drops?|قطرات?|handfuls?|حفنات?|sticks?|أعواد|heads?|رؤوس|sprigs?|أغصان|leaves|leaf|أوراق|ورقة)\b/iu;
 
 function hasText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -112,11 +166,12 @@ function optionalString(value: unknown): string | undefined {
   return hasText(value) ? value.trim() : undefined;
 }
 
-function normalizeIngredientKey(name: string): string {
+export function normalizeIngredientKey(name: string): string {
   return name
     .toLowerCase()
     .replace(/\b(cooked|diced|chopped|minced|sliced|fresh|frozen|raw)\b/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/(?:^|\s)(مطبوخ|مفروم|مقطع|مشرّح|مشرح|طازج|مجمد|نيء|مسلوق)(?=\s|$)/gu, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");
 }

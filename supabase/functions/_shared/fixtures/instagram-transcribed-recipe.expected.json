@@ -10,7 +10,7 @@
       "transcript_length": 312
     },
     {
-      "stage": "step_rewrite"
+      "stage": "content_generation_en"
     }
   ],
   "status": "confirmed",

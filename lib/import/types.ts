@@ -109,6 +109,7 @@ export type ImportStatusResponse = {
     error_message: string | null;
     created_at: string;
     updated_at: string;
+    current_stage: string | null;
   };
   draft: {
     payload: RecipeDraft;

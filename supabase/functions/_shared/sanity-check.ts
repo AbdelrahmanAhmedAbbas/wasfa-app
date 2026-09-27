@@ -5,7 +5,15 @@ export const SANITY_CHECK_MODEL = "anthropic/claude-haiku-4.5";
 export type SanityCheckResult = {
   passed: boolean;
   issues: string[];
+  shouldRetryArabic: boolean;
+  arabicIssues: string[];
 };
+
+const LATIN_PATTERN = /[A-Za-z]/;
+
+function containsArabic(text: string): boolean {
+  return /[\u0600-\u06FF]/.test(text);
+}
 
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name);
@@ -22,7 +30,66 @@ Recipe JSON:
 ${JSON.stringify(draft)}`;
 }
 
+function collectArabicFieldIssues(value: string | undefined, prefix: string): string[] {
+  if (!value?.trim()) return [];
+  const issues: string[] = [];
+  if (LATIN_PATTERN.test(value)) issues.push(`${prefix}_contains_latin`);
+  if (!containsArabic(value)) issues.push(`${prefix}_missing_arabic`);
+  return issues;
+}
+
+export function getArabicLocalizationIssues(draft: RecipeDraft): string[] {
+  const localizedArabic = draft.localized?.ar;
+  if (!localizedArabic) return ["localized_ar_missing"];
+
+  const issues = [
+    ...collectArabicFieldIssues(localizedArabic.title, "localized_ar_title"),
+    ...collectArabicFieldIssues(localizedArabic.description, "localized_ar_description"),
+    ...collectArabicFieldIssues(localizedArabic.cuisine, "localized_ar_cuisine"),
+    ...collectArabicFieldIssues(localizedArabic.meal_type, "localized_ar_meal_type"),
+  ];
+
+  const expectedIngredientCount = draft.localized?.en?.ingredients.length ?? draft.ingredients.length;
+  const expectedStepCount = draft.localized?.en?.steps.length ?? draft.steps.length;
+
+  if (localizedArabic.ingredients.length !== expectedIngredientCount) {
+    issues.push("localized_ar_ingredient_count_mismatch");
+  }
+  if (localizedArabic.steps.length !== expectedStepCount) {
+    issues.push("localized_ar_step_count_mismatch");
+  }
+
+  localizedArabic.ingredients.forEach((ingredient, index) => {
+    issues.push(...collectArabicFieldIssues(ingredient.name, `localized_ar_ingredient_${index + 1}_name`));
+    issues.push(...collectArabicFieldIssues(ingredient.notes, `localized_ar_ingredient_${index + 1}_notes`));
+  });
+
+  localizedArabic.steps.forEach((step, index) => {
+    issues.push(...collectArabicFieldIssues(step.title, `localized_ar_step_${index + 1}_title`));
+    issues.push(...collectArabicFieldIssues(step.text, `localized_ar_step_${index + 1}_text`));
+    step.equipment?.forEach((item, itemIndex) => {
+      issues.push(
+        ...collectArabicFieldIssues(item, `localized_ar_step_${index + 1}_equipment_${itemIndex + 1}`)
+      );
+    });
+    step.ingredients_used?.forEach((item, itemIndex) => {
+      issues.push(
+        ...collectArabicFieldIssues(item, `localized_ar_step_${index + 1}_ingredients_used_${itemIndex + 1}`)
+      );
+    });
+    step.tips?.forEach((tip, itemIndex) => {
+      issues.push(
+        ...collectArabicFieldIssues(tip, `localized_ar_step_${index + 1}_tip_${itemIndex + 1}`)
+      );
+    });
+  });
+
+  return issues;
+}
+
 export async function runSanityCheck(draft: RecipeDraft): Promise<SanityCheckResult> {
+  const arabicIssues = getArabicLocalizationIssues(draft);
+
   try {
     const { generateObject } = await import("npm:ai@4.1.56");
     const { createOpenAI } = await import("npm:@ai-sdk/openai@1.3.23");
@@ -52,13 +119,17 @@ export async function runSanityCheck(draft: RecipeDraft): Promise<SanityCheckRes
     });
 
     return {
-      passed: object.passed,
-      issues: object.issues.map((issue) => issue.trim()).filter(Boolean),
+      passed: object.passed && arabicIssues.length === 0,
+      issues: [...arabicIssues, ...object.issues.map((issue) => issue.trim()).filter(Boolean)],
+      shouldRetryArabic: arabicIssues.length > 0,
+      arabicIssues,
     };
   } catch {
     return {
       passed: false,
-      issues: ["sanity_check_unavailable"],
+      issues: [...arabicIssues, "sanity_check_unavailable"],
+      shouldRetryArabic: arabicIssues.length > 0,
+      arabicIssues,
     };
   }
 }

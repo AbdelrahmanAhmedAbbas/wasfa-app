@@ -32,6 +32,7 @@ import {
   getLocalizedUnitLabel,
   type MeasurementSystem,
 } from "@/lib/recipes/units";
+import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import { onboardingImages } from "@/lib/theme/onboarding";
 
 type RecipeIngredient = RecipeDetail["ingredients_json"][number];
@@ -69,33 +70,63 @@ function getNutritionNumber(recipe: RecipeDetail, key: string) {
   return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null;
 }
 
-function stripOppositeScriptFallback(value: string | undefined, language: "en" | "ar") {
+function shouldUseFallbackValue(value: string | undefined, language: "en" | "ar") {
   if (!value) return undefined;
-  const pattern = language === "en" ? /[\u0600-\u06FF]+/g : /[A-Za-z]+/g;
-  return value.replace(pattern, "").replace(/\s{2,}/g, " ").trim() || value;
+  const hasArabic = /[\u0600-\u06FF]/.test(value);
+  const hasLatin = /[A-Za-z]/.test(value);
+  if (language === "ar") return !hasArabic && hasLatin;
+  return hasArabic && !hasLatin;
+}
+
+function getLocalizedFieldValue(
+  value: string | undefined,
+  fallback: string | undefined,
+  language: "en" | "ar"
+) {
+  if (!value) return fallback;
+  return shouldUseFallbackValue(value, language) ? fallback : value;
 }
 
 function getLocalizedRecipeText(recipe: RecipeDetail, language: "en" | "ar", translate: (key: any) => string): LocalizedRecipeText {
   const localized = recipe.localized[language];
   return {
-    title: stripOppositeScriptFallback(localized?.title, language) ?? recipe.title,
-    description: stripOppositeScriptFallback(localized?.description, language) ?? recipe.description ?? undefined,
-    cuisine: stripOppositeScriptFallback(localized?.cuisine, language) ?? recipe.cuisine ?? translate("recipeCuisineFallback"),
-    meal_type: stripOppositeScriptFallback(localized?.meal_type, language) ?? recipe.meal_type ?? translate("recipeMealTypeFallback"),
+    title: getLocalizedFieldValue(localized?.title, recipe.title, language) ?? recipe.title,
+    description:
+      getLocalizedFieldValue(localized?.description, recipe.description ?? undefined, language) ??
+      recipe.description ??
+      undefined,
+    cuisine:
+      getLocalizedFieldValue(localized?.cuisine, recipe.cuisine ?? translate("recipeCuisineFallback"), language) ??
+      recipe.cuisine ??
+      translate("recipeCuisineFallback"),
+    meal_type:
+      getLocalizedFieldValue(localized?.meal_type, recipe.meal_type ?? translate("recipeMealTypeFallback"), language) ??
+      recipe.meal_type ??
+      translate("recipeMealTypeFallback"),
     ingredients: recipe.ingredients_json.map((ingredient, index) => {
-      const rawName = stripOppositeScriptFallback(localized?.ingredients[index]?.name, language) ?? ingredient.name;
+      const rawName =
+        getLocalizedFieldValue(localized?.ingredients[index]?.name, ingredient.name, language) ??
+        ingredient.name;
       return {
         name: cleanLocalizedIngredientName(rawName, ingredient.quantity),
-        notes: stripOppositeScriptFallback(localized?.ingredients[index]?.notes, language) ?? ingredient.notes,
+        notes:
+          getLocalizedFieldValue(localized?.ingredients[index]?.notes, ingredient.notes, language) ??
+          ingredient.notes,
       };
     }),
     steps: recipe.steps_json.map((step, index) => ({
       ...step,
-      title: stripOppositeScriptFallback(localized?.steps[index]?.title, language) ?? step.title,
-      text: stripOppositeScriptFallback(localized?.steps[index]?.text, language) ?? step.text,
-      equipment: localized?.steps[index]?.equipment?.map((item) => stripOppositeScriptFallback(item, language) ?? item) ?? step.equipment,
-      ingredients_used: localized?.steps[index]?.ingredients_used?.map((item) => stripOppositeScriptFallback(item, language) ?? item) ?? step.ingredients_used,
-      tips: localized?.steps[index]?.tips?.map((tip) => stripOppositeScriptFallback(tip, language) ?? tip) ?? step.tips,
+      title: getLocalizedFieldValue(localized?.steps[index]?.title, step.title, language) ?? step.title,
+      text: getLocalizedFieldValue(localized?.steps[index]?.text, step.text, language) ?? step.text,
+      equipment:
+        localized?.steps[index]?.equipment?.map((item) => getLocalizedFieldValue(item, item, language) ?? item) ??
+        step.equipment,
+      ingredients_used:
+        localized?.steps[index]?.ingredients_used?.map((item) => getLocalizedFieldValue(item, item, language) ?? item) ??
+        step.ingredients_used,
+      tips:
+        localized?.steps[index]?.tips?.map((tip) => getLocalizedFieldValue(tip, tip, language) ?? tip) ??
+        step.tips,
     })),
   };
 }
@@ -103,7 +134,11 @@ function getLocalizedRecipeText(recipe: RecipeDetail, language: "en" | "ar", tra
 function getIngredientAmount(item: RecipeIngredient, measurementSystem: MeasurementSystem | null, language: "en" | "ar") {
   const converted = convertIngredientAmount(item, measurementSystem);
   const unit = getLocalizedUnitLabel(converted.unit || item.size, language);
-  return [converted.quantity, unit].filter(Boolean).join(" ").trim();
+  const quantity =
+    language === "ar" && converted.quantity
+      ? toArabicIndicDigits(converted.quantity)
+      : converted.quantity;
+  return [quantity, unit].filter(Boolean).join(" ").trim();
 }
 
 export default function RecipeDetailsScreen() {

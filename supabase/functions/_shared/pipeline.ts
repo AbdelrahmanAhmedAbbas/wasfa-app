@@ -3,6 +3,10 @@ import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1
 import {
   estimateNutrition,
   extractRecipe,
+  fillMissingRecipeDetails,
+  generateRecipeContent,
+  getRecipeContentModelCandidates,
+  getSourceRecipeLanguage,
 } from "./ai.ts";
 import { normalizeSourceUrlForCache } from "./cache.ts";
 import {
@@ -15,7 +19,6 @@ import {
 } from "./db.ts";
 import { hasIngredientsNeedingReview } from "./ingredient-details.ts";
 import { runSanityCheck } from "./sanity-check.ts";
-import { rewriteStepsForLanguage } from "./step-rewriter.ts";
 import type { ImportJobRow, LocalizedRecipeText, RecipeDraft } from "./types.ts";
 
 const OPENROUTER_TRANSCRIBE_MODEL = "google/gemini-3-flash-preview";
@@ -26,6 +29,9 @@ const MAX_MEDIA_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 const MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024;
 const DEFAULT_APIFY_ACTOR_INSTAGRAM = "nH2AHrwxeTRJoN5hX";
 const DEFAULT_APIFY_ACTOR_TIKTOK = "W2tevPiLZeuTLtcG7";
+const APIFY_TIMEOUT_MS = 60_000;
+const MEDIA_FETCH_TIMEOUT_MS = 45_000;
+const OPENROUTER_TRANSCRIBE_TIMEOUT_MS = 90_000;
 
 type SourceMetadata = {
   title?: string;
@@ -48,6 +54,19 @@ type SourceMetadata = {
   mediaOrigin?: "apify";
   transcript?: string;
 };
+
+type ContentGenerationResult =
+  | {
+      failed: false;
+      content: LocalizedRecipeText;
+      model: string;
+    }
+  | {
+      failed: true;
+      error: string;
+      content?: undefined;
+      model?: undefined;
+    };
 
 function requiredEnv(name: string): string {
   const value = Deno.env.get(name);
@@ -100,6 +119,30 @@ function asStringArray(value: unknown): string[] | undefined {
 function truncateForLog(value: string, max = 800): string {
   if (value.length <= max) return value;
   return `${value.slice(0, max)}...`;
+}
+
+async function fetchWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  timeoutCode: string
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(new Error(timeoutCode)), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(timeoutCode);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function parseJsonLenient(raw: string): unknown {
@@ -194,12 +237,17 @@ function isMediaContentType(type: string): boolean {
 
 async function safeFetch(url: string): Promise<Response | null> {
   try {
-    return await fetch(url, {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (MealPlannerBot/1.0)",
+    return await fetchWithTimeout(
+      url,
+      {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (MealPlannerBot/1.0)",
+        },
+        redirect: "follow",
       },
-      redirect: "follow",
-    });
+      MEDIA_FETCH_TIMEOUT_MS,
+      "MEDIA_FETCH_TIMEOUT"
+    );
   } catch {
     return null;
   }
@@ -251,7 +299,7 @@ async function runApifyActor(params: {
     throw new Error("APIFY_TOKEN_MISSING");
   }
 
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://api.apify.com/v2/acts/${params.actorId}/run-sync-get-dataset-items?format=json&clean=true`,
     {
       method: "POST",
@@ -261,7 +309,9 @@ async function runApifyActor(params: {
         Authorization: `Bearer ${apifyToken}`,
       },
       body: JSON.stringify(params.body),
-    }
+    },
+    APIFY_TIMEOUT_MS,
+    "APIFY_TIMEOUT"
   );
 
   const rawBody = await response.text();
@@ -585,36 +635,41 @@ async function transcribeWithOpenRouter(media: {
             ? "mp3"
             : "mp4";
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": "https://meal-planner.app",
-      "X-Title": "Meal Planner Import",
-    },
-    body: JSON.stringify({
-      model: OPENROUTER_TRANSCRIBE_MODEL,
-      messages: [
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Transcribe all spoken words in this audio/video exactly as said. Return ONLY the transcript text, nothing else. If the speech is in Arabic or any non-English language, transcribe it in that language.",
-            },
-            {
-              type: "input_audio",
-              input_audio: {
-                data: base64Data,
-                format: audioFormat,
+  const response = await fetchWithTimeout(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://meal-planner.app",
+        "X-Title": "Meal Planner Import",
+      },
+      body: JSON.stringify({
+        model: OPENROUTER_TRANSCRIBE_MODEL,
+        messages: [
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text: "Transcribe all spoken words in this audio/video exactly as said. Return ONLY the transcript text, nothing else. If the speech is in Arabic or any non-English language, transcribe it in that language.",
               },
-            },
-          ],
-        },
-      ],
-    }),
-  });
+              {
+                type: "input_audio",
+                input_audio: {
+                  data: base64Data,
+                  format: audioFormat,
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    },
+    OPENROUTER_TRANSCRIBE_TIMEOUT_MS,
+    "TRANSCRIPTION_TIMEOUT"
+  );
 
   const body = await response.text();
   if (!response.ok) {
@@ -697,61 +752,21 @@ function hasExtractionTextContext(params: {
   return false;
 }
 
-function localizedTextWithSteps(draft: RecipeDraft, language: "en" | "ar"): LocalizedRecipeText {
-  const existing = draft.localized?.[language];
-  return {
-    title: existing?.title ?? draft.title,
-    description: existing?.description ?? draft.description,
-    cuisine: existing?.cuisine ?? draft.cuisine,
-    meal_type: existing?.meal_type ?? draft.meal_type,
-    ingredients:
-      existing?.ingredients ??
-      draft.ingredients.map((ingredient) => ({
-        name: ingredient.name,
-        notes: ingredient.notes,
-      })),
-    steps: existing?.steps ?? draft.steps,
-  };
-}
+function applySourceLanguageContent(
+  draft: RecipeDraft,
+  language: "en" | "ar",
+  localized: LocalizedRecipeText
+): RecipeDraft {
+  if (language !== "en" && language !== "ar") return draft;
 
-async function rewriteProceduralSteps(draft: RecipeDraft): Promise<{
-  draft: RecipeDraft;
-  models: Partial<Record<"en" | "ar", string>>;
-  failed: boolean;
-}> {
-  try {
-    const enRewrite = await rewriteStepsForLanguage(draft, "en");
-    const arRewrite = await rewriteStepsForLanguage(draft, "ar");
-    return {
-      draft: {
-        ...draft,
-        steps: enRewrite.steps,
-        localized: {
-          ...draft.localized,
-          en: {
-            ...localizedTextWithSteps(draft, "en"),
-            steps: enRewrite.steps,
-          },
-          ar: {
-            ...localizedTextWithSteps(draft, "ar"),
-            steps: arRewrite.steps,
-          },
-        },
-      },
-      models: {
-        en: enRewrite.model,
-        ar: arRewrite.model,
-      },
-      failed: false,
-    };
-  } catch (error) {
-    console.warn("[import][step-rewrite] failed", { error: String(error) });
-    return {
-      draft,
-      models: {},
-      failed: true,
-    };
-  }
+  return {
+    ...draft,
+    title: localized.title || draft.title,
+    description: localized.description ?? draft.description,
+    cuisine: localized.cuisine ?? draft.cuisine,
+    meal_type: localized.meal_type ?? draft.meal_type,
+    steps: localized.steps.length === draft.steps.length ? localized.steps : draft.steps,
+  };
 }
 
 function isTranscriptionOversizeError(error: unknown): boolean {
@@ -787,6 +802,12 @@ function mapPipelineError(error: unknown): { code: string; message: string } {
     return {
       code: "APIFY_NOT_CONFIGURED",
       message: "APIFY_TOKEN is missing in Edge Function secrets.",
+    };
+  }
+  if (raw.includes("APIFY_TIMEOUT")) {
+    return {
+      code: "APIFY_FAILED",
+      message: "Apify timed out while resolving this media URL.",
     };
   }
   if (raw.includes("APIFY_INVALID_JSON")) {
@@ -837,6 +858,12 @@ function mapPipelineError(error: unknown): { code: string; message: string } {
     return {
       code: "TRANSCRIPTION_FAILED",
       message: "Audio transcription failed for this media.",
+    };
+  }
+  if (raw.includes("OPENROUTER_TIMEOUT")) {
+    return {
+      code: "AI_EXTRACTION_FAILED",
+      message: "The recipe import provider timed out before finishing the recipe.",
     };
   }
   if (raw.includes("Generated recipe did not pass validation")) {
@@ -1038,32 +1065,162 @@ export async function runImportPipeline(params: {
           : 0,
     });
 
-    const stepRewrite = await rewriteProceduralSteps(extraction.draft);
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
-      stage: "step_rewrite",
-      has_localized_ar: !!stepRewrite.draft.localized?.ar,
-      has_localized_en: !!stepRewrite.draft.localized?.en,
-      model_en: stepRewrite.models.en ?? null,
-      model_ar: stepRewrite.models.ar ?? null,
-      failed: stepRewrite.failed,
+      stage: "post_extraction_parallel",
     });
 
-    const nutrition = await estimateNutrition(stepRewrite.draft);
+    const englishContentPromise: Promise<ContentGenerationResult> = generateRecipeContent(
+      extraction.draft,
+      "en",
+      combinedContext
+    )
+      .then(async (result) => {
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "content_generation_en",
+          model: result.model,
+          failed: false,
+        });
+        return {
+          content: result.content,
+          model: result.model,
+          failed: false,
+        };
+      })
+      .catch(async (error) => {
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "content_generation_en_failed",
+          failed: true,
+          error: truncateForLog(String(error), 1200),
+        });
+        return {
+          failed: true,
+          error: String(error),
+        };
+      });
 
-    const enrichedDraft = {
-      ...stepRewrite.draft,
+    const arabicContentPromise: Promise<ContentGenerationResult> = generateRecipeContent(
+      extraction.draft,
+      "ar",
+      combinedContext,
+      {
+        modelNames: getRecipeContentModelCandidates("ar").slice(0, 1),
+      }
+    )
+      .then(async (result) => {
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "content_generation_ar",
+          model: result.model,
+          failed: false,
+        });
+        return {
+          content: result.content,
+          model: result.model,
+          failed: false,
+        };
+      })
+      .catch(async (error) => {
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "content_generation_ar_failed",
+          failed: true,
+          error: truncateForLog(String(error), 1200),
+        });
+        return {
+          failed: true,
+          error: String(error),
+        };
+      });
+
+    const nutritionPromise = estimateNutrition(extraction.draft).then(async (nutrition) => {
+      await logJobEvent(params.adminClient, params.job.id, "normalized", {
+        stage: "nutrition_estimate",
+        estimated: nutrition.estimated,
+        confidence: nutrition.confidence,
+      });
+      return nutrition;
+    });
+
+    const missingDetailsPromise = fillMissingRecipeDetails(extraction.draft, combinedContext).then(
+      async (result) => {
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "fill_missing_details",
+          filled_description: result.filledDescription,
+          filled_prep_minutes: result.filledPrepMinutes,
+          filled_cook_minutes: result.filledCookMinutes,
+        });
+        return result;
+      }
+    );
+
+    const [englishContent, arabicContent, nutrition, detailCompletion] = await Promise.all([
+      englishContentPromise,
+      arabicContentPromise,
+      nutritionPromise,
+      missingDetailsPromise,
+    ]);
+
+    const localized: Partial<Record<"en" | "ar", LocalizedRecipeText>> = {};
+    if (!englishContent.failed && englishContent.content) localized.en = englishContent.content;
+    if (!arabicContent.failed && arabicContent.content) localized.ar = arabicContent.content;
+
+    const sourceLanguage = getSourceRecipeLanguage(extraction.draft);
+    let enrichedDraft: RecipeDraft = {
+      ...detailCompletion.draft,
       nutrition_estimate: nutrition,
+      localized: Object.keys(localized).length > 0 ? localized : undefined,
     };
-    const sanityCheck = await runSanityCheck(enrichedDraft);
+
+    const sourceLocalizedContent = localized[sourceLanguage];
+    if (sourceLocalizedContent) {
+      enrichedDraft = applySourceLanguageContent(enrichedDraft, sourceLanguage, sourceLocalizedContent);
+      enrichedDraft.localized = Object.keys(localized).length > 0 ? localized : undefined;
+    }
+
+    let sanityCheck = await runSanityCheck(enrichedDraft);
+    const arabicFallbackModels = getRecipeContentModelCandidates("ar").slice(1);
+
+    if (sanityCheck.shouldRetryArabic && arabicFallbackModels.length > 0) {
+      try {
+        const retriedArabic = await generateRecipeContent(
+          detailCompletion.draft,
+          "ar",
+          combinedContext,
+          { modelNames: arabicFallbackModels }
+        );
+        localized.ar = retriedArabic.content;
+        enrichedDraft = {
+          ...enrichedDraft,
+          localized,
+        };
+        if (sourceLanguage === "ar") {
+          enrichedDraft = applySourceLanguageContent(enrichedDraft, "ar", retriedArabic.content);
+          enrichedDraft.localized = localized;
+        }
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "content_generation_ar_retry",
+          model: retriedArabic.model,
+          failed: false,
+        });
+        sanityCheck = await runSanityCheck(enrichedDraft);
+      } catch (error) {
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "content_generation_ar_retry_failed",
+          failed: true,
+          error: truncateForLog(String(error), 1200),
+        });
+      }
+    }
+
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
       stage: "sanity_check",
       passed: sanityCheck.passed,
       issue_count: sanityCheck.issues.length,
       issues: sanityCheck.issues,
+      retry_arabic: sanityCheck.shouldRetryArabic,
+      arabic_issues: sanityCheck.arabicIssues,
     });
 
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
-      stage: "gemini_localize_en_ar",
+      stage: "recipe_content_ready",
       has_localized_ar: !!enrichedDraft.localized?.ar,
       has_localized_en: !!enrichedDraft.localized?.en,
     });
@@ -1083,12 +1240,25 @@ export async function runImportPipeline(params: {
         transcription_provider: metadata.transcript ? "apify" : transcript ? "openrouter" : "skipped",
         transcription_chars: transcript?.length ?? 0,
         transcription_skipped: !transcript,
-        nutrition_provider: extraction.provider,
-        step_rewrite_models: stepRewrite.models,
-        step_rewrite_failed: stepRewrite.failed,
+        missing_fields_completed: {
+          description: detailCompletion.filledDescription,
+          prep_minutes: detailCompletion.filledPrepMinutes,
+          cook_minutes: detailCompletion.filledCookMinutes,
+        },
+        nutrition_provider: "openrouter",
+        nutrition_model: "google/gemini-3-flash-preview",
+        content_generation_models: {
+          en: englishContent.failed ? null : englishContent.model ?? null,
+          ar: arabicContent.failed ? null : arabicContent.model ?? null,
+        },
+        content_generation_failed: {
+          en: englishContent.failed,
+          ar: arabicContent.failed,
+        },
         sanity_check: {
           passed: sanityCheck.passed,
           issue_count: sanityCheck.issues.length,
+          retry_arabic: sanityCheck.shouldRetryArabic,
         },
         source_metadata: {
           source_post_id: metadata.sourcePostId ?? null,
