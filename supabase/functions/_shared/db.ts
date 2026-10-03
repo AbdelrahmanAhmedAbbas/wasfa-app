@@ -14,6 +14,7 @@ export type CachedExtractionRow = {
   normalized_source_url: string;
   source_platform: SourcePlatform;
   source_post_id: string | null;
+  source_thumbnail_url: string | null;
   payload: RecipeDraft;
   extraction_model: string | null;
   created_at: string;
@@ -222,6 +223,33 @@ export async function updateJobStatus(
   if (error) throw error;
 }
 
+/**
+ * Fails a job that ran out of time. Only touches a job that is still processing, so a
+ * pipeline that finished at the same moment keeps its own outcome.
+ */
+export async function failJobIfStillProcessing(
+  adminClient: ReturnType<typeof createClient>,
+  params: {
+    jobId: string;
+    errorCode: string;
+    errorMessage: string;
+  }
+): Promise<boolean> {
+  const { data, error } = await adminClient
+    .from("import_jobs")
+    .update({
+      status: "failed",
+      error_code: params.errorCode,
+      error_message: params.errorMessage,
+    })
+    .eq("id", params.jobId)
+    .eq("status", "processing")
+    .select("id");
+
+  if (error) throw error;
+  return (data?.length ?? 0) > 0;
+}
+
 export async function upsertRecipeDraft(
   adminClient: ReturnType<typeof createClient>,
   params: {
@@ -291,7 +319,7 @@ export async function findCachedExtractionByUrl(
 ): Promise<CachedExtractionRow | null> {
   const { data, error } = await adminClient
     .from("recipe_extraction_cache")
-    .select("normalized_source_url, source_platform, source_post_id, payload, extraction_model, created_at, updated_at")
+    .select("normalized_source_url, source_platform, source_post_id, source_thumbnail_url, payload, extraction_model, created_at, updated_at")
     .eq("normalized_source_url", normalizedUrl)
     .maybeSingle();
 
@@ -306,6 +334,7 @@ export async function upsertExtractionCache(
     payload: RecipeDraft;
     sourcePlatform: SourcePlatform;
     sourcePostId?: string | null;
+    sourceThumbnailUrl?: string | null;
     modelInfo?: { extractionModel?: string | null } | null;
   }
 ) {
@@ -316,6 +345,7 @@ export async function upsertExtractionCache(
         normalized_source_url: params.normalizedUrl,
         source_platform: params.sourcePlatform,
         source_post_id: params.sourcePostId ?? null,
+        source_thumbnail_url: params.sourceThumbnailUrl ?? null,
         payload: params.payload,
         extraction_model: params.modelInfo?.extractionModel ?? null,
       },

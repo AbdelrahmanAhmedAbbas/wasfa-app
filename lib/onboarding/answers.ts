@@ -6,6 +6,7 @@ export type DietOption = "halal" | "omnivore" | "vegetarian" | "vegan" | "keto" 
 export type AllergyOption = "shellfish" | "seafood" | "dairy" | "peanut" | "tree_nut" | "egg" | "gluten" | "wheat";
 export type GoalOption = "save_social" | "meal_plan" | "eat_better" | "save_money" | "family";
 export type PainPoint = "lost_recipes" | "daily_decisions" | "grocery_waste" | "picky_family" | "no_time";
+export type HouseholdSize = "one" | "two" | "three_four" | "five_plus";
 export type ReferralSource = "invite_code" | "instagram" | "facebook" | "app_store" | "tiktok" | "friend";
 export type AgeRange = "<18" | "18-25" | "25-30" | "30-35" | "35-40" | "40+";
 export type MeasurementSystem = "imperial" | "metric";
@@ -13,6 +14,8 @@ export type NutritionDisplay = "show" | "hide";
 
 export type OnboardingAnswers = {
   goal: GoalOption | null;
+  // Local-only: onboarding_profiles has no column for it, so it is never sent to Supabase.
+  householdSize: HouseholdSize | null;
   painPoints: PainPoint[];
   diet: DietOption[];
   allergies: AllergyOption[];
@@ -25,6 +28,7 @@ export type OnboardingAnswers = {
 
 export const EMPTY_ONBOARDING_ANSWERS: OnboardingAnswers = {
   goal: null,
+  householdSize: null,
   painPoints: [],
   diet: [],
   allergies: [],

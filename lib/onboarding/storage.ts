@@ -1,10 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+import type { HouseholdSize } from "./answers";
+
 const ONBOARDING_DONE_KEY = "@meal_planner_onboarding_done";
 const ONBOARDING_STEP_KEY = "@meal_planner_onboarding_step";
 const QUESTIONNAIRE_DONE_KEY = "@wasfa/questionnaire_done";
-const QUESTIONNAIRE_STEP_KEY = "@wasfa/questionnaire_step";
+// v2: the step index now points into the redesigned route list (lib/onboarding/flow.ts),
+// so indexes saved by the old 11-screen flow must not be resumed.
+const QUESTIONNAIRE_STEP_KEY = "@wasfa/questionnaire_step_v2";
 const PAYWALL_SEEN_KEY = "@wasfa/paywall_seen";
+const HOUSEHOLD_SIZE_KEY = "@wasfa/household_size";
+const HOUSEHOLD_SIZES: HouseholdSize[] = ["one", "two", "three_four", "five_plus"];
 
 export async function getOnboardingDone() {
   const value = await AsyncStorage.getItem(ONBOARDING_DONE_KEY);
@@ -57,4 +63,15 @@ export async function getPaywallSeen(): Promise<boolean> {
 
 export async function setPaywallSeen(seen: boolean): Promise<void> {
   await AsyncStorage.setItem(PAYWALL_SEEN_KEY, seen ? "true" : "false");
+}
+
+// Household size has no Supabase column, so a copy is kept on the device after
+// the onboarding answers are cleared.
+export async function getHouseholdSize(): Promise<HouseholdSize | null> {
+  const value = await AsyncStorage.getItem(HOUSEHOLD_SIZE_KEY);
+  return HOUSEHOLD_SIZES.includes(value as HouseholdSize) ? (value as HouseholdSize) : null;
+}
+
+export async function setHouseholdSize(size: HouseholdSize): Promise<void> {
+  await AsyncStorage.setItem(HOUSEHOLD_SIZE_KEY, size);
 }

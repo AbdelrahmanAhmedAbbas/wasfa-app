@@ -1,408 +1,558 @@
 import Feather from "@expo/vector-icons/Feather";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { router } from "expo-router";
-import type { ComponentProps } from "react";
-import { useEffect, useState } from "react";
-import { Image, Pressable, SafeAreaView, StyleSheet, View } from "react-native";
-import Animated, {
-  useAnimatedStyle,
-  useSharedValue,
-  withDelay,
-  withSpring,
-  withTiming,
-} from "react-native-reanimated";
+import { StatusBar } from "expo-status-bar";
+import { useEffect, useRef, useState } from "react";
+import { Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import Animated, { FadeIn, FadeInDown } from "react-native-reanimated";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LocalizedText as Text } from "@/components/LocalizedText";
+import { PhotoScrim } from "@/components/wasfa/PhotoScrim";
+import { MascotBadge } from "@/components/onboarding/MascotBadge";
+import { OnboardingFooter } from "@/components/onboarding/OnboardingFooter";
+import { eyebrowStyle, headingStyle } from "@/components/onboarding/text-styles";
+import { CtaButton } from "@/components/wasfa/CtaButton";
+import { FoodEmojiTile } from "@/components/wasfa/FoodEmojiTile";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
-import { demoRecipe } from "@/lib/onboarding/demo-data";
-import { setQuestionnaireStep } from "@/lib/onboarding/storage";
-import { onboardingColors, onboardingImages } from "@/lib/theme/onboarding";
+import type { TranslationKey } from "@/lib/i18n/translations";
+import { getOnboardingAnswers, type HouseholdSize } from "@/lib/onboarding/answers";
+import { demoKabsa, demoReel } from "@/lib/onboarding/demo-data";
+import { getHouseholdOption, getStepIndex, scaleDemoQuantity } from "@/lib/onboarding/flow";
+import { setQuestionnaireComplete, setQuestionnaireStep } from "@/lib/onboarding/storage";
+import { toArabicIndicDigits } from "@/lib/recipes/numerals";
+import { onboardingImages } from "@/lib/theme/onboarding";
+import { wasfaColors } from "@/lib/theme/wasfa";
 
-type DemoState = "instagram" | "extracting" | "revealing" | "complete";
+// reel -> share sheet -> working -> saved recipe
+type DemoPhase = 0 | 1 | 2 | 3;
+
+const TITLE_KEYS: TranslationKey[] = ["obDemoTitle0", "obDemoTitle1", "obDemoTitle2", "obDemoTitle3"];
+const HINT_KEYS: TranslationKey[] = ["obDemoHint0", "obDemoHint1", "obDemoHint2", "obDemoHint3"];
+const STAGE_KEYS: TranslationKey[] = ["obStage1", "obStage2", "obStage3", "obStage4"];
+const STAGE_MS = 700;
+const WORKING_MS = 3300;
+
+// Stand-in for the dark gradient at the foot of the reel (no gradient library in the app).
+const SCRIM_MAX_OPACITY = 0.65;
+
+const SHARE_APPS: { labelKey: TranslationKey; color: string }[] = [
+  { labelKey: "obShareMessages", color: "#34C759" },
+  { labelKey: "obShareWhatsApp", color: "#25D366" },
+  { labelKey: "obShareWasfa", color: wasfaColors.primarySoft },
+  { labelKey: "obShareNotes", color: "#FFD60A" },
+];
 
 export default function DemoQuestionnaireScreen() {
-  const { language, t } = useLanguage();
-  const [state, setState] = useState<DemoState>("instagram");
-  const [extractIndex, setExtractIndex] = useState(0);
-  const postOpacity = useSharedValue(1);
-  const postScale = useSharedValue(1);
-  const scanY = useSharedValue(-220);
-  const recipeOpacity = useSharedValue(0);
-  const recipeY = useSharedValue(80);
-  const isArabic = language === "ar";
-  const textKey = isArabic ? "ar" : "en";
-
-  const extractionLabels = [
-    t("qDemoReading"),
-    t("qDemoIngredients"),
-    t("qDemoSteps"),
-    t("qDemoSaving"),
-  ];
+  const { isRTL, language, t } = useLanguage();
+  const insets = useSafeAreaInsets();
+  const [phase, setPhase] = useState<DemoPhase>(0);
+  const [stagesDone, setStagesDone] = useState(0);
+  const [householdSize, setHouseholdSize] = useState<HouseholdSize | null>(null);
+  const [isFinishing, setIsFinishing] = useState(false);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
-    if (state !== "extracting") return;
+    let isMounted = true;
 
-    const interval = setInterval(() => {
-      setExtractIndex((index) => Math.min(index + 1, extractionLabels.length - 1));
-    }, 700);
-
-    const revealTimer = setTimeout(() => {
-      setState("revealing");
-      postOpacity.value = withTiming(0, { duration: 420 });
-      recipeOpacity.value = withDelay(180, withTiming(1, { duration: 420 }));
-      recipeY.value = withDelay(180, withSpring(0, { damping: 18, stiffness: 140 }));
-      setTimeout(() => setState("complete"), 760);
-    }, 3000);
+    void getOnboardingAnswers().then((answers) => {
+      if (isMounted) setHouseholdSize(answers.householdSize);
+    });
 
     return () => {
-      clearInterval(interval);
-      clearTimeout(revealTimer);
+      isMounted = false;
+      timers.current.forEach(clearTimeout);
     };
-  }, [extractionLabels.length, postOpacity, recipeOpacity, recipeY, state]);
+  }, []);
 
-  const postStyle = useAnimatedStyle(() => ({
-    opacity: postOpacity.value,
-    transform: [{ scale: postScale.value }],
-  }));
+  const household = getHouseholdOption(householdSize);
+  const num = (value: number) => (isRTL ? toArabicIndicDigits(String(value)) : String(value));
 
-  const scanStyle = useAnimatedStyle(() => ({
-    transform: [{ translateY: scanY.value }],
-  }));
-
-  const recipeStyle = useAnimatedStyle(() => ({
-    opacity: recipeOpacity.value,
-    transform: [{ translateY: recipeY.value }],
-  }));
-
-  const startImport = () => {
-    if (state !== "instagram") return;
-    setState("extracting");
-    setExtractIndex(0);
-    postScale.value = withSpring(0.94, { damping: 18, stiffness: 140 });
-    postOpacity.value = withTiming(0.42, { duration: 320 });
-    scanY.value = withTiming(260, { duration: 2800 });
+  const startWorking = () => {
+    setPhase(2);
+    setStagesDone(0);
+    timers.current.forEach(clearTimeout);
+    timers.current = [
+      ...STAGE_KEYS.map((_, index) =>
+        setTimeout(() => setStagesDone(index + 1), (index + 1) * STAGE_MS)
+      ),
+      setTimeout(() => setPhase(3), WORKING_MS),
+    ];
   };
 
-  const handleContinue = async () => {
-    await setQuestionnaireStep(9);
-    router.push("/(questionnaire)/value");
+  const finishQuestionnaire = async () => {
+    setIsFinishing(true);
+    try {
+      await setQuestionnaireComplete(true);
+      await setQuestionnaireStep(getStepIndex("ready"));
+      router.replace("/(auth)/signup");
+    } finally {
+      setIsFinishing(false);
+    }
   };
+
+  const ingredientLines = demoKabsa.ingredients.map((ingredient) => ({
+    name: ingredient.name.en,
+    text: [
+      num(scaleDemoQuantity(ingredient.quantity, household.servings, demoKabsa.baseServings)),
+      ingredient.unit[language],
+      ingredient.name[language],
+    ]
+      .filter(Boolean)
+      .join(" "),
+  }));
 
   return (
-    <SafeAreaView style={styles.safe}>
-      <View style={styles.header}>
-        <Text style={styles.title}>{t("qDemoTitle")}</Text>
-        <Text style={styles.subtitle}>{t("qDemoSubtitle")}</Text>
-      </View>
+    <View style={styles.screen}>
+      <StatusBar style="dark" />
+      <ScrollView
+        contentContainerStyle={[styles.content, { paddingTop: insets.top + 60 }]}
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={[styles.tag, eyebrowStyle(isRTL)]}>{t("obDemoTag")}</Text>
+        <Text style={[styles.title, headingStyle(28, isRTL)]}>{t(TITLE_KEYS[phase])}</Text>
+        <Text style={styles.hint}>{t(HINT_KEYS[phase])}</Text>
 
-      <View style={styles.stage}>
-        <Animated.View style={[styles.instagramCard, postStyle]}>
-          <View style={styles.igHeader}>
-            <View style={styles.avatar}>
-              <Text style={styles.avatarText}>{demoRecipe.source.avatarInitials}</Text>
+        {phase <= 1 ? (
+          <View style={styles.reel}>
+            <Image source={onboardingImages.demoKabsaSocial} style={styles.reelImage} resizeMode="cover" />
+            <PhotoScrim maxOpacity={SCRIM_MAX_OPACITY} coverage={0.5} />
+
+            <View style={styles.reelCopy}>
+              <Text style={styles.reelHandle}>{demoReel.handle}</Text>
+              <Text style={styles.reelCaption}>{t("obCaption")}</Text>
             </View>
-            <View style={styles.igProfile}>
-              <Text style={styles.username}>{demoRecipe.source.username}</Text>
-              <Text style={styles.platform}>{demoRecipe.source.platform}</Text>
+
+            <View style={styles.reelActions}>
+              <Feather name="heart" size={26} color="#FFFFFF" style={styles.reelActionIcon} />
+              <Feather name="message-circle" size={26} color="#FFFFFF" />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("obDemoTitle0")}
+                style={styles.shareHaloOuter}
+                onPress={() => setPhase(1)}
+              >
+                <View style={styles.shareHaloInner}>
+                  <View style={styles.shareButton}>
+                    <Feather name="send" size={22} color="#FFFFFF" />
+                  </View>
+                </View>
+              </Pressable>
             </View>
-            <Feather name="more-horizontal" size={22} color={onboardingColors.textMuted} />
-          </View>
 
-          <View style={styles.foodImage}>
-            <Image source={onboardingImages.demoKabsaSocial} style={styles.foodMascot} resizeMode="cover" />
-          </View>
+            {phase === 1 ? (
+              <>
+                <Animated.View entering={FadeIn.duration(200)} style={styles.sheetBackdrop} />
+                <Animated.View entering={FadeInDown.duration(260)} style={styles.sheet}>
+                  <View style={styles.sheetGrabber} />
+                  <Text style={styles.sheetTitle}>{t("obShareTo")}</Text>
+                  <View style={styles.sheetApps}>
+                    {SHARE_APPS.map((app) => {
+                      const isWasfa = app.labelKey === "obShareWasfa";
 
-          <View style={styles.engagement}>
-            <View style={styles.engagementIcons}>
-              <Feather name="heart" size={20} color={onboardingColors.text} />
-              <Feather name="message-circle" size={20} color={onboardingColors.text} />
-              <Feather name="send" size={20} color={onboardingColors.text} />
-            </View>
-            <Feather name="bookmark" size={20} color={onboardingColors.text} />
-          </View>
-          <Text style={styles.caption}>{demoRecipe.source.caption}</Text>
+                      if (!isWasfa) {
+                        return (
+                          <View key={app.labelKey} style={styles.sheetApp}>
+                            <View style={[styles.sheetAppTile, { backgroundColor: app.color }]} />
+                            <Text style={styles.sheetAppLabel}>{t(app.labelKey)}</Text>
+                          </View>
+                        );
+                      }
 
-          {state === "extracting" ? (
-            <Animated.View pointerEvents="none" style={[styles.scanLine, scanStyle]} />
-          ) : null}
-        </Animated.View>
-
-        {state === "extracting" ? (
-          <View style={styles.extractingPill}>
-            <FontAwesome name="magic" size={14} color="#FFFFFF" />
-            <Text style={styles.extractingText}>{extractionLabels[extractIndex]}</Text>
+                      return (
+                        <Pressable
+                          key={app.labelKey}
+                          accessibilityRole="button"
+                          style={styles.sheetApp}
+                          onPress={startWorking}
+                        >
+                          <View style={styles.wasfaHalo}>
+                            <View style={styles.wasfaRing}>
+                              <MascotBadge size={52} radius={16} imageHeight={56} offset={16} />
+                            </View>
+                          </View>
+                          <Text style={[styles.sheetAppLabel, styles.sheetAppLabelWasfa]}>
+                            {t(app.labelKey)}
+                          </Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
+                </Animated.View>
+              </>
+            ) : null}
           </View>
         ) : null}
 
-        <Animated.View style={[styles.recipeCard, recipeStyle]}>
-          <View style={styles.savedBadge}>
-            <FontAwesome name="check" size={12} color="#FFFFFF" />
-            <Text style={styles.savedBadgeText}>{t("qDemoSavedBadge")}</Text>
-          </View>
-          <Text style={styles.recipeTitle}>{demoRecipe.title[textKey]}</Text>
-          <Text style={styles.recipeDescription}>{demoRecipe.description[textKey]}</Text>
+        {phase === 2 ? (
+          <Animated.View entering={FadeIn.duration(250)} style={styles.working}>
+            <View style={styles.workingSource}>
+              <Image source={onboardingImages.demoKabsaSocial} style={styles.workingThumb} />
+              <Text style={styles.workingUrl}>{demoReel.sourceUrl}</Text>
+            </View>
+            <Image
+              source={onboardingImages.mascotTyping}
+              style={styles.workingMascot}
+              resizeMode="contain"
+            />
+            {STAGE_KEYS.map((key, index) => {
+              const done = stagesDone > index;
 
-          <View style={styles.metaRow}>
-            <Meta label={`${demoRecipe.prepMinutes + demoRecipe.cookMinutes}m`} icon="clock" />
-            <Meta label={`${demoRecipe.servings}`} icon="users" />
-            <Meta label={`${demoRecipe.calories}`} icon="activity" />
-          </View>
+              return (
+                <View key={key} style={[styles.stageRow, stagesDone < index && styles.stageRowPending]}>
+                  <View style={[styles.stageBox, done && styles.stageBoxDone]}>
+                    {done ? <Feather name="check" size={12} color={wasfaColors.deep} /> : null}
+                  </View>
+                  <Text style={styles.stageLabel}>{t(key)}</Text>
+                </View>
+              );
+            })}
+          </Animated.View>
+        ) : null}
 
-          <View style={styles.previewSection}>
-            <Text style={styles.sectionTitle}>{t("ingredients")}</Text>
-            {demoRecipe.ingredients.slice(0, 3).map((item) => (
-              <Text key={item.en} style={styles.previewLine}>• {item[textKey]}</Text>
-            ))}
-          </View>
+        {phase === 3 ? (
+          <Animated.View entering={FadeInDown.duration(300)} style={styles.recipeShadow}>
+            <View style={styles.recipe}>
+              <View>
+                <Image
+                  source={onboardingImages.demoKabsaSocial}
+                  style={styles.recipeImage}
+                  resizeMode="cover"
+                />
+                <View style={styles.savedBadge}>
+                  <Feather name="check" size={14} color="#FFFFFF" />
+                  <Text style={styles.savedBadgeText}>{t("obSaved")}</Text>
+                </View>
+              </View>
+              <View style={styles.recipeBody}>
+                <View style={styles.recipeHeading}>
+                  <Text style={styles.recipeTitle}>{t("obKabsa")}</Text>
+                  <Text style={styles.recipeMeta}>
+                    {`${t("obKabsaMeta")} · ${t(household.labelKey)}`}
+                  </Text>
+                </View>
+                <View style={styles.ingredients}>
+                  {ingredientLines.map((line) => (
+                    <View key={line.name} style={styles.ingredientRow}>
+                      <FoodEmojiTile name={line.name} size={36} />
+                      <Text style={styles.ingredientText}>{line.text}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            </View>
+          </Animated.View>
+        ) : null}
+      </ScrollView>
 
-          <View style={styles.previewSection}>
-            <Text style={styles.sectionTitle}>{t("steps")}</Text>
-            {demoRecipe.steps.slice(0, 2).map((item, index) => (
-              <Text key={item.en} style={styles.previewLine}>{index + 1}. {item[textKey]}</Text>
-            ))}
-          </View>
-        </Animated.View>
-      </View>
-
-      <View style={styles.footer}>
-        {state === "complete" ? (
-          <Pressable style={styles.cta} onPress={handleContinue}>
-            <Text style={styles.ctaText}>{t("qDemoContinue")}</Text>
-          </Pressable>
-        ) : (
-          <Pressable
-            style={[styles.cta, state !== "instagram" && styles.ctaDisabled]}
-            onPress={startImport}
-            disabled={state !== "instagram"}
-          >
-            <FontAwesome name="magic" size={16} color="#FFFFFF" />
-            <Text style={styles.ctaText}>{t("qDemoImportButton")}</Text>
-          </Pressable>
-        )}
-      </View>
-    </SafeAreaView>
-  );
-}
-
-function Meta({ icon, label }: { icon: ComponentProps<typeof Feather>["name"]; label: string }) {
-  return (
-    <View style={styles.meta}>
-      <Feather name={icon} size={14} color={onboardingColors.primaryDark} />
-      <Text style={styles.metaText}>{label}</Text>
+      {phase === 3 ? (
+        <OnboardingFooter>
+          <CtaButton
+            label={t("obKeepGoing")}
+            onPress={() => void finishQuestionnaire()}
+            loading={isFinishing}
+          />
+        </OnboardingFooter>
+      ) : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safe: {
+  screen: {
     flex: 1,
-    backgroundColor: onboardingColors.backgroundBase,
+    backgroundColor: wasfaColors.background,
   },
-  header: {
-    paddingHorizontal: 24,
-    paddingTop: 24,
+  content: {
+    paddingHorizontal: 20,
+    paddingBottom: 24,
+    gap: 12,
+  },
+  tag: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: wasfaColors.primary,
+    textAlign: "left",
   },
   title: {
-    fontSize: 38,
-    lineHeight: 42,
-    fontWeight: "900",
-    color: onboardingColors.primaryDark,
-    textAlign: "center",
+    marginTop: -6,
+    fontWeight: "800",
+    color: wasfaColors.ink,
+    textAlign: "left",
   },
-  subtitle: {
-    marginTop: 8,
-    fontSize: 16,
-    lineHeight: 23,
-    color: onboardingColors.textMuted,
-    textAlign: "center",
+  hint: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: wasfaColors.muted,
+    textAlign: "left",
   },
-  stage: {
-    flex: 1,
-    justifyContent: "center",
-    paddingHorizontal: 22,
-  },
-  instagramCard: {
-    borderRadius: 24,
+
+  // Phase 0 and 1: the mock reel, then the share sheet over it.
+  reel: {
+    height: 420,
+    marginTop: 4,
+    borderRadius: 30,
     overflow: "hidden",
-    backgroundColor: "#FFFFFF",
-    borderWidth: 1,
-    borderColor: onboardingColors.border,
+    backgroundColor: "#111111",
   },
-  igHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    padding: 14,
-  },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: onboardingColors.primaryDark,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  avatarText: {
-    fontSize: 13,
-    fontWeight: "900",
-    color: "#FFFFFF",
-  },
-  igProfile: {
-    flex: 1,
-    marginHorizontal: 10,
-  },
-  username: {
-    fontSize: 14,
-    fontWeight: "900",
-    color: onboardingColors.text,
-  },
-  platform: {
-    fontSize: 12,
-    color: onboardingColors.textMuted,
-  },
-  foodImage: {
-    height: 230,
-    backgroundColor: "#F7EAD5",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  foodMascot: {
+  reelImage: {
     width: "100%",
     height: "100%",
+    opacity: 0.92,
   },
-  engagement: {
-    paddingHorizontal: 14,
-    paddingTop: 12,
-    flexDirection: "row",
-    justifyContent: "space-between",
-  },
-  engagementIcons: {
-    flexDirection: "row",
-    gap: 14,
-  },
-  caption: {
-    padding: 14,
-    paddingTop: 10,
-    fontSize: 13,
-    lineHeight: 19,
-    color: onboardingColors.text,
-  },
-  scanLine: {
+  reelCopy: {
     position: "absolute",
-    left: 0,
-    right: 0,
-    top: 72,
-    height: 70,
-    backgroundColor: "rgba(43,168,138,0.24)",
-    borderTopWidth: 2,
-    borderBottomWidth: 2,
-    borderColor: onboardingColors.teal,
+    bottom: 16,
+    start: 16,
+    end: 70,
+    gap: 6,
   },
-  extractingPill: {
-    position: "absolute",
-    alignSelf: "center",
-    top: "50%",
-    flexDirection: "row",
-    gap: 8,
-    alignItems: "center",
-    borderRadius: 999,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: onboardingColors.primaryDark,
-  },
-  extractingText: {
+  reelHandle: {
     fontSize: 14,
     fontWeight: "800",
     color: "#FFFFFF",
+    textAlign: "left",
+    writingDirection: "ltr",
   },
-  recipeCard: {
+  reelCaption: {
+    fontSize: 12,
+    lineHeight: 17,
+    color: "#FFFFFF",
+    opacity: 0.9,
+    textAlign: "left",
+  },
+  // The share button's halo adds 14pt on every side, hence the smaller offsets here.
+  reelActions: {
     position: "absolute",
-    left: 22,
-    right: 22,
+    bottom: 6,
+    end: 0,
+    alignItems: "center",
+  },
+  reelActionIcon: {
+    marginBottom: 18,
+  },
+  shareHaloOuter: {
+    marginTop: 4,
+    width: 74,
+    height: 74,
+    borderRadius: 37,
+    backgroundColor: "rgba(242,133,26,0.15)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shareHaloInner: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: "rgba(242,133,26,0.35)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  shareButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: wasfaColors.cta,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0,0,0,0.35)",
+  },
+  sheet: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingTop: 12,
+    paddingHorizontal: 14,
+    paddingBottom: 18,
+    gap: 12,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    backgroundColor: "#F4F2EE",
+  },
+  sheetGrabber: {
+    alignSelf: "center",
+    width: 36,
+    height: 4,
+    borderRadius: 9,
+    backgroundColor: "#D5D0C7",
+  },
+  sheetTitle: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: wasfaColors.muted,
+    textAlign: "left",
+  },
+  sheetApps: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+  },
+  sheetApp: {
+    width: 62,
+    alignItems: "center",
+    gap: 6,
+  },
+  sheetAppTile: {
+    width: 52,
+    height: 52,
+    borderRadius: 16,
+  },
+  sheetAppLabel: {
+    fontSize: 10,
+    color: wasfaColors.muted,
+  },
+  sheetAppLabelWasfa: {
+    fontWeight: "800",
+    color: wasfaColors.ink,
+  },
+  // Orange ring plus a soft halo around the Wasfa tile; the negative margin
+  // keeps the tile itself in line with its neighbours.
+  wasfaHalo: {
+    margin: -8,
+    padding: 5,
     borderRadius: 24,
-    backgroundColor: "#FFFFFF",
+    backgroundColor: "rgba(242,133,26,0.25)",
+  },
+  wasfaRing: {
+    padding: 3,
+    borderRadius: 19,
+    backgroundColor: wasfaColors.cta,
+  },
+
+  // Phase 2: the staged "working" card.
+  working: {
+    minHeight: 380,
+    marginTop: 4,
+    padding: 22,
+    gap: 14,
+    borderRadius: 30,
+    backgroundColor: wasfaColors.deep,
+  },
+  workingSource: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  workingThumb: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+  },
+  workingUrl: {
+    flex: 1,
+    fontSize: 13,
+    color: "#FFFFFF",
+    opacity: 0.8,
+    textAlign: "left",
+    writingDirection: "ltr",
+  },
+  workingMascot: {
+    alignSelf: "center",
+    height: 130,
+    // mascot-typing.png is 414x611.
+    width: 130 * (414 / 611),
+  },
+  stageRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+  },
+  stageRowPending: {
+    opacity: 0.35,
+  },
+  stageBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: "rgba(255,255,255,0.4)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  stageBoxDone: {
+    borderColor: wasfaColors.gold,
+    backgroundColor: wasfaColors.gold,
+  },
+  stageLabel: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "700",
+    color: "#FFFFFF",
+    textAlign: "left",
+  },
+
+  // Phase 3: the saved recipe card.
+  recipeShadow: {
+    marginTop: 4,
+    borderRadius: 30,
+    backgroundColor: wasfaColors.surface,
+    shadowColor: "#000000",
+    shadowOpacity: 0.08,
+    shadowRadius: 15,
+    shadowOffset: { width: 0, height: 14 },
+    elevation: 4,
+  },
+  recipe: {
+    borderRadius: 30,
     borderWidth: 1,
-    borderColor: onboardingColors.border,
-    padding: 18,
+    borderColor: wasfaColors.line,
+    overflow: "hidden",
+  },
+  recipeImage: {
+    width: "100%",
+    height: 160,
   },
   savedBadge: {
-    alignSelf: "flex-start",
+    position: "absolute",
+    top: 12,
+    start: 12,
+    height: 30,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    backgroundColor: wasfaColors.primary,
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    backgroundColor: onboardingColors.teal,
   },
   savedBadgeText: {
     fontSize: 12,
-    fontWeight: "900",
+    fontWeight: "800",
     color: "#FFFFFF",
+  },
+  recipeBody: {
+    padding: 16,
+    gap: 12,
+  },
+  recipeHeading: {
+    gap: 2,
   },
   recipeTitle: {
-    marginTop: 14,
-    fontSize: 28,
-    fontWeight: "900",
-    color: onboardingColors.text,
+    fontSize: 22,
+    fontWeight: "800",
+    color: wasfaColors.ink,
+    textAlign: "left",
   },
-  recipeDescription: {
-    marginTop: 6,
-    fontSize: 14,
-    lineHeight: 20,
-    color: onboardingColors.textMuted,
-  },
-  metaRow: {
-    marginTop: 14,
-    flexDirection: "row",
-    gap: 8,
-  },
-  meta: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 5,
-    borderRadius: 999,
-    backgroundColor: onboardingColors.accent,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  metaText: {
-    fontSize: 12,
-    fontWeight: "900",
-    color: onboardingColors.primaryDark,
-  },
-  previewSection: {
-    marginTop: 14,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: "900",
-    color: onboardingColors.text,
-  },
-  previewLine: {
-    marginTop: 5,
+  recipeMeta: {
     fontSize: 13,
-    lineHeight: 18,
-    color: onboardingColors.textMuted,
+    fontWeight: "600",
+    color: wasfaColors.muted,
+    textAlign: "left",
   },
-  footer: {
-    paddingHorizontal: 20,
-    paddingBottom: 20,
+  ingredients: {
+    gap: 6,
   },
-  cta: {
-    minHeight: 56,
-    borderRadius: 28,
-    backgroundColor: onboardingColors.primary,
-    alignItems: "center",
-    justifyContent: "center",
+  ingredientRow: {
     flexDirection: "row",
+    alignItems: "center",
     gap: 10,
   },
-  ctaDisabled: {
-    opacity: 0.7,
-  },
-  ctaText: {
-    fontSize: 18,
-    fontWeight: "900",
-    color: "#FFFFFF",
+  ingredientText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: "700",
+    color: wasfaColors.ink,
+    textAlign: "left",
   },
 });

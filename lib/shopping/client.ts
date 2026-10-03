@@ -16,20 +16,21 @@ export type ShoppingListItem = {
   } | null;
 };
 
+type ShoppingListRecipeRow = {
+  id: string;
+  title: string;
+  localized_json?: unknown;
+  source_thumbnail_url: string | null;
+};
+
 type ShoppingListRow = {
   id: string;
   recipe_id: string;
   ingredient_text: string;
   checked: boolean;
   created_at: string;
-  recipe:
-    | {
-        id: string;
-        title: string;
-        localized_json?: unknown;
-        source_thumbnail_url: string | null;
-      }[]
-    | null;
+  // PostgREST returns a to-one embed as an object; older typings describe it as an array.
+  recipe: ShoppingListRecipeRow | ShoppingListRecipeRow[] | null;
 };
 
 function formatIngredient(item: {
@@ -49,21 +50,24 @@ export async function listShoppingListItems(): Promise<ShoppingListItem[]> {
     .order("created_at", { ascending: false });
 
   if (error) throw error;
-  return ((data ?? []) as ShoppingListRow[]).map((row) => ({
-    id: row.id,
-    recipe_id: row.recipe_id,
-    ingredient_text: row.ingredient_text,
-    checked: row.checked,
-    created_at: row.created_at,
-    recipe: Array.isArray(row.recipe) && row.recipe[0]
-      ? {
-          id: row.recipe[0].id,
-          title: row.recipe[0].title,
-          localized: normalizeLocalizedRecipeText(row.recipe[0].localized_json),
-          source_thumbnail_url: row.recipe[0].source_thumbnail_url,
-        }
-      : null,
-  }));
+  return ((data ?? []) as unknown as ShoppingListRow[]).map((row) => {
+    const recipe = Array.isArray(row.recipe) ? row.recipe[0] : row.recipe;
+    return {
+      id: row.id,
+      recipe_id: row.recipe_id,
+      ingredient_text: row.ingredient_text,
+      checked: row.checked,
+      created_at: row.created_at,
+      recipe: recipe
+        ? {
+            id: recipe.id,
+            title: recipe.title,
+            localized: normalizeLocalizedRecipeText(recipe.localized_json),
+            source_thumbnail_url: recipe.source_thumbnail_url,
+          }
+        : null,
+    };
+  });
 }
 
 export async function toggleShoppingListItemChecked(
@@ -96,13 +100,20 @@ export async function addRecipeIngredientsToShoppingList(
       user_id: userId,
       recipe_id: recipe.id,
       ingredient_text,
-      checked: true,
+      // `checked` means "already in the basket", so new items start unchecked.
+      checked: false,
     }));
 
   if (rows.length === 0) return;
 
+  // Ignore duplicates so re-planning a recipe keeps items the user already checked off.
   const { error } = await supabase
     .from("shopping_list_items")
-    .upsert(rows, { onConflict: "user_id,recipe_id,ingredient_text" });
+    .upsert(rows, { onConflict: "user_id,recipe_id,ingredient_text", ignoreDuplicates: true });
+  if (error) throw error;
+}
+
+export async function removeRecipeFromShoppingList(recipeId: string): Promise<void> {
+  const { error } = await supabase.from("shopping_list_items").delete().eq("recipe_id", recipeId);
   if (error) throw error;
 }

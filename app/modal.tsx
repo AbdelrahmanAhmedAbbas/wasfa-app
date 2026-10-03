@@ -6,6 +6,7 @@ import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput, View } f
 
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { createImportJob } from "@/lib/import/client";
+import { getImportErrorCode, getImportErrorTranslationKey } from "@/lib/import/errors";
 import { onboardingColors } from "@/lib/theme/onboarding";
 
 export default function ImportModalScreen() {
@@ -37,7 +38,10 @@ export default function ImportModalScreen() {
         },
       });
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Failed to import.");
+      const localizedKey = getImportErrorTranslationKey(getImportErrorCode(error));
+      setMessage(
+        localizedKey ? t(localizedKey) : error instanceof Error ? error.message : "Failed to import."
+      );
     } finally {
       setSubmitting(false);
     }

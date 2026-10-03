@@ -1,7 +1,8 @@
 import { LocalizedText as Text } from "@/components/LocalizedText";
-import FontAwesome from "@expo/vector-icons/FontAwesome";
+import Feather from "@expo/vector-icons/Feather";
+import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
 import { router, useLocalSearchParams } from "expo-router";
-import type { ComponentProps } from "react";
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -11,13 +12,18 @@ import {
   ScrollView,
   Share,
   StyleSheet,
-  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { CheckBox } from "@/components/wasfa/CheckBox";
+import { CtaButton } from "@/components/wasfa/CtaButton";
+import { FoodEmojiTile } from "@/components/wasfa/FoodEmojiTile";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { planRecipe } from "@/lib/planner/actions";
+import { ANY_DAY, getWeekDates, isRecipePlanned, toDateKey } from "@/lib/planner/plan";
+import { useMealPlan } from "@/lib/planner/storage";
 import { deleteRecipeById, getRecipeById, recalculateRecipeServings, type LocalizedRecipeText, type RecipeDetail } from "@/lib/recipes/client";
 import { getIngredientWarnings } from "@/lib/recipes/ingredient-warnings";
 import { loadRecipePreferences, type RecipePreferences } from "@/lib/recipes/preferences";
@@ -34,27 +40,19 @@ import {
 } from "@/lib/recipes/units";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import { onboardingImages } from "@/lib/theme/onboarding";
+import { wasfaColors, wasfaRadius, wasfaShadow } from "@/lib/theme/wasfa";
 
 type RecipeIngredient = RecipeDetail["ingredients_json"][number];
 type RecipeStep = RecipeDetail["steps_json"][number];
 type LocalizedIngredient = RecipeIngredient & { localizedName: string; localizedNotes?: string };
+type RecipeView = "ingredients" | "cook";
 
 const colors = {
-  background: "#F9FAF3",
-  card: "#F9FAF3",
-  surface: "#F3F4EE",
-  softGreen: "#E8F5E0",
-  border: "#E0EDD8",
-  primary: "#5A8A5A",
-  primaryDark: "#3D6B3D",
-  text: "#252821",
-  muted: "#6B7C6B",
-  mint: "#82F4D2",
-  mintText: "#00705A",
-  warningBg: "#FFF1F1",
-  warningText: "#BA1A1A",
-  warningBorder: "#FFDAD6",
-  yellow: "#F5A623",
+  ...wasfaColors,
+  dangerSoft: "#FDECEC",
+  dangerBorder: "#F6CFCF",
+  onDeepLine: "rgba(255,255,255,0.28)",
+  onDeepFill: "rgba(255,255,255,0.12)",
 };
 
 function formatDuration(recipe: RecipeDetail, t: (key: any) => string) {
@@ -72,7 +70,7 @@ function getNutritionNumber(recipe: RecipeDetail, key: string) {
 
 function shouldUseFallbackValue(value: string | undefined, language: "en" | "ar") {
   if (!value) return undefined;
-  const hasArabic = /[\u0600-\u06FF]/.test(value);
+  const hasArabic = /[؀-ۿ]/.test(value);
   const hasLatin = /[A-Za-z]/.test(value);
   if (language === "ar") return !hasArabic && hasLatin;
   return hasArabic && !hasLatin;
@@ -144,16 +142,21 @@ function getIngredientAmount(item: RecipeIngredient, measurementSystem: Measurem
 export default function RecipeDetailsScreen() {
   const { isRTL, t, language } = useLanguage();
   const { user } = useAuth();
+  const { plan, updatePlan } = useMealPlan();
   const params = useLocalSearchParams<{ id?: string }>();
   const recipeId = useMemo(() => (typeof params.id === "string" ? params.id : ""), [params.id]);
   const [recipe, setRecipe] = useState<RecipeDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
+  const [activeView, setActiveView] = useState<RecipeView>("ingredients");
+  const [cookStep, setCookStep] = useState(0);
   const [checkedIngredients, setCheckedIngredients] = useState<Set<number>>(() => new Set());
   const [expandedTipSteps, setExpandedTipSteps] = useState<Set<number>>(() => new Set());
   const [servingInput, setServingInput] = useState("");
   const [recalculationMessage, setRecalculationMessage] = useState<string | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
   const [preferences, setPreferences] = useState<RecipePreferences>({
     diet: [],
     allergies: [],
@@ -163,8 +166,9 @@ export default function RecipeDetailsScreen() {
   const recalculationRequestRef = useRef(0);
 
   const insets = useSafeAreaInsets();
-  const align = isRTL ? "right" : "left";
+  // Root layout sets `direction`, so "left" is the logical start in both languages.
   const writingDirection = isRTL ? "rtl" : "ltr";
+  const weekDayKeys = useMemo(() => getWeekDates(new Date()).map(toDateKey), []);
 
   const load = useCallback(async () => {
     if (!recipeId) {
@@ -184,6 +188,7 @@ export default function RecipeDetailsScreen() {
         setServingInput(row.servings ? String(row.servings) : "");
         setCheckedIngredients(new Set());
         setExpandedTipSteps(new Set());
+        setCookStep(0);
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("recipeNotFound"));
@@ -218,7 +223,7 @@ export default function RecipeDetailsScreen() {
 
     const requestId = recalculationRequestRef.current + 1;
     recalculationRequestRef.current = requestId;
-    setRecalculationMessage(t("recipeUpdatingIngredients" as any));
+    setRecalculationMessage(t("recipeUpdatingIngredients"));
 
     const timeout = setTimeout(() => {
       void (async () => {
@@ -228,13 +233,13 @@ export default function RecipeDetailsScreen() {
           setRecipe(updated);
           setServingInput(updated.servings ? String(updated.servings) : "");
           setCheckedIngredients(new Set());
-          setRecalculationMessage(t("recipeUpdatedIngredients" as any));
+          setRecalculationMessage(t("recipeUpdatedIngredients"));
           setTimeout(() => {
             if (recalculationRequestRef.current === requestId) setRecalculationMessage(null);
           }, 1400);
         } catch (e) {
           if (recalculationRequestRef.current !== requestId) return;
-          setRecalculationMessage(e instanceof Error ? e.message : t("recipeUpdateAmountsFailed" as any));
+          setRecalculationMessage(e instanceof Error ? e.message : t("recipeUpdateAmountsFailed"));
         }
       })();
     }, 1000);
@@ -279,8 +284,31 @@ export default function RecipeDetailsScreen() {
         url: recipe.source_url ?? recipe.source_reel_url ?? undefined,
       });
     } catch {
-      setError(t("couldNotShareRecipe" as any));
+      setError(t("couldNotShareRecipe"));
     }
+  };
+
+  const handleAddToPlan = async () => {
+    if (!recipe || planning) return;
+    setPlanning(true);
+    setPlanNotice(null);
+    try {
+      // Planning a recipe also puts its ingredients on the grocery list.
+      const result = await planRecipe(updatePlan, ANY_DAY, recipe.id);
+      if (!result.grocerySynced) setPlanNotice(t("recipePlanGroceryNotice"));
+    } catch {
+      setPlanNotice(t("recipePlanFailed"));
+    } finally {
+      setPlanning(false);
+    }
+  };
+
+  const changeServings = (delta: number) => {
+    setServingInput((current) => {
+      const base = Number(current);
+      const next = (Number.isFinite(base) ? Math.trunc(base) : 0) + delta;
+      return String(Math.max(1, next));
+    });
   };
 
   const toggleIngredientChecked = (index: number) => {
@@ -319,8 +347,8 @@ export default function RecipeDetailsScreen() {
   if (error || !recipe) {
     return (
       <View style={styles.centerContainer}>
-        <Text style={[styles.errorTitle, { textAlign: align }]}>{t("recipeNotFound")}</Text>
-        <Text style={[styles.errorBody, { textAlign: align }]}>{error ?? t("recipeUnknownError")}</Text>
+        <Text style={[styles.errorTitle, { writingDirection }]}>{t("recipeNotFound")}</Text>
+        <Text style={[styles.errorBody, { writingDirection }]}>{error ?? t("recipeUnknownError")}</Text>
         <Pressable style={styles.outlineButton} onPress={() => router.back()}>
           <Text style={styles.outlineButtonText}>{t("back")}</Text>
         </Pressable>
@@ -340,6 +368,15 @@ export default function RecipeDetailsScreen() {
     localizedNotes: recipeText.ingredients[index]?.notes,
   }));
   const localizedSteps = recipeText.steps.slice().sort((a, b) => a.order - b.order);
+  const isPlanned = isRecipePlanned(plan, recipe.id, weekDayKeys);
+  const servingCount = Number(servingInput);
+  const canDecreaseServings = Number.isFinite(servingCount) && servingCount > 1;
+  const activeStepIndex = Math.min(cookStep, Math.max(localizedSteps.length - 1, 0));
+  const activeStep = localizedSteps[activeStepIndex];
+  const formatStepOf = (index: number) =>
+    t("recipeStepOf")
+      .replace("{current}", String(index + 1))
+      .replace("{total}", String(localizedSteps.length));
 
   return (
     <View style={styles.container}>
@@ -356,134 +393,243 @@ export default function RecipeDetailsScreen() {
                 ? { uri: recipe.source_thumbnail_url }
                 : onboardingImages.mascotReading
             }
-            resizeMode="cover"
+            resizeMode={recipe.source_thumbnail_url ? "cover" : "contain"}
             style={styles.heroImage}
           />
-          <View style={styles.heroOverlay} />
-          <View style={[styles.mobileOverlayNav, { paddingTop: Math.max(insets.top, 16) }]}>
-            <Pressable onPress={() => router.back()} style={styles.glassButton}>
-              <FontAwesome name="angle-left" size={28} color="#FFFFFF" />
+          <View style={[styles.heroNav, { paddingTop: Math.max(insets.top, 16) }]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("back")}
+              onPress={() => router.back()}
+              style={styles.heroButton}
+            >
+              <Feather name={isRTL ? "chevron-right" : "chevron-left"} size={24} color={colors.ink} />
             </Pressable>
-            <View style={styles.navActions}>
-              <Pressable onPress={() => void handleShareRecipe()} style={styles.glassButton}>
-                <FontAwesome name="share-square-o" size={17} color="#FFFFFF" />
+            <View style={styles.heroActions}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("recipeShare")}
+                onPress={() => void handleShareRecipe()}
+                style={styles.heroButton}
+              >
+                <Feather name="share" size={19} color={colors.ink} />
               </Pressable>
-              <Pressable onPress={handleDeleteRecipe} style={styles.glassButton}>
-                <FontAwesome name="trash-o" size={18} color="#FFFFFF" />
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("delete")}
+                onPress={handleDeleteRecipe}
+                disabled={working}
+                style={[styles.heroButton, working && styles.disabledButton]}
+              >
+                <Feather name="trash-2" size={19} color={colors.danger} />
               </Pressable>
             </View>
           </View>
         </View>
 
-        <View style={styles.contentCard}>
+        <View style={styles.content}>
           <View style={styles.headerSection}>
-            <View style={styles.titleRow}>
-              <View style={styles.titleBlock}>
-                <Text style={[styles.recipeTitle, { textAlign: align }]} numberOfLines={3}>
-                  {recipeText.title}
-                </Text>
-                {recipeText.description ? (
-                  <Text style={[styles.description, { textAlign: align }]} numberOfLines={4}>
-                    {recipeText.description}
-                  </Text>
-                ) : null}
+            <View style={styles.tagRow}>
+              <View style={styles.cuisinePill}>
+                <Text style={styles.cuisinePillText}>{recipeText.cuisine || t("recipeCuisineFallback")}</Text>
               </View>
-
-              <View style={styles.tagColumn}>
-                <View style={styles.mintPill}>
-                  <Text style={styles.mintPillText}>{recipeText.cuisine || t("recipeCuisineFallback")}</Text>
-                </View>
-                <View style={styles.greenPill}>
-                  <Text style={styles.greenPillText}>{recipeText.meal_type || t("recipeMealTypeFallback")}</Text>
-                </View>
+              <View style={styles.mealTypePill}>
+                <Text style={styles.mealTypePillText}>{recipeText.meal_type || t("recipeMealTypeFallback")}</Text>
               </View>
             </View>
+
+            <Text style={[styles.recipeTitle, { writingDirection }]} numberOfLines={3}>
+              {recipeText.title}
+            </Text>
+            {recipeText.description ? (
+              <Text style={[styles.description, { writingDirection }]} numberOfLines={4}>
+                {recipeText.description}
+              </Text>
+            ) : null}
 
             <View style={styles.metaWrap}>
-              <MetaPill icon="clock-o" label={formatDuration(recipe, t)} />
-              <View style={styles.servingsEditor}>
-                <FontAwesome name="users" size={15} color={colors.muted} />
-                <TextInput
-                  value={servingInput}
-                  onChangeText={(value) => setServingInput(value.replace(/[^0-9]/g, ""))}
-                  keyboardType="number-pad"
-                  style={styles.servingsInput}
-                  placeholder="-"
-                  placeholderTextColor={colors.muted}
-                />
-                <Text style={styles.metaPillText}>{t("servings")}</Text>
+              <View style={styles.timePill}>
+                <Feather name="clock" size={16} color={colors.primary} />
+                <Text style={styles.timePillText}>{formatDuration(recipe, t)}</Text>
+              </View>
+              <View style={styles.servingsStepper}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("recipeServingsDecrease")}
+                  accessibilityState={{ disabled: !canDecreaseServings }}
+                  disabled={!canDecreaseServings}
+                  hitSlop={6}
+                  onPress={() => changeServings(-1)}
+                  style={[styles.stepperButton, !canDecreaseServings && styles.disabledButton]}
+                >
+                  <Feather name="minus" size={16} color={colors.primaryDark} />
+                </Pressable>
+                <Text style={styles.servingsText}>
+                  {t("recipePeople").replace("{count}", servingInput || "-")}
+                </Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={t("recipeServingsIncrease")}
+                  hitSlop={6}
+                  onPress={() => changeServings(1)}
+                  style={styles.stepperButton}
+                >
+                  <Feather name="plus" size={16} color={colors.primaryDark} />
+                </Pressable>
               </View>
             </View>
-
-            <View style={styles.preferenceHint}>
-              <FontAwesome name="info-circle" size={14} color={colors.primaryDark} />
-              <Text style={[styles.preferenceHintText, { textAlign: align, writingDirection }]}>
-                {t("recipeUnitsHint" as any)}
-              </Text>
-            </View>
             {recalculationMessage ? (
-              <Text style={styles.recalculationText}>{recalculationMessage}</Text>
+              <Text style={[styles.recalculationText, { writingDirection }]}>{recalculationMessage}</Text>
             ) : null}
           </View>
 
-          {showNutrition ? (
+          <View style={styles.segmentRow}>
+            <SegmentButton
+              label={t("ingredients")}
+              active={activeView === "ingredients"}
+              onPress={() => setActiveView("ingredients")}
+              renderIcon={(color) => <Feather name="list" size={17} color={color} />}
+            />
+            <SegmentButton
+              label={t("recipeCookMode")}
+              active={activeView === "cook"}
+              onPress={() => setActiveView("cook")}
+              renderIcon={(color) => <MaterialCommunityIcons name="chef-hat" size={18} color={color} />}
+            />
+          </View>
+
+          {activeView === "ingredients" ? (
             <>
-              <SectionTitle title={t("nutrition")} />
-              <View style={styles.nutritionGrid}>
-                <MacroCard label={t("protein")} value={protein ? `${protein}${t("macroGramSuffix" as any)}` : "-"} tone="green" />
-                <MacroCard label={t("carbs")} value={carbs ? `${carbs}${t("macroGramSuffix" as any)}` : "-"} tone="red" />
-                <MacroCard label={t("fats")} value={fat ? `${fat}${t("macroGramSuffix" as any)}` : "-"} tone="yellow" />
-                <MacroCard label={t("calories")} value={calories ? `${calories}` : "-"} tone="orange" wide />
+              <View style={styles.ingredientsList}>
+                {localizedIngredients.map((item, index) => (
+                  <IngredientRow
+                    key={`${item.localizedName}-${index}`}
+                    item={item}
+                    measurementSystem={preferences.measurementSystem}
+                    checked={checkedIngredients.has(index)}
+                    warnings={getIngredientWarnings(recipe.ingredients_json[index], preferences)}
+                    suggestedAlternativeLabel={t("suggestedAlternative")}
+                    estimatedLabelText={t("estimatedIngredient")}
+                    isRTL={isRTL}
+                    language={language}
+                    onToggle={() => toggleIngredientChecked(index)}
+                  />
+                ))}
+              </View>
+
+              <View style={styles.preferenceHint}>
+                <Feather name="info" size={14} color={colors.muted} />
+                <Text style={[styles.preferenceHintText, { writingDirection }]}>
+                  {t("recipeUnitsHint")}
+                </Text>
+              </View>
+
+              <View style={styles.planSection}>
+                {isPlanned ? (
+                  <View accessibilityRole="text" style={styles.plannedButton}>
+                    <Feather name="check" size={18} color={colors.primaryDark} />
+                    <Text style={styles.plannedButtonText}>{t("recipeInPlan")}</Text>
+                  </View>
+                ) : (
+                  <CtaButton
+                    label={t("recipeAddToPlan")}
+                    loading={planning}
+                    onPress={() => void handleAddToPlan()}
+                    leading={<MaterialCommunityIcons name="calendar-plus" size={20} color="#FFFFFF" />}
+                  />
+                )}
+                {planNotice ? (
+                  <Text style={[styles.planNotice, { writingDirection }]}>{planNotice}</Text>
+                ) : null}
+              </View>
+
+              {showNutrition ? (
+                <>
+                  <SectionTitle title={t("nutrition")} />
+                  <View style={styles.nutritionGrid}>
+                    <MacroCard label={t("calories")} value={calories ? `${calories}` : "-"} wide />
+                    <MacroCard label={t("protein")} value={protein ? `${protein}${t("macroGramSuffix")}` : "-"} />
+                    <MacroCard label={t("carbs")} value={carbs ? `${carbs}${t("macroGramSuffix")}` : "-"} />
+                    <MacroCard label={t("fats")} value={fat ? `${fat}${t("macroGramSuffix")}` : "-"} />
+                  </View>
+                </>
+              ) : null}
+
+              <SectionTitle title={t("instructions")} />
+              <View style={styles.stepsList}>
+                {localizedSteps.map((item, index) => (
+                  <StepInstructionCard
+                    key={`step-${index}`}
+                    item={item}
+                    index={index}
+                    expanded={expandedTipSteps.has(index)}
+                    isRTL={isRTL}
+                    measurementSystem={preferences.measurementSystem}
+                    stepFallbackLabel={t("stepN").replace("{order}", String(item.order || index + 1))}
+                    tipLabel={t("tipLabel")}
+                    minuteLabel={t("homeMinuteShort")}
+                    onToggleTips={() => toggleStepTips(index)}
+                  />
+                ))}
+              </View>
+
+              <View style={styles.chefTipCard}>
+                <Image source={onboardingImages.mascotReading} style={styles.tipMascot} resizeMode="contain" />
+                <View style={styles.tipBody}>
+                  <View style={styles.tipTitleRow}>
+                    <Feather name="zap" size={16} color={colors.cta} />
+                    <Text style={styles.tipTitle}>{t("chefTipTitle")}</Text>
+                  </View>
+                  <Text style={[styles.tipText, { writingDirection }]}>{t("chefTipBody")}</Text>
+                </View>
               </View>
             </>
-          ) : null}
-
-          <SectionTitle title={t("ingredients")} />
-          <View style={styles.ingredientsList}>
-            {localizedIngredients.map((item, index) => (
-              <IngredientRow
-                key={`${item.localizedName}-${index}`}
-                item={item}
-                measurementSystem={preferences.measurementSystem}
-                checked={checkedIngredients.has(index)}
-                warnings={getIngredientWarnings(recipe.ingredients_json[index], preferences)}
-                suggestedAlternativeLabel={t("suggestedAlternative" as any)}
-                estimatedLabelText={t("estimatedIngredient" as any)}
+          ) : activeStep ? (
+            <>
+              <CookModeCard
+                item={activeStep}
+                index={activeStepIndex}
+                total={localizedSteps.length}
+                expanded={expandedTipSteps.has(activeStepIndex)}
                 isRTL={isRTL}
-                language={language}
-                onToggle={() => toggleIngredientChecked(index)}
+                measurementSystem={preferences.measurementSystem}
+                eyebrow={formatStepOf(activeStepIndex)}
+                stepFallbackLabel={t("stepN").replace("{order}", String(activeStep.order || activeStepIndex + 1))}
+                durationLabel={
+                  typeof activeStep.duration_minutes === "number" && Number.isFinite(activeStep.duration_minutes)
+                    ? t("durationMinutes").replace("{count}", String(Math.round(activeStep.duration_minutes)))
+                    : null
+                }
+                tipLabel={t("tipLabel")}
+                minuteLabel={t("homeMinuteShort")}
+                backLabel={t("back")}
+                nextLabel={t("recipeNextStep")}
+                doneLabel={t("recipeDoneCooking")}
+                onToggleTips={() => toggleStepTips(activeStepIndex)}
+                onBack={() => setCookStep(activeStepIndex - 1)}
+                onNext={() => setCookStep(activeStepIndex + 1)}
+                onDone={() => {
+                  setCookStep(0);
+                  setActiveView("ingredients");
+                }}
               />
-            ))}
-          </View>
-
-          <SectionTitle title={t("instructions")} />
-          <View style={styles.stepsList}>
-            {localizedSteps.map((item, index) => (
-                <StepInstructionCard
-                  key={`step-${index}`}
-                  item={item}
-                  index={index}
-                  expanded={expandedTipSteps.has(index)}
-                  isRTL={isRTL}
-                  measurementSystem={preferences.measurementSystem}
-                  stepFallbackLabel={t("stepN").replace("{order}", String(item.order || index + 1))}
-                  tipLabel={t("tipLabel")}
-                  minuteLabel={t("homeMinuteShort")}
-                  onToggleTips={() => toggleStepTips(index)}
-                />
-              ))}
-          </View>
-
-          <View style={styles.chefTipCard}>
-            <Image source={onboardingImages.mascotReading} style={styles.tipMascot} resizeMode="contain" />
-            <View style={styles.tipTitleRow}>
-              <FontAwesome name="lightbulb-o" size={18} color={colors.primaryDark} />
-              <Text style={styles.tipTitle}>{t("chefTipTitle")}</Text>
-            </View>
-            <Text style={styles.tipText}>
-              {t("chefTipBody")}
-            </Text>
-          </View>
+              <View style={styles.cookDots}>
+                {localizedSteps.map((_, index) => (
+                  <Pressable
+                    key={`dot-${index}`}
+                    accessibilityRole="button"
+                    accessibilityLabel={formatStepOf(index)}
+                    accessibilityState={{ selected: index === activeStepIndex }}
+                    hitSlop={8}
+                    onPress={() => setCookStep(index)}
+                    style={[styles.cookDot, index === activeStepIndex && styles.cookDotActive]}
+                  />
+                ))}
+              </View>
+            </>
+          ) : (
+            <Text style={[styles.emptyStepsText, { writingDirection }]}>{t("recipeNoSteps")}</Text>
+          )}
         </View>
       </ScrollView>
 
@@ -499,43 +645,47 @@ function SectionTitle({ title }: { title: string }) {
   );
 }
 
-function MetaPill({ icon, label }: { icon: ComponentProps<typeof FontAwesome>["name"]; label: string }) {
+function SegmentButton({
+  label,
+  active,
+  onPress,
+  renderIcon,
+}: {
+  label: string;
+  active: boolean;
+  onPress: () => void;
+  renderIcon: (color: string) => ReactNode;
+}) {
   return (
-    <View style={styles.metaPill}>
-      <FontAwesome name={icon} size={15} color={colors.muted} />
-      <Text style={styles.metaPillText}>{label}</Text>
-    </View>
+    <Pressable
+      accessibilityRole="tab"
+      accessibilityState={{ selected: active }}
+      onPress={onPress}
+      style={[styles.segmentButton, active && styles.segmentButtonActive]}
+    >
+      {renderIcon(active ? "#FFFFFF" : colors.ink)}
+      <Text style={[styles.segmentText, active && styles.segmentTextActive]} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
   );
 }
 
 function MacroCard({
   label,
   value,
-  tone,
   wide,
 }: {
   label: string;
   value: string;
-  tone: "green" | "red" | "yellow" | "orange";
   wide?: boolean;
 }) {
-  const toneStyle = {
-    green: styles.macroGreen,
-    red: styles.macroRed,
-    yellow: styles.macroYellow,
-    orange: styles.macroOrange,
-  }[tone];
-  const textStyle = {
-    green: styles.macroGreenText,
-    red: styles.macroRedText,
-    yellow: styles.macroYellowText,
-    orange: styles.macroOrangeText,
-  }[tone];
-
   return (
-    <View style={[styles.macroCard, toneStyle, wide && styles.macroWide]}>
-      <Text style={[styles.macroLabel, textStyle]}>{label}</Text>
-      <Text style={[styles.macroValue, textStyle]}>{value}</Text>
+    <View style={[styles.macroCard, wide && styles.macroWide]}>
+      <Text style={[styles.macroValue, wide && styles.macroWideValue]}>{value}</Text>
+      <Text style={styles.macroLabel} numberOfLines={1} adjustsFontSizeToFit>
+        {label}
+      </Text>
     </View>
   );
 }
@@ -563,47 +713,54 @@ function IngredientRow({
 }) {
   const amount = getIngredientAmount(item, measurementSystem, language);
   const showEstimated = getEstimatedIngredientLabel(item) !== null;
-  const align = isRTL ? "right" : "left";
   const writingDirection = isRTL ? "rtl" : "ltr";
   return (
-    <View style={styles.ingredientRow}>
-      <View style={styles.ingredientLeft}>
-        <Pressable
-          accessibilityRole="checkbox"
-          accessibilityState={{ checked }}
-          onPress={onToggle}
-          style={[styles.checkbox, checked && styles.checkboxChecked]}
-        >
-          {checked ? <FontAwesome name="check" size={10} color="#FFFFFF" /> : null}
-        </Pressable>
-        <View style={styles.ingredientNameBlock}>
-          <View style={styles.ingredientTitleLine}>
-            <Text style={[styles.ingredientName, { textAlign: align, writingDirection }]}>{item.localizedName}</Text>
-            {showEstimated ? (
-              <View style={styles.estimatedIngredientBadge}>
-                <Text style={styles.estimatedIngredientText}>{estimatedLabelText}</Text>
-              </View>
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+      onPress={onToggle}
+      style={[styles.ingredientRow, checked && styles.ingredientRowChecked]}
+    >
+      {/* Both names feed the emoji lookup so it matches in either language. */}
+      <FoodEmojiTile name={`${item.name} ${item.localizedName}`} />
+      <View style={styles.ingredientNameBlock}>
+        {amount ? (
+          <Text style={[styles.ingredientAmount, checked && styles.strikeText, { writingDirection }]}>
+            {amount}
+          </Text>
+        ) : null}
+        <View style={styles.ingredientTitleLine}>
+          <Text
+            style={[
+              amount ? styles.ingredientName : styles.ingredientAmount,
+              checked && styles.strikeText,
+              { writingDirection },
+            ]}
+          >
+            {item.localizedName}
+          </Text>
+          {showEstimated ? (
+            <View style={styles.estimatedIngredientBadge}>
+              <Text style={[styles.estimatedIngredientText, !isRTL && styles.latinCaps]}>{estimatedLabelText}</Text>
+            </View>
+          ) : null}
+        </View>
+        {warnings.map((warning, index) => (
+          <View key={`${warning.kind}-${index}`} style={styles.warningBlock}>
+            <View style={styles.notePill}>
+              <Text style={styles.notePillText}>{warning.label}</Text>
+            </View>
+            {warning.detail ? <Text style={[styles.warningDetail, { writingDirection }]}>{warning.detail}</Text> : null}
+            {warning.suggestion ? (
+              <Text style={[styles.warningSuggestion, { writingDirection }]}>
+                {suggestedAlternativeLabel.replace("{name}", warning.suggestion)}
+              </Text>
             ) : null}
           </View>
-          {warnings.map((warning, index) => (
-            <View key={`${warning.kind}-${index}`} style={[styles.warningBlock, { alignItems: isRTL ? "flex-end" : "flex-start" }]}>
-              <View style={styles.notePill}>
-                <Text style={styles.notePillText}>{warning.label}</Text>
-              </View>
-              {warning.detail ? <Text style={[styles.warningDetail, { textAlign: align, writingDirection }]}>{warning.detail}</Text> : null}
-              {warning.suggestion ? (
-                <Text style={[styles.warningSuggestion, { textAlign: align, writingDirection }]}>
-                  {suggestedAlternativeLabel.replace("{name}", warning.suggestion)}
-                </Text>
-              ) : null}
-            </View>
-          ))}
-        </View>
+        ))}
       </View>
-      <Text style={[styles.ingredientAmount, { textAlign: align, writingDirection }]}>
-        {amount || "-"}
-      </Text>
-    </View>
+      <CheckBox checked={checked} />
+    </Pressable>
   );
 }
 
@@ -628,7 +785,6 @@ function StepInstructionCard({
   minuteLabel: string;
   onToggleTips: () => void;
 }) {
-  const align = isRTL ? "right" : "left";
   const writingDirection = isRTL ? "rtl" : "ltr";
   const metaItems = formatStepMetaItems(item, measurementSystem, minuteLabel);
   const tips = item.tips?.filter((tip) => tip.trim()) ?? [];
@@ -639,7 +795,7 @@ function StepInstructionCard({
         <Text style={styles.stepBadgeText}>{item.order || index + 1}</Text>
       </View>
       <View style={styles.stepContent}>
-        <Text style={[styles.stepTitle, { textAlign: align, writingDirection }]}>
+        <Text style={[styles.stepTitle, { writingDirection }]}>
           {getSafeStepTitle(item, index, stepFallbackLabel)}
         </Text>
         {metaItems.length ? (
@@ -651,7 +807,7 @@ function StepInstructionCard({
             ))}
           </View>
         ) : null}
-        <Text style={[styles.stepText, { textAlign: align, writingDirection }]}>{item.text}</Text>
+        <Text style={[styles.stepText, { writingDirection }]}>{item.text}</Text>
         {tips.length ? (
           <View style={styles.stepTipSection}>
             <Pressable
@@ -660,14 +816,14 @@ function StepInstructionCard({
               onPress={onToggleTips}
               style={styles.stepTipToggle}
             >
-              <FontAwesome name="lightbulb-o" size={14} color={colors.primaryDark} />
+              <Feather name="zap" size={13} color={colors.primaryDark} />
               <Text style={styles.stepTipToggleText}>{tipLabel}</Text>
-              <FontAwesome name={expanded ? "angle-up" : "angle-down"} size={16} color={colors.primaryDark} />
+              <Feather name={expanded ? "chevron-up" : "chevron-down"} size={15} color={colors.primaryDark} />
             </Pressable>
             {expanded ? (
               <View style={styles.stepTipBlock}>
                 {tips.map((tip, tipIndex) => (
-                  <Text key={`${tip}-${tipIndex}`} style={[styles.stepTipText, { textAlign: align, writingDirection }]}>
+                  <Text key={`${tip}-${tipIndex}`} style={[styles.stepTipText, { writingDirection }]}>
                     {tip}
                   </Text>
                 ))}
@@ -675,6 +831,123 @@ function StepInstructionCard({
             ) : null}
           </View>
         ) : null}
+      </View>
+    </View>
+  );
+}
+
+function CookModeCard({
+  item,
+  index,
+  total,
+  expanded,
+  isRTL,
+  measurementSystem,
+  eyebrow,
+  stepFallbackLabel,
+  durationLabel,
+  tipLabel,
+  minuteLabel,
+  backLabel,
+  nextLabel,
+  doneLabel,
+  onToggleTips,
+  onBack,
+  onNext,
+  onDone,
+}: {
+  item: RecipeStep;
+  index: number;
+  total: number;
+  expanded: boolean;
+  isRTL: boolean;
+  measurementSystem: MeasurementSystem | null;
+  eyebrow: string;
+  stepFallbackLabel: string;
+  durationLabel: string | null;
+  tipLabel: string;
+  minuteLabel: string;
+  backLabel: string;
+  nextLabel: string;
+  doneLabel: string;
+  onToggleTips: () => void;
+  onBack: () => void;
+  onNext: () => void;
+  onDone: () => void;
+}) {
+  const writingDirection = isRTL ? "rtl" : "ltr";
+  const isLast = index >= total - 1;
+  // The duration gets its own timer pill, so leave it out of the plain meta pills.
+  const metaItems = formatStepMetaItems({ ...item, duration_minutes: undefined }, measurementSystem, minuteLabel);
+  const tips = item.tips?.filter((tip) => tip.trim()) ?? [];
+
+  return (
+    <View style={styles.cookCard}>
+      <Text style={[styles.cookEyebrow, !isRTL && styles.latinCaps, { writingDirection }]}>{eyebrow}</Text>
+      <View style={styles.cookProgressTrack}>
+        <View style={[styles.cookProgressFill, { width: `${((index + 1) / total) * 100}%` }]} />
+      </View>
+      <Text style={[styles.cookTitle, { writingDirection }]}>
+        {getSafeStepTitle(item, index, stepFallbackLabel)}
+      </Text>
+      <Text style={[styles.cookText, { writingDirection }]}>{item.text}</Text>
+
+      {durationLabel || metaItems.length ? (
+        <View style={styles.stepMetaWrap}>
+          {durationLabel ? (
+            <View style={styles.cookTimerPill}>
+              <MaterialCommunityIcons name="timer-outline" size={17} color={colors.gold} />
+              <Text style={styles.cookTimerText}>{durationLabel}</Text>
+            </View>
+          ) : null}
+          {metaItems.map((meta) => (
+            <View key={meta} style={styles.cookMetaPill}>
+              <Text style={[styles.cookMetaPillText, { writingDirection }]}>{meta}</Text>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {tips.length ? (
+        <View style={styles.stepTipSection}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ expanded }}
+            onPress={onToggleTips}
+            style={styles.cookTipToggle}
+          >
+            <Feather name="zap" size={13} color={colors.gold} />
+            <Text style={styles.cookTipToggleText}>{tipLabel}</Text>
+            <Feather name={expanded ? "chevron-up" : "chevron-down"} size={15} color={colors.gold} />
+          </Pressable>
+          {expanded ? (
+            <View style={styles.cookTipBlock}>
+              {tips.map((tip, tipIndex) => (
+                <Text key={`${tip}-${tipIndex}`} style={[styles.cookTipText, { writingDirection }]}>
+                  {tip}
+                </Text>
+              ))}
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
+      <View style={styles.cookActions}>
+        {index > 0 ? (
+          <Pressable accessibilityRole="button" onPress={onBack} style={styles.cookBackButton}>
+            <Text style={styles.cookBackText}>{backLabel}</Text>
+          </Pressable>
+        ) : null}
+        <Pressable accessibilityRole="button" onPress={isLast ? onDone : onNext} style={styles.cookNextButton}>
+          <Text style={styles.cookNextText} numberOfLines={1}>
+            {isLast ? doneLabel : nextLabel}
+          </Text>
+          <Feather
+            name={isLast ? "check" : isRTL ? "arrow-left" : "arrow-right"}
+            size={18}
+            color={colors.deep}
+          />
+        </Pressable>
       </View>
     </View>
   );
@@ -707,42 +980,41 @@ const styles = StyleSheet.create({
   errorTitle: {
     fontSize: 22,
     fontWeight: "800",
-    color: colors.warningText,
+    color: colors.ink,
+    textAlign: "center",
   },
   errorBody: {
     fontSize: 14,
-    color: colors.warningText,
+    color: colors.danger,
+    textAlign: "center",
   },
   outlineButton: {
     marginTop: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 1.5,
+    borderColor: colors.line,
     backgroundColor: colors.surface,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
   },
   outlineButtonText: {
-    color: colors.primaryDark,
-    fontWeight: "700",
+    color: colors.ink,
+    fontWeight: "800",
   },
   heroSection: {
-    height: 400,
+    height: 250,
     width: "100%",
     maxWidth: 896,
-    marginBottom: -48,
     overflow: "hidden",
-    position: "relative",
+    borderBottomLeftRadius: 32,
+    borderBottomRightRadius: 32,
+    backgroundColor: colors.warm,
   },
   heroImage: {
     width: "100%",
     height: "100%",
   },
-  heroOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(0,0,0,0.20)",
-  },
-  mobileOverlayNav: {
+  heroNav: {
     position: "absolute",
     left: 0,
     right: 0,
@@ -752,341 +1024,359 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
   },
-  navActions: {
+  heroActions: {
     flexDirection: "row",
     gap: 10,
   },
-  glassButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 999,
+  heroButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: "rgba(255,255,255,0.22)",
+    backgroundColor: colors.surface,
+    ...wasfaShadow.card,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
   },
-  contentCard: {
+  content: {
     width: "100%",
     maxWidth: 896,
-    backgroundColor: colors.card,
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderWidth: 1,
-    borderColor: colors.border,
-    paddingHorizontal: 25,
-    paddingTop: 33,
-    paddingBottom: 80,
-    gap: 24,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 15,
-    elevation: 6,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    gap: 20,
   },
   headerSection: {
-    gap: 24,
+    gap: 12,
   },
-  titleRow: {
+  tagRow: {
     flexDirection: "row",
-    alignItems: "flex-start",
-    justifyContent: "space-between",
-    gap: 14,
-  },
-  titleBlock: {
-    flex: 1,
-    minWidth: 0,
+    flexWrap: "wrap",
     gap: 8,
+  },
+  cuisinePill: {
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  cuisinePillText: {
+    color: colors.primaryDark,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 20,
+  },
+  mealTypePill: {
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.ctaSoft,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+  },
+  mealTypePillText: {
+    color: colors.cta,
+    fontSize: 13,
+    fontWeight: "700",
+    lineHeight: 20,
   },
   recipeTitle: {
-    color: colors.primaryDark,
-    fontSize: 22,
+    color: colors.ink,
+    fontSize: 28,
     fontWeight: "800",
-    lineHeight: 28,
+    lineHeight: 36,
+    textAlign: "left",
   },
   description: {
-    color: "#424940",
-    fontSize: 14,
+    color: colors.muted,
+    fontSize: 15,
     lineHeight: 22,
-  },
-  tagColumn: {
-    alignItems: "flex-end",
-    gap: 8,
-    maxWidth: 132,
-  },
-  mintPill: {
-    borderRadius: 999,
-    backgroundColor: colors.mint,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  mintPillText: {
-    color: colors.mintText,
-    fontSize: 13,
-    lineHeight: 20,
-  },
-  greenPill: {
-    borderRadius: 999,
-    backgroundColor: colors.softGreen,
-    paddingHorizontal: 12,
-    paddingVertical: 4,
-  },
-  greenPillText: {
-    color: colors.primary,
-    fontSize: 13,
-    lineHeight: 20,
+    textAlign: "left",
   },
   metaWrap: {
     flexDirection: "row",
     flexWrap: "wrap",
-    gap: 12,
+    alignItems: "center",
+    gap: 10,
+    marginTop: 4,
   },
-  metaPill: {
-    minHeight: 44,
+  timePill: {
+    height: 44,
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 17,
-    paddingVertical: 9,
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    backgroundColor: colors.soft,
+    paddingHorizontal: 16,
   },
-  metaPillText: {
-    color: colors.muted,
-    fontSize: 14,
-  },
-  servingsEditor: {
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    paddingHorizontal: 17,
-    paddingVertical: 7,
-  },
-  servingsInput: {
-    minWidth: 30,
-    color: colors.muted,
+  timePillText: {
+    color: colors.ink,
     fontSize: 14,
     fontWeight: "700",
-    padding: 0,
-    textAlign: "center",
   },
-  preferenceHint: {
+  servingsStepper: {
+    height: 44,
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.softGreen,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    gap: 10,
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: 6,
   },
-  preferenceHintText: {
-    flex: 1,
+  stepperButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: colors.surface,
+  },
+  servingsText: {
     color: colors.primaryDark,
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 14,
+    fontWeight: "800",
   },
   recalculationText: {
     color: colors.muted,
     fontSize: 13,
+    textAlign: "left",
+  },
+  segmentRow: {
+    flexDirection: "row",
+    gap: 10,
+  },
+  segmentButton: {
+    flex: 1,
+    height: 48,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    backgroundColor: colors.soft,
+    paddingHorizontal: 12,
+  },
+  segmentButtonActive: {
+    borderColor: colors.ink,
+    backgroundColor: colors.ink,
+  },
+  segmentText: {
+    flexShrink: 1,
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  segmentTextActive: {
+    color: "#FFFFFF",
   },
   sectionHeader: {
     width: "100%",
+    marginTop: 4,
   },
   sectionTitle: {
-    color: colors.primaryDark,
-    fontSize: 16,
-    lineHeight: 24,
-    fontWeight: "700",
-  },
-  nutritionGrid: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 12,
-  },
-  macroCard: {
-    minHeight: 65,
-    flexGrow: 1,
-    flexBasis: "30%",
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: 16,
-    borderWidth: 1,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-  },
-  macroWide: {
-    flexBasis: "100%",
-  },
-  macroGreen: {
-    backgroundColor: "rgba(232,245,224,0.6)",
-    borderColor: "rgba(90,138,90,0.2)",
-  },
-  macroRed: {
-    backgroundColor: "rgba(255,218,214,0.4)",
-    borderColor: "rgba(186,26,26,0.1)",
-  },
-  macroYellow: {
-    backgroundColor: "rgba(243,209,121,0.2)",
-    borderColor: "rgba(243,209,121,0.3)",
-  },
-  macroOrange: {
-    backgroundColor: "rgba(245,166,35,0.2)",
-    borderColor: "rgba(245,166,35,0.3)",
-  },
-  macroLabel: {
-    fontSize: 10,
+    color: colors.ink,
+    fontSize: 20,
+    lineHeight: 26,
     fontWeight: "800",
-    textTransform: "uppercase",
-    letterSpacing: 0.5,
-    lineHeight: 15,
-  },
-  macroValue: {
-    fontSize: 16,
-    lineHeight: 24,
-  },
-  macroGreenText: {
-    color: colors.primaryDark,
-  },
-  macroRedText: {
-    color: "#93000A",
-  },
-  macroYellowText: {
-    color: colors.text,
-  },
-  macroOrangeText: {
-    color: colors.yellow,
+    textAlign: "left",
   },
   ingredientsList: {
-    gap: 12,
+    gap: 10,
   },
   ingredientRow: {
-    minHeight: 52,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: colors.line,
     backgroundColor: colors.surface,
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "space-between",
     gap: 12,
-    padding: 13,
+    padding: 12,
   },
-  ingredientLeft: {
-    flex: 1,
-    minWidth: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 12,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 5,
-    borderWidth: 1,
-    borderColor: colors.primary,
-    backgroundColor: "#FFFFFF",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  checkboxChecked: {
-    backgroundColor: colors.primary,
+  ingredientRowChecked: {
+    opacity: 0.45,
   },
   ingredientNameBlock: {
     flex: 1,
     minWidth: 0,
-    gap: 4,
+    gap: 2,
   },
   ingredientTitleLine: {
+    flexDirection: "row",
     alignItems: "center",
     flexWrap: "wrap",
     gap: 8,
   },
+  ingredientAmount: {
+    flexShrink: 1,
+    color: colors.ink,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: "800",
+    textAlign: "left",
+  },
   ingredientName: {
     flexShrink: 1,
-    color: colors.text,
-    fontSize: 16,
-    lineHeight: 24,
+    color: colors.muted,
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: "left",
+  },
+  strikeText: {
+    textDecorationLine: "line-through",
   },
   estimatedIngredientBadge: {
     alignSelf: "flex-start",
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(245,166,35,0.26)",
-    backgroundColor: "rgba(245,166,35,0.16)",
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.ctaSoft,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
   estimatedIngredientText: {
-    color: colors.yellow,
+    color: colors.cta,
     fontSize: 10,
     fontWeight: "800",
-    letterSpacing: 0.3,
-    textTransform: "uppercase",
   },
-  ingredientAmount: {
-    color: colors.muted,
-    fontSize: 15,
-    lineHeight: 22,
-    textAlign: "right",
+  // Letter spacing breaks Arabic letter joining, so caps styling is Latin-only.
+  latinCaps: {
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
   },
   notePill: {
     alignSelf: "flex-start",
-    borderRadius: 4,
+    borderRadius: wasfaRadius.pill,
     borderWidth: 1,
-    borderColor: colors.warningBorder,
-    backgroundColor: colors.warningBg,
+    borderColor: colors.dangerBorder,
+    backgroundColor: colors.dangerSoft,
     paddingHorizontal: 9,
     paddingVertical: 3,
   },
   notePillText: {
-    color: colors.warningText,
+    color: colors.danger,
     fontSize: 10,
     fontWeight: "800",
   },
   warningBlock: {
     alignItems: "flex-start",
     gap: 3,
+    marginTop: 4,
   },
   warningDetail: {
-    color: colors.warningText,
+    color: colors.danger,
     fontSize: 12,
     lineHeight: 16,
+    textAlign: "left",
   },
   warningSuggestion: {
     color: colors.primaryDark,
     fontSize: 12,
     lineHeight: 16,
+    textAlign: "left",
+  },
+  preferenceHint: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginTop: -8,
+    paddingHorizontal: 4,
+  },
+  preferenceHintText: {
+    flex: 1,
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 17,
+    textAlign: "left",
+  },
+  planSection: {
+    gap: 8,
+  },
+  plannedButton: {
+    height: 56,
+    borderRadius: wasfaRadius.pill,
+    paddingHorizontal: 24,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    backgroundColor: colors.primarySoft,
+  },
+  plannedButtonText: {
+    color: colors.primaryDark,
+    fontSize: 17,
+    fontWeight: "800",
+  },
+  planNotice: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 18,
+    textAlign: "center",
+  },
+  nutritionGrid: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+  },
+  macroCard: {
+    minHeight: 68,
+    flexGrow: 1,
+    flexBasis: "30%",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 2,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: colors.line,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+  },
+  macroWide: {
+    flexBasis: "100%",
+    borderColor: colors.ctaSoft,
+    backgroundColor: colors.ctaSoft,
+  },
+  macroValue: {
+    color: colors.ink,
+    fontSize: 18,
+    lineHeight: 24,
+    fontWeight: "800",
+  },
+  macroWideValue: {
+    color: colors.cta,
+    fontSize: 22,
+    lineHeight: 28,
+  },
+  macroLabel: {
+    color: colors.muted,
+    fontSize: 12,
+    fontWeight: "700",
+    lineHeight: 16,
   },
   stepsList: {
-    gap: 16,
+    gap: 10,
   },
   stepCard: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: colors.border,
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: colors.line,
     backgroundColor: colors.surface,
     flexDirection: "row",
     alignItems: "flex-start",
-    gap: 16,
-    padding: 17,
+    gap: 12,
+    padding: 16,
   },
   stepBadge: {
     width: 32,
     height: 32,
-    borderRadius: 999,
+    borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
-    backgroundColor: colors.primary,
+    backgroundColor: colors.primarySoft,
   },
   stepBadgeText: {
-    color: "#FFFFFF",
+    color: colors.primaryDark,
     fontWeight: "800",
     fontSize: 14,
   },
@@ -1096,21 +1386,23 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   stepTitle: {
-    color: colors.primaryDark,
+    color: colors.ink,
     fontSize: 17,
     lineHeight: 23,
     fontWeight: "800",
+    textAlign: "left",
   },
   stepMetaWrap: {
+    flexDirection: "row",
     flexWrap: "wrap",
     gap: 8,
   },
   stepMetaPill: {
     alignSelf: "flex-start",
-    borderRadius: 999,
+    borderRadius: wasfaRadius.pill,
     borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: "rgba(255,255,255,0.55)",
+    borderColor: colors.line,
+    backgroundColor: colors.soft,
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
@@ -1121,26 +1413,21 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   stepText: {
-    color: colors.text,
+    color: colors.ink,
     fontSize: 16,
     lineHeight: 26,
-  },
-  stepMeta: {
-    color: colors.muted,
-    fontSize: 13,
-    marginTop: 6,
+    textAlign: "left",
   },
   stepTipSection: {
     gap: 8,
   },
   stepTipToggle: {
     alignSelf: "flex-start",
+    flexDirection: "row",
     alignItems: "center",
     gap: 6,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "rgba(90,138,90,0.22)",
-    backgroundColor: "rgba(232,245,224,0.65)",
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.primarySoft,
     paddingHorizontal: 11,
     paddingVertical: 6,
   },
@@ -1150,49 +1437,210 @@ const styles = StyleSheet.create({
     fontWeight: "800",
   },
   stepTipBlock: {
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "rgba(90,138,90,0.16)",
-    backgroundColor: "rgba(232,245,224,0.45)",
+    borderRadius: wasfaRadius.sm,
+    backgroundColor: colors.primarySoft,
     paddingHorizontal: 12,
     paddingVertical: 10,
     gap: 6,
   },
   stepTipText: {
-    color: "#424940",
+    color: colors.ink,
     fontSize: 14,
     lineHeight: 20,
+    textAlign: "left",
   },
   chefTipCard: {
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: "rgba(90,138,90,0.2)",
-    backgroundColor: "rgba(232,245,224,0.5)",
+    borderRadius: 24,
+    backgroundColor: colors.warm,
+    flexDirection: "row",
     alignItems: "center",
-    gap: 12,
+    gap: 14,
     overflow: "hidden",
-    padding: 25,
+    padding: 18,
   },
   tipMascot: {
-    width: 96,
-    height: 150,
+    width: 64,
+    height: 100,
+  },
+  tipBody: {
+    flex: 1,
+    minWidth: 0,
+    gap: 6,
   },
   tipTitleRow: {
     flexDirection: "row",
     alignItems: "center",
-    justifyContent: "center",
     gap: 8,
   },
   tipTitle: {
-    color: colors.primaryDark,
+    color: colors.ink,
     fontSize: 16,
-    fontWeight: "700",
+    fontWeight: "800",
   },
   tipText: {
-    color: "#424940",
+    color: colors.muted,
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: "left",
+  },
+  cookCard: {
+    minHeight: 290,
+    borderRadius: wasfaRadius.xl,
+    backgroundColor: colors.deep,
+    padding: 24,
+    gap: 14,
+  },
+  cookEyebrow: {
+    color: colors.onDeepSoft,
+    fontSize: 12,
+    fontWeight: "800",
+    textAlign: "left",
+  },
+  cookProgressTrack: {
+    height: 6,
+    borderRadius: 3,
+    overflow: "hidden",
+    flexDirection: "row",
+    backgroundColor: colors.onDeepFill,
+  },
+  cookProgressFill: {
+    height: "100%",
+    borderRadius: 3,
+    backgroundColor: colors.gold,
+  },
+  cookTitle: {
+    color: colors.onDeep,
+    fontSize: 26,
+    lineHeight: 33,
+    fontWeight: "800",
+    textAlign: "left",
+  },
+  cookText: {
+    color: colors.onDeepSoft,
+    fontSize: 18,
+    lineHeight: 28,
+    textAlign: "left",
+  },
+  cookTimerPill: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.onDeepFill,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  cookTimerText: {
+    color: colors.onDeep,
+    fontSize: 14,
+    fontWeight: "800",
+  },
+  cookMetaPill: {
+    alignSelf: "flex-start",
+    justifyContent: "center",
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 1,
+    borderColor: colors.onDeepLine,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  cookMetaPillText: {
+    color: colors.onDeepSoft,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+  },
+  cookTipToggle: {
+    alignSelf: "flex-start",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.onDeepFill,
+    paddingHorizontal: 11,
+    paddingVertical: 6,
+  },
+  cookTipToggleText: {
+    color: colors.gold,
+    fontSize: 12,
+    fontWeight: "800",
+  },
+  cookTipBlock: {
+    borderRadius: wasfaRadius.sm,
+    backgroundColor: colors.onDeepFill,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 6,
+  },
+  cookTipText: {
+    color: colors.onDeep,
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: "left",
+  },
+  cookActions: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    marginTop: "auto",
+    paddingTop: 6,
+  },
+  cookBackButton: {
+    height: 52,
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 1.5,
+    borderColor: colors.onDeepLine,
+    paddingHorizontal: 22,
+  },
+  cookBackText: {
+    color: colors.onDeep,
     fontSize: 16,
-    lineHeight: 26,
+    fontWeight: "800",
+  },
+  cookNextButton: {
+    flex: 1,
+    height: 52,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: colors.gold,
+    paddingHorizontal: 18,
+  },
+  cookNextText: {
+    flexShrink: 1,
+    color: colors.deep,
+    fontSize: 16,
+    fontWeight: "800",
+  },
+  cookDots: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+    marginTop: -4,
+  },
+  cookDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.line,
+  },
+  cookDotActive: {
+    width: 24,
+    backgroundColor: colors.primary,
+  },
+  emptyStepsText: {
+    color: colors.muted,
+    fontSize: 15,
+    lineHeight: 22,
     textAlign: "center",
+    paddingVertical: 32,
   },
   disabledButton: {
     opacity: 0.6,

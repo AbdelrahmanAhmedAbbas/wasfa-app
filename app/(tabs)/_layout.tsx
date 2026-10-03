@@ -1,36 +1,31 @@
 import Feather from "@expo/vector-icons/Feather";
-import * as ExpoFont from "expo-font";
 import type { BottomTabBarProps } from "@react-navigation/bottom-tabs";
 import { Tabs } from "expo-router";
-import React, { useEffect, useMemo } from "react";
+import React from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, {
-  Easing,
-  ReduceMotion,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withTiming,
-} from "react-native-reanimated";
+import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
 
-import { useClientOnlyValue } from "@/components/useClientOnlyValue";
-import { getTabBarVisualIndex, getTabBarVisualRouteNames } from "@/lib/home/home-screen";
+import { LocalizedText as Text } from "@/components/LocalizedText";
+import { ImportSheetProvider, useImportSheet } from "@/components/import/ImportSheetContext";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
-import { brandFontFamily } from "@/lib/theme/fonts";
-import { onboardingColors } from "@/lib/theme/onboarding";
+import {
+  TAB_BAR_BOTTOM_GAP,
+  TAB_BAR_HEIGHT,
+  wasfaColors,
+  wasfaShadow,
+} from "@/lib/theme/wasfa";
 
 const TAB_CONFIG = {
   index: { labelKey: "tabHome", fallbackLabel: "Home", icon: "home" },
   planner: { labelKey: "tabPlanner", fallbackLabel: "Planner", icon: "calendar" },
-  grocery: { labelKey: "tabGrocery", fallbackLabel: "Grocery", icon: "shopping-cart" },
+  grocery: { labelKey: "tabGrocery", fallbackLabel: "Grocery", icon: "shopping-bag" },
   profile: { labelKey: "tabProfile", fallbackLabel: "Profile", icon: "user" },
 } as const;
 
 type TabRouteName = keyof typeof TAB_CONFIG;
 
-const ACTIVE_EASING = Easing.bezier(0.22, 1, 0.36, 1);
-const DOCK_HEIGHT = 74;
+const TAB_LAYOUT_TRANSITION = LinearTransition.duration(220);
 
 type TabBarItemProps = {
   label: string;
@@ -40,7 +35,6 @@ type TabBarItemProps = {
   onLongPress: () => void;
   accessibilityLabel?: string;
   testID?: string;
-  tabLabelFontFamily?: string;
 };
 
 function TabBarItem({
@@ -51,147 +45,56 @@ function TabBarItem({
   onLongPress,
   accessibilityLabel,
   testID,
-  tabLabelFontFamily,
 }: TabBarItemProps) {
-  const reduceMotionEnabled = useReducedMotion();
-  const selectedProgress = useSharedValue(isFocused ? 1 : 0);
-  const pressedScale = useSharedValue(1);
-
-  useEffect(() => {
-    selectedProgress.value = withTiming(isFocused ? 1 : 0, {
-      duration: reduceMotionEnabled ? 0 : 220,
-      easing: ACTIVE_EASING,
-      reduceMotion: ReduceMotion.System,
-    });
-  }, [isFocused, reduceMotionEnabled, selectedProgress]);
-
-  const contentStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: pressedScale.value * (1 + selectedProgress.value * 0.02) }],
-  }));
-
-  const iconStyle = useAnimatedStyle(() => ({
-    opacity: 0.72 + selectedProgress.value * 0.28,
-    transform: [{ translateY: selectedProgress.value * -1 }],
-  }));
-
-  const labelStyle = useAnimatedStyle(() => ({
-    opacity: 0.8 + selectedProgress.value * 0.2,
-  }));
-
-  const handlePressIn = () => {
-    pressedScale.value = withTiming(reduceMotionEnabled ? 1 : 0.96, {
-      duration: reduceMotionEnabled ? 0 : 90,
-      reduceMotion: ReduceMotion.System,
-    });
-  };
-
-  const handlePressOut = () => {
-    pressedScale.value = withTiming(1, {
-      duration: reduceMotionEnabled ? 0 : 140,
-      easing: ACTIVE_EASING,
-      reduceMotion: ReduceMotion.System,
-    });
-  };
-
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={isFocused ? { selected: true } : {}}
-      accessibilityLabel={accessibilityLabel}
+      accessibilityLabel={accessibilityLabel ?? label}
       testID={testID}
       onPress={onPress}
       onLongPress={onLongPress}
-      onPressIn={handlePressIn}
-      onPressOut={handlePressOut}
-      style={styles.pressable}
     >
-      <Animated.View style={[styles.tabButton, contentStyle]}>
-        <Animated.View style={iconStyle}>
-          <Feather name={icon} size={18} color={isFocused ? "#FFFFFF" : "#9A938C"} />
-        </Animated.View>
-        <Animated.Text
-          style={[
-            styles.tabLabel,
-            isFocused && styles.tabLabelActive,
-            tabLabelFontFamily ? { fontFamily: tabLabelFontFamily } : undefined,
-            labelStyle,
-          ]}
-        >
-          {label}
-        </Animated.Text>
+      {/* Only the active tab shows its label; the pill grows to fit it. */}
+      <Animated.View
+        layout={TAB_LAYOUT_TRANSITION}
+        style={[styles.tab, isFocused ? styles.tabActive : styles.tabInactive]}
+      >
+        <Feather name={icon} size={21} color={isFocused ? "#FFFFFF" : "rgba(255,255,255,0.6)"} />
+        {isFocused ? (
+          <Animated.View entering={FadeIn.duration(180)}>
+            <Text numberOfLines={1} style={styles.tabLabel}>
+              {label}
+            </Text>
+          </Animated.View>
+        ) : null}
       </Animated.View>
     </Pressable>
   );
 }
 
-function CustomTabBar({
-  state,
-  descriptors,
-  navigation,
-  tabLabelFontFamily,
-}: BottomTabBarProps & { tabLabelFontFamily?: string }) {
-  const { isRTL } = useLanguage();
+function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
+  const { t } = useLanguage();
   const insets = useSafeAreaInsets();
-  const reduceMotionEnabled = useReducedMotion();
+  const importSheet = useImportSheet();
   const visibleRoutes = state.routes.filter((route) => route.name in TAB_CONFIG) as Array<
     typeof state.routes[number] & { name: TabRouteName }
   >;
-  const visibleRouteNames = useMemo(
-    () => visibleRoutes.map((route) => route.name),
-    [visibleRoutes]
-  );
-  const visualRoutes = useMemo(
-    () => getTabBarVisualRouteNames(visibleRoutes, isRTL),
-    [isRTL, visibleRoutes]
-  );
-  const activeIndex = useSharedValue(state.index);
-  const rowWidth = useSharedValue(0);
   const activeRouteName = state.routes[state.index]?.name as TabRouteName | undefined;
   // Keep the bar floating (absolute, zero layout height) but give the root a real
   // frame that fully contains the dock. A zero-height absoluteFill root leaves the
   // dock painted outside its ancestor bounds, which iOS 27 hit-testing rejects.
-  const bottomOffset = Math.max(insets.bottom - 4, 8);
-  const tabBarTouchHeight = DOCK_HEIGHT + bottomOffset;
-
-  useEffect(() => {
-    const visualIndex =
-      activeRouteName == null
-        ? 0
-        : Math.max(getTabBarVisualIndex(activeRouteName, visibleRouteNames, isRTL), 0);
-
-    activeIndex.value = withTiming(visualIndex, {
-      duration: reduceMotionEnabled ? 0 : 260,
-      easing: ACTIVE_EASING,
-      reduceMotion: ReduceMotion.System,
-    });
-  }, [activeIndex, activeRouteName, isRTL, reduceMotionEnabled, visibleRouteNames]);
-
-  const activePillStyle = useAnimatedStyle(() => {
-    const slotWidth = visibleRoutes.length > 0 ? rowWidth.value / visibleRoutes.length : 0;
-    const pillWidth = Math.max(slotWidth - 18, 82);
-
-    return {
-      opacity: slotWidth > 0 ? 1 : 0,
-      width: pillWidth,
-      transform: [
-        {
-          translateX: slotWidth > 0 ? activeIndex.value * slotWidth + (slotWidth - pillWidth) / 2 : 0,
-        },
-      ],
-    };
-  });
+  const bottomOffset = Math.max(insets.bottom, TAB_BAR_BOTTOM_GAP);
 
   return (
-    <View pointerEvents="box-none" style={[styles.outerFrame, { height: tabBarTouchHeight }]}>
-      <View style={styles.dock}>
-        <View
-          style={styles.dockRow}
-          onLayout={(event) => {
-            rowWidth.value = event.nativeEvent.layout.width;
-          }}
-        >
-          <Animated.View pointerEvents="none" style={[styles.activePill, activePillStyle]} />
-          {visualRoutes.map((route) => {
+    <View
+      pointerEvents="box-none"
+      style={[styles.outerFrame, { height: TAB_BAR_HEIGHT + bottomOffset }]}
+    >
+      {/* A plain row: the root direction mirrors the tab order and add button in Arabic. */}
+      <View style={styles.row}>
+        <Animated.View layout={TAB_LAYOUT_TRANSITION} style={styles.dock}>
+          {visibleRoutes.map((route) => {
             const config = TAB_CONFIG[route.name];
             const descriptor = descriptors[route.key];
             const isFocused = activeRouteName === route.name;
@@ -229,64 +132,56 @@ function CustomTabBar({
                 onLongPress={onLongPress}
                 accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
                 testID={descriptor.options.tabBarButtonTestID}
-                tabLabelFontFamily={tabLabelFontFamily}
               />
             );
           })}
-        </View>
+        </Animated.View>
+
+        <Animated.View layout={TAB_LAYOUT_TRANSITION}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={t("homeNewRecipe")}
+            onPress={importSheet.open}
+            style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
+          >
+            <Feather name="plus" size={26} color="#FFFFFF" />
+          </Pressable>
+        </Animated.View>
       </View>
     </View>
   );
 }
 
 export default function TabLayout() {
-  const { t, language } = useLanguage();
-  const tabLabelFontFamily =
-    language === "ar" && ExpoFont.isLoaded(brandFontFamily.arabic)
-      ? brandFontFamily.arabic
-      : language !== "ar" && ExpoFont.isLoaded(brandFontFamily.english)
-        ? brandFontFamily.english
-        : undefined;
+  const { t } = useLanguage();
 
   return (
-    <Tabs
-      tabBar={(props) => (
-        <CustomTabBar
-          {...props}
-          tabLabelFontFamily={tabLabelFontFamily}
-        />
-      )}
-      screenOptions={{
-        headerShown: useClientOnlyValue(false, true),
-        animation: "fade",
-      }}
-    >
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: t(TAB_CONFIG.index.labelKey) || TAB_CONFIG.index.fallbackLabel,
+    <ImportSheetProvider>
+      <Tabs
+        tabBar={(props) => <CustomTabBar {...props} />}
+        screenOptions={{
           headerShown: false,
+          animation: "fade",
         }}
-      />
-      <Tabs.Screen
-        name="planner"
-        options={{
-          title: t(TAB_CONFIG.planner.labelKey) || TAB_CONFIG.planner.fallbackLabel,
-        }}
-      />
-      <Tabs.Screen
-        name="grocery"
-        options={{
-          title: t(TAB_CONFIG.grocery.labelKey) || TAB_CONFIG.grocery.fallbackLabel,
-        }}
-      />
-      <Tabs.Screen
-        name="profile"
-        options={{
-          title: t(TAB_CONFIG.profile.labelKey) || TAB_CONFIG.profile.fallbackLabel,
-        }}
-      />
-    </Tabs>
+      >
+        <Tabs.Screen
+          name="index"
+          options={{ title: t(TAB_CONFIG.index.labelKey) || TAB_CONFIG.index.fallbackLabel }}
+        />
+        <Tabs.Screen
+          name="planner"
+          options={{ title: t(TAB_CONFIG.planner.labelKey) || TAB_CONFIG.planner.fallbackLabel }}
+        />
+        <Tabs.Screen
+          name="grocery"
+          options={{ title: t(TAB_CONFIG.grocery.labelKey) || TAB_CONFIG.grocery.fallbackLabel }}
+        />
+        <Tabs.Screen
+          name="profile"
+          options={{ title: t(TAB_CONFIG.profile.labelKey) || TAB_CONFIG.profile.fallbackLabel }}
+        />
+      </Tabs>
+    </ImportSheetProvider>
   );
 }
 
@@ -296,67 +191,58 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+    alignItems: "center",
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
   },
   dock: {
-    marginHorizontal: 14,
-    direction: "ltr",
-    height: DOCK_HEIGHT,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: "#D7E3F5",
-    backgroundColor: "#FFFFFF",
-    shadowColor: "#87A7D2",
-    shadowOpacity: 0.16,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
-    elevation: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 8,
-    justifyContent: "center",
-  },
-  dockRow: {
-    flex: 1,
+    height: TAB_BAR_HEIGHT,
+    padding: 6,
+    borderRadius: 999,
+    backgroundColor: wasfaColors.deep,
     flexDirection: "row",
-    direction: "ltr",
     alignItems: "center",
-    position: "relative",
-  },
-  pressable: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    zIndex: 1,
-  },
-  tabButton: {
-    minWidth: 68,
-    height: 56,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
     gap: 4,
+    ...wasfaShadow.floating,
   },
-  activePill: {
-    position: "absolute",
-    left: 0,
-    height: 56,
-    borderRadius: 12,
-    backgroundColor: onboardingColors.primary,
-    shadowColor: onboardingColors.primaryDark,
-    shadowOpacity: 0.14,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 4,
+  tab: {
+    height: 48,
+    borderRadius: 999,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  tabActive: {
+    paddingHorizontal: 14,
+    backgroundColor: wasfaColors.cta,
+  },
+  tabInactive: {
+    width: 46,
   },
   tabLabel: {
-    fontSize: 11,
-    lineHeight: 12,
-    fontWeight: "600",
-    color: "#9A938C",
-    textAlign: "center",
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#FFFFFF",
     includeFontPadding: false,
   },
-  tabLabelActive: {
-    color: "#FFFFFF",
-    fontWeight: "700",
+  addButton: {
+    width: TAB_BAR_HEIGHT,
+    height: TAB_BAR_HEIGHT,
+    borderRadius: TAB_BAR_HEIGHT / 2,
+    backgroundColor: wasfaColors.cta,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000000",
+    shadowOpacity: 0.22,
+    shadowRadius: 26,
+    shadowOffset: { width: 0, height: 12 },
+    elevation: 10,
+  },
+  addButtonPressed: {
+    opacity: 0.85,
   },
 });
