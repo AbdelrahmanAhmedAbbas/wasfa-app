@@ -75,6 +75,17 @@ export function removeRecipeFromPlan(plan: MealPlan, dayKey: string, recipeId: s
   );
 }
 
+/** Moves a recipe between days; a recipe already on the target day is not duplicated. */
+export function moveRecipeInPlan(
+  plan: MealPlan,
+  fromDayKey: string,
+  toDayKey: string,
+  recipeId: string
+): MealPlan {
+  if (fromDayKey === toDayKey || !getPlanDay(plan, fromDayKey).includes(recipeId)) return plan;
+  return addRecipeToPlan(removeRecipeFromPlan(plan, fromDayKey, recipeId), toDayKey, recipeId);
+}
+
 /** True when the recipe sits in the unscheduled bucket or on any of `dayKeys`. */
 export function isRecipePlanned(plan: MealPlan, recipeId: string, dayKeys: string[]): boolean {
   return [ANY_DAY, ...dayKeys].some((dayKey) => getPlanDay(plan, dayKey).includes(recipeId));
