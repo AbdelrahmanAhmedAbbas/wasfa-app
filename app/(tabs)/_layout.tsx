@@ -9,6 +9,10 @@ import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ImportSheetProvider, useImportSheet } from "@/components/import/ImportSheetContext";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { countPlannedMeals, getWeekDates, toDateKey } from "@/lib/planner/plan";
+import { useMealPlan } from "@/lib/planner/storage";
+import { toArabicIndicDigits } from "@/lib/recipes/numerals";
+import { useShoppingBadgeCount } from "@/lib/shopping/badge";
 import {
   TAB_BAR_BOTTOM_GAP,
   TAB_BAR_HEIGHT,
@@ -31,6 +35,8 @@ type TabBarItemProps = {
   label: string;
   icon: React.ComponentProps<typeof Feather>["name"];
   isFocused: boolean;
+  /** Shown on the icon's corner; omitted when there is nothing to count. */
+  badge?: string;
   onPress: () => void;
   onLongPress: () => void;
   accessibilityLabel?: string;
@@ -41,16 +47,19 @@ function TabBarItem({
   label,
   icon,
   isFocused,
+  badge,
   onPress,
   onLongPress,
   accessibilityLabel,
   testID,
 }: TabBarItemProps) {
+  const name = accessibilityLabel ?? label;
+
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityState={isFocused ? { selected: true } : {}}
-      accessibilityLabel={accessibilityLabel ?? label}
+      accessibilityLabel={badge ? `${name}, ${badge}` : name}
       testID={testID}
       onPress={onPress}
       onLongPress={onLongPress}
@@ -60,7 +69,14 @@ function TabBarItem({
         layout={TAB_LAYOUT_TRANSITION}
         style={[styles.tab, isFocused ? styles.tabActive : styles.tabInactive]}
       >
-        <Feather name={icon} size={21} color={isFocused ? "#FFFFFF" : "rgba(255,255,255,0.6)"} />
+        <View>
+          <Feather name={icon} size={21} color={isFocused ? "#FFFFFF" : "rgba(255,255,255,0.6)"} />
+          {badge ? (
+            <View style={[styles.badge, isFocused ? styles.badgeOnActive : styles.badgeOnInactive]}>
+              <Text style={[styles.badgeText, isFocused && styles.badgeTextOnActive]}>{badge}</Text>
+            </View>
+          ) : null}
+        </View>
         {isFocused ? (
           <Animated.View entering={FadeIn.duration(180)}>
             <Text numberOfLines={1} style={styles.tabLabel}>
@@ -73,10 +89,24 @@ function TabBarItem({
   );
 }
 
+function formatBadge(count: number, language: "en" | "ar"): string | undefined {
+  if (count <= 0) return undefined;
+  const text = count > 99 ? "99+" : String(count);
+  return language === "ar" ? toArabicIndicDigits(text) : text;
+}
+
 function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const insets = useSafeAreaInsets();
   const importSheet = useImportSheet();
+  const { plan } = useMealPlan();
+  const itemsToBuy = useShoppingBadgeCount();
+  // The same meals the menu screen counts: unscheduled ones plus this week's.
+  const plannedMeals = countPlannedMeals(plan, getWeekDates(new Date()).map(toDateKey));
+  const badges: Partial<Record<TabRouteName, string | undefined>> = {
+    planner: formatBadge(plannedMeals, language),
+    grocery: formatBadge(itemsToBuy, language),
+  };
   const visibleRoutes = state.routes.filter((route) => route.name in TAB_CONFIG) as Array<
     typeof state.routes[number] & { name: TabRouteName }
   >;
@@ -128,6 +158,7 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
                 label={label}
                 icon={config.icon}
                 isFocused={isFocused}
+                badge={badges[route.name]}
                 onPress={onPress}
                 onLongPress={onLongPress}
                 accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
@@ -228,6 +259,33 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: "#FFFFFF",
     includeFontPadding: false,
+  },
+  badge: {
+    position: "absolute",
+    top: -7,
+    end: -10,
+    minWidth: 17,
+    height: 17,
+    paddingHorizontal: 4,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  badgeOnInactive: {
+    backgroundColor: wasfaColors.cta,
+  },
+  badgeOnActive: {
+    backgroundColor: "#FFFFFF",
+  },
+  badgeText: {
+    fontSize: 10,
+    lineHeight: 13,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    includeFontPadding: false,
+  },
+  badgeTextOnActive: {
+    color: wasfaColors.cta,
   },
   addButton: {
     width: TAB_BAR_HEIGHT,

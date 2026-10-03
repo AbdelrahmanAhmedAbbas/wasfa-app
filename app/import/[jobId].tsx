@@ -1,16 +1,16 @@
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, Image, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Animated, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { ImportLoader } from "@/components/import/ImportLoader";
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { getImportJob } from "@/lib/import/client";
 import { getImportErrorTranslationKey } from "@/lib/import/errors";
 import { shouldRedirectImportHome } from "@/lib/import/navigation";
-import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors } from "@/lib/theme/wasfa";
 
 const POLL_INTERVAL_MS = 2500;
@@ -20,13 +20,10 @@ const STAGE_LABELS: Record<string, { en: string; ar: string }> = {
   cache_lookup: { en: "Checking for a saved import...", ar: "نبحث عن استيراد محفوظ..." },
   metadata_fetch: { en: "Fetching post details...", ar: "نجلب تفاصيل المنشور..." },
   media_access_check: { en: "Checking the source media...", ar: "نتأكد من ملف الفيديو..." },
-  tiktok_apify_transcript_used: { en: "Using the source transcript...", ar: "نستخدم النص المرفق مع الفيديو..." },
   audio_extract: { en: "Preparing audio for transcription...", ar: "نجهّز الصوت للتفريغ..." },
   openrouter_transcribe: { en: "Transcribing the recipe audio...", ar: "نفرّغ صوت الوصفة..." },
   openrouter_transcribe_skipped: { en: "Skipping audio transcription...", ar: "نتجاوز تفريغ الصوت..." },
   openrouter_transcribe_failed: { en: "Transcript failed, using the available text...", ar: "تعذّر التفريغ، ونستخدم النص المتاح..." },
-  youtube_short_read: { en: "Watching the Short...", ar: "نشاهد الشورت..." },
-  youtube_short_read_failed: { en: "Couldn't watch the Short, using the available text...", ar: "تعذّرت مشاهدة الشورت، ونستخدم النص المتاح..." },
   gemini_parse: { en: "Extracting the recipe...", ar: "نستخرج الوصفة..." },
   web_measurement_fill: { en: "Filling ingredient amounts...", ar: "نكمّل مقادير المكونات..." },
   post_extraction_parallel: { en: "Generating the final recipe...", ar: "نجهّز الوصفة النهائية..." },
@@ -51,13 +48,10 @@ const CHECKLIST_STEPS: { labelKey: TranslationKey; stages: string[] }[] = [
   {
     labelKey: "importStageTranscribe",
     stages: [
-      "tiktok_apify_transcript_used",
       "audio_extract",
       "openrouter_transcribe",
       "openrouter_transcribe_skipped",
       "openrouter_transcribe_failed",
-      "youtube_short_read",
-      "youtube_short_read_failed",
     ],
   },
   {
@@ -171,13 +165,7 @@ export default function ImportJobScreen() {
       ]}
       showsVerticalScrollIndicator={false}
     >
-      <View style={styles.mascotCircle}>
-        <Image
-          source={onboardingImages.mascotTyping}
-          style={styles.mascot}
-          resizeMode="contain"
-        />
-      </View>
+      <ImportLoader />
 
       <Text style={[styles.kicker, !isRTL && styles.kickerLatin, { writingDirection }]}>
         {t("importProgressKicker")}
@@ -230,19 +218,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     paddingHorizontal: 28,
     gap: 16,
-  },
-  mascotCircle: {
-    width: 230,
-    height: 230,
-    borderRadius: 115,
-    backgroundColor: wasfaColors.primarySoft,
-    alignItems: "center",
-    justifyContent: "flex-end",
-    overflow: "hidden",
-  },
-  mascot: {
-    width: 210,
-    height: 210,
   },
   kicker: {
     fontSize: 13,

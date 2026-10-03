@@ -1,35 +1,41 @@
 import { supabase } from "@/lib/supabase/client";
-import type { OnboardingAnswers } from "./answers";
+import {
+  EMPTY_ONBOARDING_ANSWERS,
+  getCachedProfile,
+  setCachedProfile,
+  type OnboardingAnswers,
+} from "./answers";
 import {
   buildOnboardingProfilePayload,
-  shouldRetryLegacyOnboardingProfileUpsert,
+  getMissingOnboardingProfileColumn,
+  mapOnboardingProfileRow,
+  type OnboardingProfileColumn,
 } from "./supabase-compat";
 
+/**
+ * Saves the given profile fields for the user and leaves every other field as
+ * it is. The device copy is updated as well.
+ */
 export async function saveOnboardingProfile(
   userId: string,
-  answers: OnboardingAnswers
+  fields: Partial<OnboardingAnswers>
 ): Promise<void> {
-  const { error } = await supabase
-    .from("onboarding_profiles")
-    .upsert(buildOnboardingProfilePayload(userId, answers));
+  const omitted: OnboardingProfileColumn[] = [];
 
-  if (!error) {
-    return;
-  }
-
-  if (shouldRetryLegacyOnboardingProfileUpsert(error)) {
-    const { error: legacyError } = await supabase
+  for (;;) {
+    const { error } = await supabase
       .from("onboarding_profiles")
-      .upsert(buildOnboardingProfilePayload(userId, answers, false));
+      .upsert(buildOnboardingProfilePayload(userId, fields, omitted));
 
-    if (!legacyError) {
-      return;
-    }
+    if (!error) break;
 
-    throw legacyError;
+    const missingColumn = getMissingOnboardingProfileColumn(error);
+    if (!missingColumn || omitted.includes(missingColumn)) throw error;
+    omitted.push(missingColumn);
   }
 
-  throw error;
+  const cached = (await getCachedProfile(userId)) ?? EMPTY_ONBOARDING_ANSWERS;
+  await setCachedProfile(userId, { ...cached, ...fields });
 }
 
 export async function getOnboardingProfile(
@@ -52,16 +58,8 @@ export async function getOnboardingProfile(
     return null;
   }
 
-  return {
-    goal: data.goal,
-    householdSize: null,
-    painPoints: data.pain_points || [],
-    diet: data.diet || [],
-    allergies: data.allergies || [],
-    referralSource: data.referral_source,
-    inviteCode: data.invite_code,
-    ageRange: data.age_range,
-    measurementSystem: data.measurement_system,
-    nutritionDisplay: data.nutrition_display,
-  };
+  const cached = (await getCachedProfile(userId)) ?? EMPTY_ONBOARDING_ANSWERS;
+  const profile = mapOnboardingProfileRow(data, cached);
+  await setCachedProfile(userId, profile);
+  return profile;
 }

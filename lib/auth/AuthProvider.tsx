@@ -68,6 +68,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         options: {
           redirectTo: redirectUrl,
           skipBrowserRedirect: Platform.OS !== "web",
+          // Without this Google silently reuses the account already signed in
+          // to the browser, so nobody could switch to a different email.
+          queryParams: { prompt: "select_account" },
         },
       });
 
@@ -103,7 +106,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
-      await supabase.auth.signOut();
+      // The session stays on the device when the request fails (e.g. offline),
+      // so a failure must not be shown as a successful sign-out.
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
       setState((prev) => ({
         ...prev,
         user: null,

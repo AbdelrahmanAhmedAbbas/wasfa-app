@@ -1,5 +1,5 @@
 import { useFocusEffect } from "expo-router";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -14,7 +14,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { CheckBox } from "@/components/wasfa/CheckBox";
-import { FoodEmojiTile } from "@/components/wasfa/FoodEmojiTile";
+import { FoodIconTile, Glyph } from "@/components/wasfa/Glyph";
 import Feather from "@expo/vector-icons/Feather";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
@@ -24,49 +24,17 @@ import {
   toggleShoppingListItemChecked,
   type ShoppingListItem,
 } from "@/lib/shopping/client";
-import { getFoodEmoji } from "@/lib/theme/food-emoji";
+import { publishShoppingItems } from "@/lib/shopping/badge";
+import { mergeShoppingItems } from "@/lib/shopping/merge";
+import { getFoodGlyph } from "@/lib/theme/glyphs";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { getTabBarClearance, wasfaColors } from "@/lib/theme/wasfa";
 
 
-function parseIngredientText(text: string) {
-  // Try to match: optional numbers/fractions at start, optional unit, and the name
-  const regex = /^([\d\s\.\/]+)?\s*(cup|cups|tbsp|tsp|g|kg|ml|l|liter|liters|oz|lb|lbs|clove|cloves|piece|pieces)?\s+(.+)$/i;
-  const match = text.trim().match(regex);
-  if (!match) return { amount: null, unit: null, name: text.trim().toLowerCase(), original: text };
-
-  let numStr = (match[1] || "").trim();
-  let unit = (match[2] || "").toLowerCase();
-  let name = match[3].trim().toLowerCase();
-
-  let amount: number | null = null;
-  if (numStr) {
-    let sum = 0;
-    const parts = numStr.split(" ");
-    for (const p of parts) {
-      if (p.includes("/")) {
-        const [n, d] = p.split("/");
-        if (d && Number(d) !== 0) sum += Number(n) / Number(d);
-      } else {
-        sum += Number(p);
-      }
-    }
-    amount = isNaN(sum) ? null : sum;
-  }
-
-  if (unit === "cups") unit = "cup";
-  if (unit === "liters" || unit === "liter") unit = "l";
-  if (unit === "lbs") unit = "lb";
-  if (unit === "cloves") unit = "clove";
-  if (unit === "pieces") unit = "piece";
-
-  return { amount, unit, name, original: text };
-}
-
 type GroupedItem = {
   id: string;
   ingredient_text: string;
-  /** Ingredient name without amount/unit, used for the emoji tile and basket chip. */
+  /** Ingredient name without amount/unit, used for the icon tile and basket chip. */
   name: string;
   checked: boolean;
   relatedItems: ShoppingListItem[];
@@ -78,73 +46,22 @@ function getShoppingRecipeTitle(item: ShoppingListItem, language: "en" | "ar") {
 }
 
 function groupItems(items: ShoppingListItem[], language: "en" | "ar"): GroupedItem[] {
-  const groups: Record<string, {
-    amount: number;
-    unit: string | null;
-    name: string;
-    checked: boolean;
-    related: ShoppingListItem[];
-    recipes: Set<string>;
-    recipeTitles: Record<string, string>;
-  }> = {};
-
-  const ungrouped: GroupedItem[] = [];
-
-  items.forEach(item => {
-    const { amount, unit, name, original } = parseIngredientText(item.ingredient_text);
-    const recipeId = item.recipe?.id ?? item.recipe_id;
-    const recipeTitle = getShoppingRecipeTitle(item, language);
-
-    // If no amount can be parsed, or name is empty, just push it ungrouped
-    if (amount === null || !name) {
-      ungrouped.push({
-        id: item.id,
-        ingredient_text: item.ingredient_text,
-        name: item.ingredient_text,
-        checked: item.checked,
-        relatedItems: [item],
-        recipes: new Set([recipeTitle])
-      });
-      return;
-    }
-
-    const key = `${unit || "none"}|${name}`;
-
-    if (!groups[key]) {
-      groups[key] = {
-        amount,
-        unit,
-        name,
-        checked: item.checked,
-        related: [item],
-        recipes: new Set([recipeTitle]),
-        recipeTitles: { [recipeId]: recipeTitle }
-      };
-    } else {
-      groups[key].amount += amount;
-      groups[key].checked = groups[key].checked && item.checked;
-      groups[key].related.push(item);
-      groups[key].recipeTitles[recipeId] = recipeTitle;
-      groups[key].recipes.add(recipeTitle);
-    }
-  });
-
-  const grouped = Object.values(groups).map((g, i) => {
-    // Format the combined amount
-    const rounded = Math.round(g.amount * 100) / 100;
-    const text = `${rounded} ${g.unit ? g.unit + " " : ""}${g.name}`;
+  return mergeShoppingItems(items).map((group) => {
+    // A recipe is named once on the row, however many of its lines merged into it.
+    const recipeTitles = new Map<string, string>();
+    group.items.forEach((item) => {
+      recipeTitles.set(item.recipe?.id ?? item.recipe_id, getShoppingRecipeTitle(item, language));
+    });
 
     return {
-      id: `group-${i}`,
-      ingredient_text: text,
-      name: g.name,
-      checked: g.checked,
-      relatedItems: g.related,
-      recipes: g.recipes
+      id: `group-${group.key}`,
+      ingredient_text: group.text,
+      name: group.name,
+      checked: group.items.every((item) => item.checked),
+      relatedItems: group.items,
+      recipes: new Set(recipeTitles.values()),
     };
   });
-
-  return [...grouped, ...ungrouped];
 }
 
 export default function GroceryScreen() {
@@ -176,6 +93,11 @@ export default function GroceryScreen() {
       void load();
     }, [load])
   );
+
+  // Checking items off or removing them here changes the count on the tab icon.
+  useEffect(() => {
+    if (hasLoadedOnce.current) publishShoppingItems(items);
+  }, [items]);
 
   const localizeDigits = (value: string) => (language === "ar" ? toArabicIndicDigits(value) : value);
   // Ingredient text stays in the recipe's own language, so only Arabic text gets Arabic digits.
@@ -326,7 +248,7 @@ export default function GroceryScreen() {
                 onPress={() => void toggleGroup(group)}
                 onLongPress={() => confirmRemoveGroup(group)}
               >
-                <FoodEmojiTile name={group.name} size={48} />
+                <FoodIconTile name={group.name} size={48} />
                 <View style={styles.itemBody}>
                   <Text style={styles.itemText}>{localizeIngredient(group.ingredient_text)}</Text>
                   <Text style={styles.itemMeta} numberOfLines={1}>
@@ -355,7 +277,7 @@ export default function GroceryScreen() {
                       onPress={() => void toggleGroup(group)}
                       onLongPress={() => confirmRemoveGroup(group)}
                     >
-                      <Text style={styles.basketChipEmoji}>{getFoodEmoji(group.name)}</Text>
+                      <Glyph name={getFoodGlyph(group.name)} size={16} color={wasfaColors.muted} />
                       <Text numberOfLines={1} style={styles.basketChipText}>
                         {group.name}
                       </Text>
@@ -539,9 +461,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-  },
-  basketChipEmoji: {
-    fontSize: 16,
   },
   basketChipText: {
     flexShrink: 1,

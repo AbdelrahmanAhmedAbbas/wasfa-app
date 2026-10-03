@@ -85,6 +85,19 @@ export function isRecipeInPlan(plan: MealPlan, recipeId: string): boolean {
   return plan.any.includes(recipeId) || Object.values(plan.days).some((ids) => ids.includes(recipeId));
 }
 
+/** Takes a recipe out of every bucket, for when the recipe itself is deleted. */
+export function removeRecipeFromWholePlan(plan: MealPlan, recipeId: string): MealPlan {
+  if (!isRecipeInPlan(plan, recipeId)) return plan;
+  const days: Record<string, string[]> = {};
+
+  for (const [key, ids] of Object.entries(plan.days)) {
+    const kept = ids.filter((id) => id !== recipeId);
+    if (kept.length > 0) days[key] = kept;
+  }
+
+  return { any: plan.any.filter((id) => id !== recipeId), days };
+}
+
 export function countPlannedMeals(plan: MealPlan, dayKeys: string[]): number {
   return [ANY_DAY, ...dayKeys].reduce((total, dayKey) => total + getPlanDay(plan, dayKey).length, 0);
 }

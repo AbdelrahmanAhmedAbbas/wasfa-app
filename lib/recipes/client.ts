@@ -1,9 +1,10 @@
 import { supabase } from "@/lib/supabase/client";
 
+// The ingredient list comes along so the library can be searched by ingredient.
 const RECIPE_SUMMARY_SELECT =
-  "id,title,description,cuisine,meal_type,localized_json,servings,prep_minutes,cook_minutes,source_reel_url,source_thumbnail_url,folder_id,created_at";
+  "id,title,description,cuisine,meal_type,localized_json,ingredients_json,servings,prep_minutes,cook_minutes,source_reel_url,source_thumbnail_url,folder_id,created_at";
 const LEGACY_RECIPE_SUMMARY_SELECT =
-  "id,title,description,servings,prep_minutes,cook_minutes,source_reel_url,source_thumbnail_url,folder_id,created_at";
+  "id,title,description,ingredients_json,servings,prep_minutes,cook_minutes,source_reel_url,source_thumbnail_url,folder_id,created_at";
 const RECIPE_DETAIL_SELECT =
   "id,title,description,cuisine,meal_type,localized_json,servings,prep_minutes,cook_minutes,created_at,ingredients_json,steps_json,nutrition_json,source_url,source_platform,source_reel_url,source_thumbnail_url,folder_id";
 const LEGACY_RECIPE_DETAIL_SELECT =
@@ -22,6 +23,8 @@ export type RecipeSummary = {
   source_thumbnail_url: string | null;
   folder_id: string | null;
   created_at: string;
+  /** Ingredient names as imported, before translation. */
+  ingredient_names: string[];
   localized: Partial<Record<"en" | "ar", LocalizedRecipeText>>;
 };
 
@@ -33,6 +36,8 @@ export type LocalizedRecipeText = {
   ingredients: Array<{
     name: string;
     notes?: string;
+    /** The halal alternative for a non-halal ingredient, in this language. */
+    suggested_alternative?: string;
   }>;
   steps: Array<{
     order: number;
@@ -68,6 +73,8 @@ export type RecipeDetail = RecipeSummary & {
     is_halal?: boolean | null;
     halal_concern?: string;
     suggested_alternative?: string;
+    /** Set when the user keeps a non-halal ingredient instead of its halal swap. */
+    use_original?: boolean;
     source?: "caption" | "transcript" | "web_research" | "ai_estimate" | "user_edit";
     confidence?: number;
     evidence_text?: string;
@@ -140,7 +147,13 @@ export function normalizeLocalizedRecipeText(input: unknown): Partial<Record<"en
       if (!entry || typeof entry !== "object") continue;
       const ingredient = entry as Record<string, unknown>;
       const name = optionalString(ingredient.name);
-      if (name) ingredients.push({ name, notes: optionalString(ingredient.notes) });
+      if (name) {
+        ingredients.push({
+          name,
+          notes: optionalString(ingredient.notes),
+          suggested_alternative: optionalString(ingredient.suggested_alternative),
+        });
+      }
     }
 
     const steps: LocalizedRecipeText["steps"] = [];
@@ -184,13 +197,22 @@ export function normalizeLocalizedRecipeText(input: unknown): Partial<Record<"en
   return result;
 }
 
+function getIngredientNames(ingredients: unknown): string[] {
+  if (!Array.isArray(ingredients)) return [];
+  return ingredients
+    .map((entry) => (entry && typeof entry === "object" ? optionalString((entry as { name?: unknown }).name) : undefined))
+    .filter((name): name is string => !!name);
+}
+
 function withRecipeClassificationFallback<T extends Partial<RecipeSummary>>(recipe: T): T & {
   cuisine: string;
   meal_type: string;
+  ingredient_names: string[];
   localized: Partial<Record<"en" | "ar", LocalizedRecipeText>>;
 } {
   return {
     ...recipe,
+    ingredient_names: getIngredientNames((recipe as T & { ingredients_json?: unknown }).ingredients_json),
     cuisine: typeof recipe.cuisine === "string" && recipe.cuisine.trim() ? recipe.cuisine : "General",
     meal_type: typeof recipe.meal_type === "string" && recipe.meal_type.trim() ? recipe.meal_type : "Meal",
     localized: normalizeLocalizedRecipeText((recipe as T & { localized_json?: unknown }).localized_json),
@@ -351,4 +373,39 @@ export async function recalculateRecipeServings(
   const recipe = (data as { recipe?: RecipeDetail } | null)?.recipe;
   if (!recipe) throw new Error("Recipe recalculation did not return a recipe.");
   return withRecipeClassificationFallback(recipe);
+}
+
+/**
+ * Asks the server to write the English or Arabic version a recipe is missing.
+ * Returns the updated recipe, or null when nothing could be added.
+ */
+export async function localizeRecipe(recipeId: string): Promise<RecipeDetail | null> {
+  const { data, error } = await supabase.functions.invoke("recipe-localize", {
+    body: { recipe_id: recipeId },
+  });
+
+  if (error) throw error;
+  const recipe = (data as { recipe?: RecipeDetail | null } | null)?.recipe;
+  return recipe ? withRecipeClassificationFallback(recipe) : null;
+}
+
+/** Records whether an ingredient keeps its original form instead of its halal swap. */
+export async function setIngredientUseOriginal(
+  recipe: Pick<RecipeDetail, "id" | "ingredients_json">,
+  index: number,
+  useOriginal: boolean
+): Promise<RecipeDetail["ingredients_json"]> {
+  const ingredients = recipe.ingredients_json.map((ingredient, position) => {
+    if (position !== index) return ingredient;
+    const { use_original: _previous, ...rest } = ingredient;
+    return useOriginal ? { ...rest, use_original: true } : rest;
+  });
+
+  const { error } = await supabase
+    .from("recipes")
+    .update({ ingredients_json: ingredients })
+    .eq("id", recipe.id);
+
+  if (error) throw error;
+  return ingredients;
 }

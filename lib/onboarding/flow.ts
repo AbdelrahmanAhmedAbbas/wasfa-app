@@ -1,8 +1,10 @@
 import type { TranslationKey } from "@/lib/i18n/translations";
+import type { GlyphName } from "@/lib/theme/glyphs";
 
 import type {
   AllergyOption,
   DietOption,
+  DislikeOption,
   GoalOption,
   HouseholdSize,
   OnboardingAnswers,
@@ -32,22 +34,22 @@ export function getResumeRoute(step: number): QuestionnaireRoute | null {
 type ChatOption<Id extends string> = {
   id: Id;
   labelKey: TranslationKey;
-  emoji: string;
+  icon: GlyphName;
 };
 
 export const GOAL_OPTIONS: ChatOption<GoalOption>[] = [
-  { id: "save_social", labelKey: "qGoalSaveSocial", emoji: "📱" },
-  { id: "meal_plan", labelKey: "qGoalMealPlan", emoji: "🗓️" },
-  { id: "eat_better", labelKey: "qGoalEatBetter", emoji: "🥗" },
-  { id: "save_money", labelKey: "qGoalSaveMoney", emoji: "💰" },
-  { id: "family", labelKey: "qGoalFamily", emoji: "🏡" },
+  { id: "save_social", labelKey: "qGoalSaveSocial", icon: "mobile-phone" },
+  { id: "meal_plan", labelKey: "qGoalMealPlan", icon: "spiral-calendar" },
+  { id: "eat_better", labelKey: "qGoalEatBetter", icon: "green-salad" },
+  { id: "save_money", labelKey: "qGoalSaveMoney", icon: "money-bag" },
+  { id: "family", labelKey: "qGoalFamily", icon: "house-with-garden" },
 ];
 
 export const HOUSEHOLD_OPTIONS: (ChatOption<HouseholdSize> & { servings: number })[] = [
-  { id: "one", labelKey: "obHouseOne", emoji: "👤", servings: 1 },
-  { id: "two", labelKey: "obHouseTwo", emoji: "👥", servings: 2 },
-  { id: "three_four", labelKey: "obHouseThreeFour", emoji: "🏠", servings: 4 },
-  { id: "five_plus", labelKey: "obHouseFivePlus", emoji: "🏡", servings: 5 },
+  { id: "one", labelKey: "obHouseOne", icon: "bust-in-silhouette", servings: 1 },
+  { id: "two", labelKey: "obHouseTwo", icon: "busts-in-silhouette", servings: 2 },
+  { id: "three_four", labelKey: "obHouseThreeFour", icon: "house", servings: 4 },
+  { id: "five_plus", labelKey: "obHouseFivePlus", icon: "house-with-garden", servings: 5 },
 ];
 
 // Each pain point carries the "fix" shown for it on the kitchen card.
@@ -58,35 +60,35 @@ export const PAIN_OPTIONS: (ChatOption<PainPoint> & {
   {
     id: "lost_recipes",
     labelKey: "qPainLostRecipes",
-    emoji: "🔖",
+    icon: "bookmark",
     problemKey: "qSolutionLostRecipesProblem",
     answerKey: "obSolLostRecipes",
   },
   {
     id: "daily_decisions",
     labelKey: "qPainDailyDecisions",
-    emoji: "⏰",
+    icon: "alarm-clock",
     problemKey: "qSolutionDailyProblem",
     answerKey: "obSolDaily",
   },
   {
     id: "grocery_waste",
     labelKey: "qPainGroceryWaste",
-    emoji: "🗑️",
+    icon: "wastebasket",
     problemKey: "qSolutionWasteProblem",
     answerKey: "obSolWaste",
   },
   {
     id: "picky_family",
     labelKey: "qPainPickyFamily",
-    emoji: "🥘",
+    icon: "shallow-pan-of-food",
     problemKey: "qSolutionFamilyProblem",
     answerKey: "obSolFamily",
   },
   {
     id: "no_time",
     labelKey: "qPainNoTime",
-    emoji: "⌛",
+    icon: "hourglass-done",
     problemKey: "qSolutionTimeProblem",
     answerKey: "obSolTime",
   },
@@ -97,7 +99,7 @@ export const DEFAULT_SOLUTION: { problemKey: TranslationKey; answerKey: Translat
   answerKey: "obSolDefault",
 };
 
-// Diet chips use the photos in dietImages (keyed by id) instead of an emoji.
+// Diet chips use the photos in dietImages (keyed by id) instead of a glyph.
 export const DIET_OPTIONS: { id: DietOption; labelKey: TranslationKey }[] = [
   { id: "halal", labelKey: "dietHalal" },
   { id: "omnivore", labelKey: "obDietOmnivore" },
@@ -110,14 +112,29 @@ export const DIET_OPTIONS: { id: DietOption; labelKey: TranslationKey }[] = [
 export const MAX_DIETS = 2;
 
 export const ALLERGY_OPTIONS: ChatOption<AllergyOption>[] = [
-  { id: "shellfish", labelKey: "obAllergyShellfish", emoji: "🦐" },
-  { id: "seafood", labelKey: "obAllergySeafood", emoji: "🐟" },
-  { id: "dairy", labelKey: "obAllergyDairy", emoji: "🥛" },
-  { id: "peanut", labelKey: "obAllergyPeanut", emoji: "🥜" },
-  { id: "tree_nut", labelKey: "obAllergyTreeNut", emoji: "🌰" },
-  { id: "egg", labelKey: "obAllergyEgg", emoji: "🥚" },
-  { id: "gluten", labelKey: "obAllergyGluten", emoji: "🍞" },
-  { id: "wheat", labelKey: "obAllergyWheat", emoji: "🌾" },
+  { id: "shellfish", labelKey: "obAllergyShellfish", icon: "shrimp" },
+  { id: "seafood", labelKey: "obAllergySeafood", icon: "fish" },
+  { id: "dairy", labelKey: "obAllergyDairy", icon: "glass-of-milk" },
+  { id: "peanut", labelKey: "obAllergyPeanut", icon: "peanuts" },
+  { id: "tree_nut", labelKey: "obAllergyTreeNut", icon: "chestnut" },
+  { id: "egg", labelKey: "obAllergyEgg", icon: "egg" },
+  { id: "gluten", labelKey: "obAllergyGluten", icon: "bread" },
+  { id: "wheat", labelKey: "obAllergyWheat", icon: "sheaf-of-rice" },
+];
+
+export const DISLIKE_OPTIONS: ChatOption<DislikeOption>[] = [
+  { id: "onion", labelKey: "dislikeOnion", icon: "onion" },
+  { id: "garlic", labelKey: "dislikeGarlic", icon: "garlic" },
+  { id: "mushroom", labelKey: "dislikeMushroom", icon: "mushroom" },
+  { id: "eggplant", labelKey: "dislikeEggplant", icon: "eggplant" },
+  { id: "cilantro", labelKey: "dislikeCilantro", icon: "herb" },
+  { id: "olives", labelKey: "dislikeOlives", icon: "olive" },
+  { id: "spicy", labelKey: "dislikeSpicy", icon: "hot-pepper" },
+  { id: "okra", labelKey: "dislikeOkra", icon: "leafy-green" },
+  { id: "liver", labelKey: "dislikeLiver", icon: "cut-of-meat" },
+  { id: "fish", labelKey: "dislikeFish", icon: "fish" },
+  { id: "coconut", labelKey: "dislikeCoconut", icon: "coconut" },
+  { id: "raisins", labelKey: "dislikeRaisins", icon: "grapes" },
 ];
 
 // Used wherever the household answer is missing (e.g. a resumed demo).
@@ -135,15 +152,31 @@ export function scaleDemoQuantity(quantity: number, servings: number, baseServin
   return Math.round(((quantity * servings) / baseServings) * 4) / 4;
 }
 
+export type ChatAnswers = Pick<
+  OnboardingAnswers,
+  "goal" | "householdSize" | "painPoints" | "diet" | "allergies" | "dislikes"
+>;
+
+/** The answers the chat collects, without the rest of the profile. */
+export function pickChatAnswers(answers: ChatAnswers): ChatAnswers {
+  return {
+    goal: answers.goal,
+    householdSize: answers.householdSize,
+    painPoints: answers.painPoints,
+    diet: answers.diet,
+    allergies: answers.allergies,
+    dislikes: answers.dislikes,
+  };
+}
+
 /** False when the chat was skipped entirely (the "I already have an account" path). */
-export function hasQuestionnaireAnswers(
-  answers: Pick<OnboardingAnswers, "goal" | "householdSize" | "painPoints" | "diet" | "allergies">
-): boolean {
+export function hasQuestionnaireAnswers(answers: ChatAnswers): boolean {
   return (
     answers.goal !== null ||
     answers.householdSize !== null ||
     answers.painPoints.length > 0 ||
     answers.diet.length > 0 ||
-    answers.allergies.length > 0
+    answers.allergies.length > 0 ||
+    answers.dislikes.length > 0
   );
 }

@@ -112,7 +112,8 @@
           ]
         }
       ],
-      "expo-localization"
+      "expo-localization",
+      "expo-video"
     ],
     "extra": {
       "supportsRTL": true,

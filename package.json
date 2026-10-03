@@ -27,6 +27,7 @@
     "expo-share-intent": "^5.1.1",
     "expo-splash-screen": "~31.0.13",
     "expo-status-bar": "~3.0.9",
+    "expo-video": "~3.0.16",
     "expo-web-browser": "~15.0.10",
     "patch-package": "^8.0.1",
     "react": "19.1.0",

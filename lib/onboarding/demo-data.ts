@@ -1,7 +1,7 @@
-// Mock content for the hands-on import demo in the onboarding flow.
+// Mock content for the import explainer in the onboarding flow.
 export const demoReel = {
   handle: "@gulf.kitchen",
-  sourceUrl: "instagram.com/reel/…",
+  initials: "GK",
 } as const;
 
 type DemoIngredient = {

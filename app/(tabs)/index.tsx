@@ -21,17 +21,22 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { useAuth } from "@/lib/auth/AuthProvider";
 import {
-  HOME_MOODS,
   getHomeRecipeCards,
   getHomeRecipeListParams,
   getHomeScrollContentStyle,
   getHomeScrollProps,
   getHomeScreenCopy,
   getHomeScreenLayout,
-  matchesHomeMood,
-  matchesRecipeSearch,
-  type HomeMood,
 } from "@/lib/home/home-screen";
+import {
+  EMPTY_RECIPE_FILTERS,
+  countActiveFilters,
+  getRecipeFilterOptions,
+  matchesRecipeFilters,
+  matchesRecipeSearch,
+  pruneRecipeFilters,
+  type RecipeFilters,
+} from "@/lib/home/recipe-filters";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import {
   assignRecipeToFolder,
@@ -49,6 +54,11 @@ import { getTabBarClearance, wasfaColors } from "@/lib/theme/wasfa";
 import { FolderNameDrawer } from "@/components/folders/FolderNameDrawer";
 import { FolderContextMenu } from "@/components/folders/FolderContextMenu";
 import { AddToFolderSheet } from "@/components/recipes/AddToFolderSheet";
+import {
+  MAIN_INGREDIENT_LABELS,
+  RecipeFilterSheet,
+  TIME_FILTER_LABELS,
+} from "@/components/recipes/RecipeFilterSheet";
 
 function getDisplayName(fullName?: string | null, email?: string | null) {
   if (fullName?.trim()) {
@@ -65,13 +75,6 @@ function getDisplayName(fullName?: string | null, email?: string | null) {
 function wrapLtrInlineText(value: string) {
   return /[A-Za-z0-9]/.test(value) ? `\u2066${value}\u2069` : value;
 }
-
-const MOOD_TILES: Record<HomeMood, { emoji: string; labelKey: "homeMoodQuick" | "homeMoodChicken" | "homeMoodVeggie" | "homeMoodRice" }> = {
-  quick: { emoji: "🍋", labelKey: "homeMoodQuick" },
-  chicken: { emoji: "🍗", labelKey: "homeMoodChicken" },
-  veggie: { emoji: "🥬", labelKey: "homeMoodVeggie" },
-  rice: { emoji: "🍚", labelKey: "homeMoodRice" },
-};
 
 // How many recipes the "Recently saved" carousel shows before "See all".
 const RECENT_CAROUSEL_LIMIT = 8;
@@ -96,7 +99,8 @@ export default function HomeScreen() {
   const [folderToEdit, setFolderToEdit] = useState<RecipeFolder | null>(null);
   const [contextMenuFolder, setContextMenuFolder] = useState<RecipeFolder | null>(null);
   const [addToFolderRecipe, setAddToFolderRecipe] = useState<RecipeSummary | null>(null);
-  const [activeMood, setActiveMood] = useState<HomeMood | null>(null);
+  const [filters, setFilters] = useState<RecipeFilters>(EMPTY_RECIPE_FILTERS);
+  const [filterSheetVisible, setFilterSheetVisible] = useState(false);
   const [showAllRecipes, setShowAllRecipes] = useState(false);
 
   const loadHomeData = useCallback(async (options?: { showSpinner?: boolean; showRefresh?: boolean }) => {
@@ -142,7 +146,7 @@ export default function HomeScreen() {
   const displayName = getDisplayName(
     typeof user?.user_metadata?.full_name === "string" ? user.user_metadata.full_name : null,
     user?.email ?? null
-  ) || t("homeGuestChef");
+  ) || t("homeDefaultName");
   const displayNameLabel = useMemo(() => wrapLtrInlineText(displayName), [displayName]);
   const homeLayout = getHomeScreenLayout(isRTL);
   const homeScrollProps = useMemo(() => getHomeScrollProps(), []);
@@ -151,14 +155,66 @@ export default function HomeScreen() {
     [bottomContentPadding]
   );
 
-  const filteredRecipes = useMemo(() => {
-    const query = searchQuery.trim().toLowerCase();
-    return recipes.filter(
-      (recipe) =>
-        (!query || matchesRecipeSearch(recipe, query)) &&
-        (!activeMood || matchesHomeMood(recipe, activeMood))
-    );
-  }, [activeMood, recipes, searchQuery]);
+  // The filter choices come from the whole library, so they stay put while a
+  // folder is open.
+  const filterOptions = useMemo(() => getRecipeFilterOptions(allRecipes, language), [allRecipes, language]);
+  const activeFilterCount = countActiveFilters(filters);
+
+  useEffect(() => {
+    if (loading) return;
+    setFilters((current) => pruneRecipeFilters(current, filterOptions));
+  }, [filterOptions, loading]);
+
+  const filteredRecipes = useMemo(
+    () =>
+      recipes.filter(
+        (recipe) => matchesRecipeSearch(recipe, searchQuery) && matchesRecipeFilters(recipe, filters)
+      ),
+    [filters, recipes, searchQuery]
+  );
+
+  const activeFilterChips = useMemo(() => {
+    const labelFor = (options: { key: string; label: string }[], key: string) =>
+      options.find((option) => option.key === key)?.label ?? key;
+    return [
+      ...(filters.maxMinutes === 30 || filters.maxMinutes === 60
+        ? [
+            {
+              key: "time",
+              label: t(TIME_FILTER_LABELS[filters.maxMinutes]),
+              remove: () => setFilters((current) => ({ ...current, maxMinutes: null })),
+            },
+          ]
+        : []),
+      ...filters.mealTypes.map((key) => ({
+        key: `meal-${key}`,
+        label: labelFor(filterOptions.mealTypes, key),
+        remove: () =>
+          setFilters((current) => ({
+            ...current,
+            mealTypes: current.mealTypes.filter((entry) => entry !== key),
+          })),
+      })),
+      ...filters.cuisines.map((key) => ({
+        key: `cuisine-${key}`,
+        label: labelFor(filterOptions.cuisines, key),
+        remove: () =>
+          setFilters((current) => ({
+            ...current,
+            cuisines: current.cuisines.filter((entry) => entry !== key),
+          })),
+      })),
+      ...filters.ingredients.map((ingredient) => ({
+        key: `ingredient-${ingredient}`,
+        label: t(MAIN_INGREDIENT_LABELS[ingredient]),
+        remove: () =>
+          setFilters((current) => ({
+            ...current,
+            ingredients: current.ingredients.filter((entry) => entry !== ingredient),
+          })),
+      })),
+    ];
+  }, [filterOptions, filters, t]);
 
   const recipeCards = useMemo(
     () =>
@@ -171,9 +227,9 @@ export default function HomeScreen() {
     [filteredRecipes, language, t]
   );
 
-  // The carousel is the resting state; any narrowing (search, mood, folder) or
-  // "See all" switches to the full grid.
-  const isFiltering = searchQuery.trim().length > 0 || activeMood !== null || selectedFolderId !== null;
+  // The carousel is the resting state; any narrowing (search, filters, folder)
+  // or "See all" switches to the full grid.
+  const isFiltering = searchQuery.trim().length > 0 || activeFilterCount > 0 || selectedFolderId !== null;
   const showGrid = showAllRecipes || isFiltering;
   const carouselCards = useMemo(() => recipeCards.slice(0, RECENT_CAROUSEL_LIMIT), [recipeCards]);
 
@@ -430,23 +486,44 @@ export default function HomeScreen() {
                 {t("homeAsk")}
               </Text>
             </View>
-            <View style={styles.searchRow}>
-              <Feather name="search" size={18} color={wasfaColors.ink} />
-              <TextInput
-                placeholder={homeCopy.searchPlaceholder}
-                placeholderTextColor={wasfaColors.muted}
-                value={searchQuery}
-                onChangeText={setSearchQuery}
-                style={[
-                  styles.searchInput,
-                  { textAlign: homeLayout.textAlign, writingDirection: homeLayout.writingDirection },
-                ]}
-              />
-              {searchQuery ? (
-                <Pressable accessibilityRole="button" hitSlop={10} onPress={() => setSearchQuery("")}>
-                  <Feather name="x" size={18} color={wasfaColors.muted} />
-                </Pressable>
-              ) : null}
+            <View style={styles.searchBar}>
+              <View style={styles.searchRow}>
+                <Feather name="search" size={18} color={wasfaColors.ink} />
+                <TextInput
+                  placeholder={homeCopy.searchPlaceholder}
+                  placeholderTextColor={wasfaColors.muted}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  autoCorrect={false}
+                  returnKeyType="search"
+                  style={[
+                    styles.searchInput,
+                    { textAlign: homeLayout.textAlign, writingDirection: homeLayout.writingDirection },
+                  ]}
+                />
+                {searchQuery ? (
+                  <Pressable accessibilityRole="button" hitSlop={10} onPress={() => setSearchQuery("")}>
+                    <Feather name="x" size={18} color={wasfaColors.muted} />
+                  </Pressable>
+                ) : null}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={t("homeFilters")}
+                style={[styles.filterButton, activeFilterCount > 0 && styles.filterButtonActive]}
+                onPress={() => setFilterSheetVisible(true)}
+              >
+                <Feather
+                  name="sliders"
+                  size={20}
+                  color={activeFilterCount > 0 ? "#FFFFFF" : wasfaColors.ink}
+                />
+                {activeFilterCount > 0 ? (
+                  <View style={styles.filterBadge}>
+                    <Text style={styles.filterBadgeText}>{localizeDigits(String(activeFilterCount))}</Text>
+                  </View>
+                ) : null}
+              </Pressable>
             </View>
           </View>
 
@@ -469,25 +546,35 @@ export default function HomeScreen() {
             </Pressable>
           ) : null}
 
-          <View style={styles.moodGrid}>
-            {HOME_MOODS.map((mood) => {
-              const selected = activeMood === mood;
-              return (
+          {activeFilterChips.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.activeFilters}
+              contentContainerStyle={styles.activeFiltersContent}
+            >
+              {activeFilterChips.map((chip) => (
                 <Pressable
-                  key={mood}
+                  key={chip.key}
                   accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  style={[styles.moodTile, selected && styles.moodTileSelected]}
-                  onPress={() => setActiveMood(selected ? null : mood)}
+                  accessibilityLabel={`${t("profileDislikeRemove")} ${chip.label}`}
+                  style={styles.activeFilterChip}
+                  onPress={chip.remove}
                 >
-                  <Text style={styles.moodEmoji}>{MOOD_TILES[mood].emoji}</Text>
-                  <Text style={[styles.moodLabel, { textAlign: homeLayout.textAlign }]}>
-                    {t(MOOD_TILES[mood].labelKey)}
-                  </Text>
+                  <Text style={styles.activeFilterText}>{chip.label}</Text>
+                  <Feather name="x" size={14} color={wasfaColors.ink} />
                 </Pressable>
-              );
-            })}
-          </View>
+              ))}
+              <Pressable
+                accessibilityRole="button"
+                hitSlop={8}
+                style={styles.clearFilters}
+                onPress={() => setFilters(EMPTY_RECIPE_FILTERS)}
+              >
+                <Text style={styles.clearFiltersText}>{t("homeFilterClear")}</Text>
+              </Pressable>
+            </ScrollView>
+          ) : null}
 
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { textAlign: homeLayout.textAlign }]}>
@@ -497,6 +584,7 @@ export default function HomeScreen() {
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
+            style={styles.horizontalScrollView}
             contentContainerStyle={styles.horizontalScroller}
           >
             {renderFolderTiles()}
@@ -544,6 +632,7 @@ export default function HomeScreen() {
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
+              style={styles.horizontalScrollView}
               contentContainerStyle={styles.horizontalScroller}
             >
               {carouselCards.map((recipe) => renderRecipeCard(recipe, "carousel"))}
@@ -568,6 +657,15 @@ export default function HomeScreen() {
             setFolderDrawerVisible(true);
           }}
           onDelete={handleDeleteFolder}
+        />
+
+        <RecipeFilterSheet
+          visible={filterSheetVisible}
+          onClose={() => setFilterSheetVisible(false)}
+          filters={filters}
+          onChange={setFilters}
+          options={filterOptions}
+          resultCount={filteredRecipes.length}
         />
 
         <AddToFolderSheet
@@ -625,8 +723,14 @@ const styles = StyleSheet.create({
     lineHeight: 44,
     letterSpacing: 0,
   },
-  searchRow: {
+  searchBar: {
     marginTop: 20,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  searchRow: {
+    flex: 1,
     height: 52,
     borderRadius: 18,
     backgroundColor: wasfaColors.surface,
@@ -666,36 +770,75 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#996051",
   },
-  moodGrid: {
+  filterButton: {
+    width: 52,
+    height: 52,
+    borderRadius: 18,
+    backgroundColor: wasfaColors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000000",
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 20,
+    elevation: 4,
+  },
+  filterButtonActive: {
+    backgroundColor: wasfaColors.cta,
+  },
+  filterBadge: {
+    position: "absolute",
+    top: -4,
+    end: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    borderWidth: 2,
+    borderColor: wasfaColors.primary,
+    backgroundColor: wasfaColors.deep,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  filterBadgeText: {
+    fontSize: 11,
+    lineHeight: 14,
+    fontWeight: "800",
+    color: "#FFFFFF",
+  },
+  activeFilters: {
+    flexGrow: 0,
     marginTop: 16,
-    marginHorizontal: 20,
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 10,
   },
-  moodTile: {
-    flexBasis: "47%",
-    flexGrow: 1,
-    borderRadius: 22,
-    borderWidth: 1,
-    borderColor: wasfaColors.line,
-    backgroundColor: wasfaColors.soft,
-    padding: 14,
-    gap: 10,
+  activeFiltersContent: {
+    paddingHorizontal: 20,
+    gap: 8,
+    alignItems: "center",
   },
-  moodTileSelected: {
+  activeFilterChip: {
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1.5,
     borderColor: wasfaColors.cta,
     backgroundColor: wasfaColors.ctaSoft,
+    paddingStart: 14,
+    paddingEnd: 10,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
   },
-  moodEmoji: {
-    fontSize: 30,
-    lineHeight: 38,
-  },
-  moodLabel: {
-    fontSize: 15,
-    lineHeight: 24,
-    fontWeight: "800",
+  activeFilterText: {
+    fontSize: 13,
+    fontWeight: "700",
     color: wasfaColors.ink,
+  },
+  clearFilters: {
+    paddingHorizontal: 8,
+  },
+  clearFiltersText: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: wasfaColors.primaryDark,
   },
   sectionHeader: {
     marginTop: 24,
@@ -718,6 +861,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     color: wasfaColors.primary,
+  },
+  // Keeps a row at its content height when the page is shorter than the screen.
+  horizontalScrollView: {
+    flexGrow: 0,
   },
   horizontalScroller: {
     gap: 12,
