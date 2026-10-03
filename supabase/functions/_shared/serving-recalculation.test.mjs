@@ -12,7 +12,8 @@ test("serving recalculation scales ingredients locally and persists localized st
   assert.match(ai, /function rewriteLocalizedStepsForServings/);
   assert.match(ai, /localizedStepRewriteSchema/);
   assert.doesNotMatch(ai, /schema:\s*servingRecalculationSchema/);
-  assert.match(ai, /localized:\s*rewrittenLocalized/);
+  // Rewritten steps are kept for each language the recipe already had.
+  assert.match(ai, /localized\[language\] = rewrittenLocalized\[language\]/);
   assert.match(fn, /localized_json:\s*recalculated\.localized/);
   assert.match(client, /withRecipeClassificationFallback\(recipe\)/);
 });

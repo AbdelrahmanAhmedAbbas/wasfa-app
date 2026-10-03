@@ -3,18 +3,10 @@ export const SHORT_MAX_DURATION_SECONDS = 180;
 
 export const DEFAULT_APIFY_ACTOR_YOUTUBE = "streamers~youtube-scraper";
 
-export const YOUTUBE_SHORT_READ_MODEL = "google/gemini-3-flash-preview";
-// Gemini only accepts YouTube links on Google AI Studio; Vertex rejects them.
-export const YOUTUBE_SHORT_READ_PROVIDER = "google-ai-studio";
-export const YOUTUBE_SHORT_UNREADABLE_MARKER = "VIDEO_UNAVAILABLE";
-
-export const YOUTUBE_SHORT_READ_PROMPT = [
-  "This is a short cooking video. Report what it contains so a recipe can be written from it.",
-  "Under the heading 'Spoken:' write everything that is said, word for word, in the language it is spoken in. If nothing is said, write 'none'.",
-  "Under the heading 'On-screen text:' write every piece of text shown in the video that names an ingredient, an amount, a step, a time or a temperature, in the order it appears and in its original language. If there is none, write 'none'.",
-  "Do not add, guess or summarise anything that is not in the video.",
-  `If you cannot open or watch the video, reply with exactly ${YOUTUBE_SHORT_UNREADABLE_MARKER} and nothing else.`,
-].join("\n");
+// Downloads a Short's audio so it can be transcribed the way an Instagram reel is.
+export const DEFAULT_APIFY_ACTOR_YOUTUBE_AUDIO = "marielise.dev~youtube-video-downloader";
+// The audio actor bills per minute; three minutes of MP3 is the most a Short can cost.
+export const YOUTUBE_AUDIO_MAX_CHARGE_USD = 0.05;
 
 // Hosts a Short can be shared from. Matched exactly so other YouTube properties
 // (music.youtube.com, youtube-nocookie.com) are not accepted by accident.
@@ -97,27 +89,10 @@ export function parseDurationSeconds(value: unknown): number | undefined {
   return undefined;
 }
 
-/** The linked video is always sent in watch form, the one the provider documents. */
+/** The linked video is always sent in watch form, which both actors accept. */
 function youTubeLinkForServices(sourceUrl: string): string {
   const videoId = parseYouTubeShortId(sourceUrl);
   return videoId ? youTubeWatchUrl(videoId) : sourceUrl;
-}
-
-/** OpenRouter chat request that has Gemini read a Short's speech and on-screen text from its link. */
-export function buildYouTubeShortReadRequest(sourceUrl: string): Record<string, unknown> {
-  return {
-    model: YOUTUBE_SHORT_READ_MODEL,
-    provider: { only: [YOUTUBE_SHORT_READ_PROVIDER] },
-    messages: [
-      {
-        role: "user",
-        content: [
-          { type: "text", text: YOUTUBE_SHORT_READ_PROMPT },
-          { type: "video_url", video_url: { url: youTubeLinkForServices(sourceUrl) } },
-        ],
-      },
-    ],
-  };
 }
 
 /** Input for the Apify YouTube actor: one video, with its paid subtitle options left off. */
@@ -127,5 +102,14 @@ export function buildYouTubeActorInput(sourceUrl: string): Record<string, unknow
     maxResults: 1,
     maxResultsShorts: 1,
     maxResultStreams: 0,
+  };
+}
+
+/** Input for the Apify audio actor: the Short as MP3, with its paid proxy fallback left off. */
+export function buildYouTubeAudioActorInput(sourceUrl: string): Record<string, unknown> {
+  return {
+    urls: [{ url: youTubeLinkForServices(sourceUrl) }],
+    format: "mp3",
+    residentialProxyMode: "disabled",
   };
 }
