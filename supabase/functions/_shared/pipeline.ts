@@ -11,6 +11,7 @@ import {
 import { normalizeSourceUrlForCache } from "./cache.ts";
 import {
   confirmRecipeFromDraft,
+  failJobIfStillProcessing,
   findCachedExtractionByUrl,
   logJobEvent,
   updateJobStatus,
@@ -20,6 +21,17 @@ import {
 import { hasIngredientsNeedingReview } from "./ingredient-details.ts";
 import { runSanityCheck } from "./sanity-check.ts";
 import type { ImportJobRow, LocalizedRecipeText, RecipeDraft } from "./types.ts";
+import {
+  DEFAULT_APIFY_ACTOR_YOUTUBE,
+  SHORT_MAX_DURATION_SECONDS,
+  YOUTUBE_SHORT_READ_MODEL,
+  YOUTUBE_SHORT_UNREADABLE_MARKER,
+  buildYouTubeActorInput,
+  buildYouTubeShortReadRequest,
+  parseDurationSeconds,
+  parseYouTubeShortId,
+  youTubeThumbnailUrl,
+} from "./youtube.ts";
 
 const OPENROUTER_TRANSCRIBE_MODEL = "google/gemini-3-flash-preview";
 // Allow reasonably large source downloads so we can still extract metadata/captions
@@ -30,8 +42,14 @@ const MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024;
 const DEFAULT_APIFY_ACTOR_INSTAGRAM = "nH2AHrwxeTRJoN5hX";
 const DEFAULT_APIFY_ACTOR_TIKTOK = "W2tevPiLZeuTLtcG7";
 const APIFY_TIMEOUT_MS = 60_000;
+const YOUTUBE_APIFY_TIMEOUT_MS = 40_000;
 const MEDIA_FETCH_TIMEOUT_MS = 45_000;
 const OPENROUTER_TRANSCRIBE_TIMEOUT_MS = 90_000;
+const YOUTUBE_SHORT_READ_TIMEOUT_MS = 60_000;
+// Background tasks are cut off at 150 seconds on the Supabase free plan. Failing the job
+// before that leaves time to record the failure, instead of a job stuck in "processing".
+const PIPELINE_TIME_BUDGET_MS = 135_000;
+const PIPELINE_TIMED_OUT_CODE = "IMPORT_TIMED_OUT";
 
 type SourceMetadata = {
   title?: string;
@@ -54,6 +72,8 @@ type SourceMetadata = {
   mediaOrigin?: "apify";
   transcript?: string;
 };
+
+type PipelineBudget = { expired: boolean };
 
 type ContentGenerationResult =
   | {
@@ -293,6 +313,7 @@ async function runApifyActor(params: {
   actorId: string;
   sourceUrl: string;
   body: Record<string, unknown>;
+  timeoutMs?: number;
 }): Promise<unknown> {
   const apifyToken = Deno.env.get("APIFY_TOKEN");
   if (!apifyToken) {
@@ -310,7 +331,7 @@ async function runApifyActor(params: {
       },
       body: JSON.stringify(params.body),
     },
-    APIFY_TIMEOUT_MS,
+    params.timeoutMs ?? APIFY_TIMEOUT_MS,
     "APIFY_TIMEOUT"
   );
 
@@ -533,11 +554,61 @@ async function fetchTikTokViaApify(sourceUrl: string): Promise<SourceMetadata> {
   throw new Error(`TIKTOK_APIFY_FAILED ${String(lastError)}`);
 }
 
+function parseYouTubeApifyMetadata(payload: unknown): SourceMetadata {
+  const record = extractApifyPrimaryRecord(payload);
+  if (!record) return {};
+
+  return {
+    title: asString(record.title),
+    description: asString(record.text) ?? asString(record.description),
+    hashtags: asStringArray(record.hashtags),
+    sourcePostId: asString(record.id),
+    creatorUsername: asString(record.channelName),
+    postedAt: asString(record.date),
+    videoDurationSeconds: parseDurationSeconds(record.duration),
+    likesCount: asNumber(record.likes),
+    commentsCount: asNumber(record.commentsCount),
+    videoViewCount: asNumber(record.viewCount),
+    thumbnailUrl: sanitizeHttpUrl(record.thumbnailUrl),
+  };
+}
+
+async function fetchYouTubeViaApify(sourceUrl: string): Promise<SourceMetadata> {
+  const videoId = parseYouTubeShortId(sourceUrl);
+  const fallbackThumbnailUrl = videoId ? youTubeThumbnailUrl(videoId) : undefined;
+  const actorId = getApifyActorId("APIFY_ACTOR_YOUTUBE", DEFAULT_APIFY_ACTOR_YOUTUBE);
+
+  try {
+    const payload = await runApifyActor({
+      actorId,
+      sourceUrl,
+      body: buildYouTubeActorInput(sourceUrl),
+      timeoutMs: YOUTUBE_APIFY_TIMEOUT_MS,
+    });
+    const metadata = parseYouTubeApifyMetadata(payload);
+    return {
+      ...metadata,
+      sourcePostId: metadata.sourcePostId ?? videoId ?? undefined,
+      thumbnailUrl: metadata.thumbnailUrl ?? fallbackThumbnailUrl,
+    };
+  } catch (error) {
+    if (String(error).includes("APIFY_TOKEN_MISSING")) throw error;
+    // The Short itself is read from its link, so a failed scrape loses the description
+    // and the duration check but does not have to fail the import.
+    console.warn("[import][apify] YouTube actor failed, continuing without metadata", {
+      actorId,
+      error: truncateForLog(String(error), 800),
+    });
+    return { sourcePostId: videoId ?? undefined, thumbnailUrl: fallbackThumbnailUrl };
+  }
+}
+
 async function fetchApifyMetadata(params: {
   sourceUrl: string;
   sourcePlatform: ImportJobRow["source_platform"];
 }): Promise<SourceMetadata> {
   if (params.sourcePlatform === "tiktok") return fetchTikTokViaApify(params.sourceUrl);
+  if (params.sourcePlatform === "youtube") return fetchYouTubeViaApify(params.sourceUrl);
   return fetchInstagramViaApify(params.sourceUrl);
 }
 
@@ -703,6 +774,45 @@ async function transcribeWithOpenRouter(media: {
   return text;
 }
 
+// YouTube media cannot be downloaded like an Instagram reel, so the model is given the
+// Short's link and reads the speech and the on-screen text from the video itself.
+async function readYouTubeShort(sourceUrl: string): Promise<string> {
+  const apiKey = requiredEnv("OPENROUTER_API_KEY");
+
+  const response = await fetchWithTimeout(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://meal-planner.app",
+        "X-Title": "Meal Planner Import",
+      },
+      body: JSON.stringify(buildYouTubeShortReadRequest(sourceUrl)),
+    },
+    YOUTUBE_SHORT_READ_TIMEOUT_MS,
+    "YOUTUBE_SHORT_READ_TIMEOUT"
+  );
+
+  const body = await response.text();
+  if (!response.ok) {
+    throw new Error(`YOUTUBE_SHORT_READ_FAILED ${response.status} ${truncateForLog(body, 1200)}`);
+  }
+
+  let data: { choices?: Array<{ message?: { content?: string } }> };
+  try {
+    data = JSON.parse(body);
+  } catch {
+    throw new Error(`YOUTUBE_SHORT_READ_FAILED 200 invalid_json ${truncateForLog(body, 500)}`);
+  }
+
+  const text = data?.choices?.[0]?.message?.content?.trim() ?? "";
+  if (!text) throw new Error("YOUTUBE_SHORT_READ_EMPTY");
+  if (text.includes(YOUTUBE_SHORT_UNREADABLE_MARKER)) throw new Error("YOUTUBE_SHORT_UNREADABLE");
+  return text;
+}
+
 function buildCombinedContext(params: {
   sourceUrl: string;
   sourcePlatform: ImportJobRow["source_platform"];
@@ -780,6 +890,12 @@ function isTranscriptionOversizeError(error: unknown): boolean {
 
 function mapPipelineError(error: unknown): { code: string; message: string } {
   const raw = String(error);
+  if (raw.includes("SHORT_TOO_LONG")) {
+    return {
+      code: "SHORT_TOO_LONG",
+      message: "This video is longer than 3 minutes. Only YouTube Shorts can be imported.",
+    };
+  }
   if (raw.includes("MEDIA_NOT_AVAILABLE")) {
     return {
       code: "MEDIA_NOT_AVAILABLE",
@@ -878,10 +994,52 @@ function mapPipelineError(error: unknown): { code: string; message: string } {
   };
 }
 
+function throwIfOutOfTime(budget: PipelineBudget) {
+  if (budget.expired) throw new Error(PIPELINE_TIMED_OUT_CODE);
+}
+
 export async function runImportPipeline(params: {
   adminClient: SupabaseClient;
   job: ImportJobRow;
   sharedText?: string | null;
+}) {
+  const budget: PipelineBudget = { expired: false };
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
+  const budgetExpiry = new Promise<"expired">((resolve) => {
+    budgetTimer = setTimeout(() => {
+      budget.expired = true;
+      resolve("expired");
+    }, PIPELINE_TIME_BUDGET_MS);
+  });
+
+  try {
+    const outcome = await Promise.race([
+      runPipelineSteps({ ...params, budget }).then(() => "finished" as const),
+      budgetExpiry,
+    ]);
+    if (outcome !== "expired") return;
+
+    const failed = await failJobIfStillProcessing(params.adminClient, {
+      jobId: params.job.id,
+      errorCode: PIPELINE_TIMED_OUT_CODE,
+      errorMessage: "This import took too long. Please try again.",
+    });
+    if (failed) {
+      await logJobEvent(params.adminClient, params.job.id, "failed", {
+        reason: PIPELINE_TIMED_OUT_CODE,
+        time_budget_ms: PIPELINE_TIME_BUDGET_MS,
+      });
+    }
+  } finally {
+    clearTimeout(budgetTimer);
+  }
+}
+
+async function runPipelineSteps(params: {
+  adminClient: SupabaseClient;
+  job: ImportJobRow;
+  sharedText?: string | null;
+  budget: PipelineBudget;
 }) {
   let transcript: string | null = null;
 
@@ -924,6 +1082,7 @@ export async function runImportPipeline(params: {
       const recipeId = await confirmRecipeFromDraft(params.adminClient, {
         job: params.job,
         payload: cachedDraft,
+        sourceThumbnailUrl: cachedExtraction.source_thumbnail_url ?? null,
         sourceReelUrl: params.job.source_url,
       });
 
@@ -965,6 +1124,14 @@ export async function runImportPipeline(params: {
       media_type: metadata.mediaType ?? null,
     });
 
+    if (
+      params.job.source_platform === "youtube" &&
+      typeof metadata.videoDurationSeconds === "number" &&
+      metadata.videoDurationSeconds > SHORT_MAX_DURATION_SECONDS
+    ) {
+      throw new Error("SHORT_TOO_LONG");
+    }
+
     let transcriptionSkippedReason: string | null = null;
     if (metadata.transcript?.trim()) {
       transcript = metadata.transcript.trim();
@@ -972,6 +1139,25 @@ export async function runImportPipeline(params: {
         stage: "tiktok_apify_transcript_used",
         transcript_chars: transcript.length,
       });
+    } else if (params.job.source_platform === "youtube") {
+      try {
+        transcript = await readYouTubeShort(params.job.source_url);
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "youtube_short_read",
+          transcript_length: transcript.length,
+          model: YOUTUBE_SHORT_READ_MODEL,
+          duration_known: typeof metadata.videoDurationSeconds === "number",
+        });
+      } catch (error) {
+        transcriptionSkippedReason = "youtube_short_read_error";
+        transcript = null;
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "youtube_short_read_failed",
+          reason: transcriptionSkippedReason,
+          model: YOUTUBE_SHORT_READ_MODEL,
+          details: truncateForLog(String(error), 1200),
+        });
+      }
     } else {
       try {
         const media = await downloadMediaForTranscription(metadata);
@@ -1030,6 +1216,8 @@ export async function runImportPipeline(params: {
       throw new Error("INSUFFICIENT_TEXT_CONTEXT");
     }
 
+    throwIfOutOfTime(params.budget);
+
     const combinedContext = buildCombinedContext({
       sourceUrl: params.job.source_url,
       sourcePlatform: params.job.source_platform,
@@ -1064,6 +1252,8 @@ export async function runImportPipeline(params: {
           ? extraction.confidence.ingredient_review.web_research_citations.length
           : 0,
     });
+
+    throwIfOutOfTime(params.budget);
 
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
       stage: "post_extraction_parallel",
@@ -1225,6 +1415,8 @@ export async function runImportPipeline(params: {
       has_localized_en: !!enrichedDraft.localized?.en,
     });
 
+    throwIfOutOfTime(params.budget);
+
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
       stage: "save_draft",
     });
@@ -1285,6 +1477,7 @@ export async function runImportPipeline(params: {
       payload: enrichedDraft,
       sourcePlatform: params.job.source_platform,
       sourcePostId: metadata.sourcePostId ?? null,
+      sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
       modelInfo: { extractionModel: extraction.model },
     });
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
@@ -1325,6 +1518,9 @@ export async function runImportPipeline(params: {
       needs_ingredient_review: needsIngredientReview,
     });
   } catch (error) {
+    // Once the time budget has run out the job is already marked failed.
+    if (params.budget.expired) return;
+
     const mapped = mapPipelineError(error);
     await updateJobStatus(params.adminClient, {
       jobId: params.job.id,

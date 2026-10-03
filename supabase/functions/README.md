@@ -15,7 +15,7 @@ Set these custom secrets in Supabase project secrets:
 Notes:
 - `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` are provided automatically by Supabase Edge Functions and should not be added manually in the Secrets UI.
 - Model IDs are hardcoded in code; no model-name environment variables are required.
-- Apify actor ID is hardcoded in pipeline as `nH2AHrwxeTRJoN5hX`.
+- Apify actors are set per platform with the optional secrets `APIFY_ACTOR_INSTAGRAM`, `APIFY_ACTOR_TIKTOK` and `APIFY_ACTOR_YOUTUBE`; each falls back to a default in code (`streamers~youtube-scraper` for YouTube).
 
 ## Deploy
 ```bash
@@ -25,6 +25,17 @@ supabase functions deploy import-share
 supabase functions deploy import-status
 supabase functions deploy import-confirm
 ```
+
+Run `supabase db push` before deploying the functions: they read columns the latest migration adds.
+
+## YouTube Shorts
+- Only Shorts are imported. A YouTube link must be `/shorts/<id>` on `youtube.com`, `www.youtube.com` or `m.youtube.com`; anything else is rejected with the code `YOUTUBE_NOT_A_SHORT`. A Short longer than 3 minutes fails with `SHORT_TOO_LONG`.
+- The Apify actor supplies the title, description, duration and thumbnail. Gemini then reads the speech and on-screen text from the Short's link through OpenRouter, pinned to the Google AI Studio provider. Nothing is downloaded.
+- `node scripts/spike-youtube-short.mjs <short-url>` sends the same two requests from your machine (needs `OPENROUTER_API_KEY`, and `APIFY_TOKEN` to check the actor). Run it before the first deploy and whenever the actor or model changes.
+- See `docs/adr/0001-youtube-shorts-read-by-gemini.md` for why.
+
+## Time budget
+- A job is marked failed with `IMPORT_TIMED_OUT` after 135 seconds, ahead of the 150-second background-task limit on the Supabase free plan, so a slow import ends with an error instead of staying in `processing`.
 
 ## Notes
 - The migration creates RLS-protected tables for jobs, drafts, recipes, and events.

@@ -1,0 +1,70 @@
+{
+  "source_platform": "youtube",
+  "submitted_url": "https://youtube.com/shorts/abcDEF12345?si=XyZ123",
+  "source_url": "https://www.youtube.com/shorts/abcDEF12345",
+  "normalized_source_url": "https://youtube.com/shorts/abcDEF12345",
+  "events": [
+    {
+      "stage": "metadata_fetch",
+      "apify_used": true
+    },
+    {
+      "stage": "youtube_short_read",
+      "transcript_length": 612,
+      "duration_known": true
+    },
+    {
+      "stage": "content_generation_ar"
+    },
+    {
+      "stage": "sanity_check"
+    },
+    {
+      "stage": "cache_write"
+    }
+  ],
+  "status": "confirmed",
+  "source_thumbnail_url": "https://i.ytimg.com/vi/abcDEF12345/hqdefault.jpg",
+  "recipe": {
+    "title": "Chicken Kabsa",
+    "cuisine": "Saudi",
+    "meal_type": "Dinner",
+    "servings": 4,
+    "ingredients": [
+      {
+        "name": "basmati rice",
+        "quantity": "2",
+        "unit": "cups",
+        "source": "transcript",
+        "is_estimated": false
+      },
+      {
+        "name": "chicken pieces",
+        "quantity": "1",
+        "unit": "kg",
+        "source": "transcript",
+        "is_estimated": false
+      }
+    ],
+    "localized": {
+      "en": {
+        "ingredients": [{ "name": "basmati rice" }, { "name": "chicken pieces" }],
+        "steps": [
+          { "order": 1, "title": "Brown the chicken", "text": "Brown the chicken with the kabsa spices." },
+          { "order": 2, "title": "Cook the rice", "text": "Add the rice and stock, cover and cook until tender." }
+        ]
+      },
+      "ar": {
+        "ingredients": [{ "name": "أرز بسمتي" }, { "name": "قطع دجاج" }],
+        "steps": [
+          { "order": 1, "title": "حمّر الدجاج", "text": "حمّر الدجاج مع بهارات الكبسة." },
+          { "order": 2, "title": "اطبخ الأرز", "text": "أضف الأرز والمرق وغطِّ القدر حتى ينضج." }
+        ]
+      }
+    }
+  },
+  "rejections": {
+    "not_a_short": { "http_status": 422, "code": "YOUTUBE_NOT_A_SHORT" },
+    "too_long": { "job_status": "failed", "error_code": "SHORT_TOO_LONG" }
+  }
+}

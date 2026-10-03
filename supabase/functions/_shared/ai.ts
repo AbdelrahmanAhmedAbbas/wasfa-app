@@ -109,7 +109,7 @@ const recipeObjectSchema = z.object({
     })
   ),
   source: z.object({
-    platform: z.enum(["instagram", "tiktok", "unknown"]).optional(),
+    platform: z.enum(["instagram", "tiktok", "youtube", "unknown"]).optional(),
     url: z.string().min(1).optional(),
     language: z.string().nullable().optional(),
   }),

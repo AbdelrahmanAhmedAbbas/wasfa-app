@@ -4,6 +4,7 @@ import type {
   SourcePlatform,
   StepItem,
 } from "./types.ts";
+import { isYouTubeShortHost, parseYouTubeShortId } from "./youtube.ts";
 
 const SUPPORTED_HOSTS = [
   "instagram.com",
@@ -22,6 +23,7 @@ export function detectSourcePlatform(url: string): SourcePlatform {
     const host = new URL(url).hostname.toLowerCase();
     if (host.includes("instagram")) return "instagram";
     if (host.includes("tiktok")) return "tiktok";
+    if (isYouTubeShortHost(host)) return "youtube";
   } catch {
     return "unknown";
   }
@@ -98,12 +100,15 @@ export async function resolveTikTokSourceUrl(
 export function extractFirstUrl(text: string): string | null {
   const match = text.match(/https?:\/\/[^\s]+/i);
   if (!match) return null;
-  return normalizeSourceUrl(match[0]);
+  // Shared text often wraps the link in a sentence; drop punctuation that trails it.
+  return normalizeSourceUrl(match[0].replace(/[.,;:!?)\]}'"]+$/, ""));
 }
 
 export function isSupportedSource(url: string): boolean {
   try {
     const host = new URL(url).hostname.toLowerCase();
+    // YouTube is supported for Shorts only, so the path decides, not the host.
+    if (isYouTubeShortHost(host)) return parseYouTubeShortId(url) !== null;
     return SUPPORTED_HOSTS.some((supported) => host === supported || host.endsWith(`.${supported}`));
   } catch {
     return false;

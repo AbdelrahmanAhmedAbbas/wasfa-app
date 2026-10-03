@@ -1,21 +1,10 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import ts from "typescript";
+
+import * as validation from "./validation.ts";
 
 function loadValidationModule() {
-  const source = readFileSync(new URL("./validation.ts", import.meta.url), "utf8");
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-    },
-  });
-
-  const module = { exports: {} };
-  const fn = new Function("exports", "module", outputText);
-  fn(module.exports, module);
-  return module.exports;
+  return validation;
 }
 
 test("validateRecipeDraft preserves rich procedural step fields", () => {
@@ -101,4 +90,49 @@ test("resolves TikTok share links to canonical video URLs", async () => {
     url: "https://www.tiktok.com/@chef/video/1234567890123456789",
     resolved: true,
   });
+});
+
+test("treats only YouTube Short links as a supported YouTube source", () => {
+  const { detectSourcePlatform, isSupportedSource } = loadValidationModule();
+
+  for (const url of [
+    "https://youtube.com/shorts/abcDEF12345?si=XyZ",
+    "https://www.youtube.com/shorts/abcDEF12345",
+    "https://m.youtube.com/shorts/abcDEF12345/",
+  ]) {
+    assert.equal(isSupportedSource(url), true, `${url} should be supported`);
+    assert.equal(detectSourcePlatform(url), "youtube");
+  }
+
+  for (const url of [
+    "https://www.youtube.com/watch?v=abcDEF12345",
+    "https://youtu.be/abcDEF12345",
+    "https://music.youtube.com/shorts/abcDEF12345",
+    "https://www.youtube-nocookie.com/embed/abcDEF12345",
+    "https://www.youtube.com/shorts/abcDEF12345/extra",
+  ]) {
+    assert.equal(isSupportedSource(url), false, `${url} should not be supported`);
+  }
+
+  assert.equal(detectSourcePlatform("https://music.youtube.com/shorts/abcDEF12345"), "unknown");
+  assert.equal(detectSourcePlatform("https://www.instagram.com/reel/ABC123/"), "instagram");
+  assert.equal(detectSourcePlatform("https://vm.tiktok.com/ZSMabc123/"), "tiktok");
+});
+
+test("finds the link in shared text that has a title before it or punctuation after it", () => {
+  const { extractFirstUrl } = loadValidationModule();
+
+  assert.equal(
+    extractFirstUrl("Chicken kabsa in 60 seconds https://youtube.com/shorts/abcDEF12345?si=XyZ"),
+    "https://youtube.com/shorts/abcDEF12345?si=XyZ"
+  );
+  assert.equal(
+    extractFirstUrl("Watch this (https://www.youtube.com/shorts/abcDEF12345)."),
+    "https://www.youtube.com/shorts/abcDEF12345"
+  );
+  assert.equal(
+    extractFirstUrl("https://www.instagram.com/reel/ABC123/"),
+    "https://www.instagram.com/reel/ABC123/"
+  );
+  assert.equal(extractFirstUrl("no link here"), null);
 });

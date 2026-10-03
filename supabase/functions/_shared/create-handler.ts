@@ -17,6 +17,7 @@ import {
   normalizeSourceUrl,
   resolveTikTokSourceUrl,
 } from "./validation.ts";
+import { canonicalYouTubeShortUrl, isYouTubeUrl, parseYouTubeShortId } from "./youtube.ts";
 
 const MAX_SHARED_TEXT_LENGTH = 10_000;
 
@@ -41,14 +42,25 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
 
   if (!submittedUrl) {
     return jsonResponse(
-      { error: "A valid Instagram or TikTok URL is required in source_url or shared_text." },
+      { error: "A valid Instagram, TikTok or YouTube Shorts URL is required in source_url or shared_text." },
       400
+    );
+  }
+
+  const submittedShortId = parseYouTubeShortId(submittedUrl);
+  if (isYouTubeUrl(submittedUrl) && !submittedShortId) {
+    return jsonResponse(
+      {
+        error: "Only YouTube Shorts can be imported. Open the Short on YouTube and share it from there.",
+        code: "YOUTUBE_NOT_A_SHORT",
+      },
+      422
     );
   }
 
   if (!isSupportedSource(submittedUrl)) {
     return jsonResponse(
-      { error: "Unsupported source URL. Only Instagram and TikTok are allowed." },
+      { error: "Unsupported source URL. Only Instagram, TikTok and YouTube Shorts are allowed." },
       422
     );
   }
@@ -56,7 +68,7 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
   const submittedPlatform = detectSourcePlatform(submittedUrl);
   if (submittedPlatform === "unknown") {
     return jsonResponse(
-      { error: "Could not detect source platform. Only Instagram and TikTok are supported." },
+      { error: "Could not detect source platform. Only Instagram, TikTok and YouTube Shorts are supported." },
       422
     );
   }
@@ -88,12 +100,14 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
 
   const sourceResolution = submittedPlatform === "tiktok"
     ? await resolveTikTokSourceUrl(submittedUrl)
-    : { url: submittedUrl, resolved: false };
+    : submittedShortId
+      ? { url: canonicalYouTubeShortUrl(submittedShortId), resolved: false }
+      : { url: submittedUrl, resolved: false };
   const normalizedUrl = sourceResolution.url;
 
   if (!isSupportedSource(normalizedUrl)) {
     return jsonResponse(
-      { error: "Unsupported source URL. Only Instagram and TikTok are allowed." },
+      { error: "Unsupported source URL. Only Instagram, TikTok and YouTube Shorts are allowed." },
       422
     );
   }
@@ -101,7 +115,7 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
   const sourcePlatform = detectSourcePlatform(normalizedUrl);
   if (sourcePlatform === "unknown") {
     return jsonResponse(
-      { error: "Could not detect source platform. Only Instagram and TikTok are supported." },
+      { error: "Could not detect source platform. Only Instagram, TikTok and YouTube Shorts are supported." },
       422
     );
   }

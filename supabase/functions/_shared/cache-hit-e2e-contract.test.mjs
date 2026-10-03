@@ -19,6 +19,10 @@ test("cross-user re-import hits normalized URL cache without model or Apify call
   assert.match(cacheHitBranch[1], /upsertRecipeDraft/);
   assert.match(cacheHitBranch[1], /confirmRecipeFromDraft/);
   assert.match(cacheHitBranch[1], /cache_hit:\s*true/);
+  assert.match(cacheHitBranch[1], /sourceThumbnailUrl:\s*cachedExtraction\.source_thumbnail_url/);
+  assert.match(pipeline, /sourceThumbnailUrl:\s*metadata\.thumbnailUrl \?\? null,\n\s+modelInfo/);
+  assert.match(dbModule, /source_thumbnail_url: params\.sourceThumbnailUrl \?\? null/);
+  assert.match(dbModule, /\.select\("[^"]*source_thumbnail_url[^"]*"\)/);
   assert.doesNotMatch(cacheHitBranch[1], /fetchApifyMetadata|extractRecipe|generateRecipeContent|estimateNutrition|transcribeWithOpenRouter|openrouter_transcribe/);
 
   assert.equal(expected.first_import.cache_written, true);

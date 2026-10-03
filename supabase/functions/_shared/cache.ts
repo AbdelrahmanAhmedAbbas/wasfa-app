@@ -1,10 +1,12 @@
 const TRACKING_PARAM_PREFIXES = ["utm_"];
 const TRACKING_PARAMS = new Set([
   "fbclid",
+  "feature",
   "gclid",
   "igsh",
   "lang",
   "share_item_id",
+  "si",
 ]);
 
 function normalizeSocialHost(hostname: string): string {
