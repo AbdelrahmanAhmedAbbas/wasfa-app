@@ -2,8 +2,12 @@
   "source_platform": "tiktok",
   "events": [
     {
-      "stage": "tiktok_apify_transcript_used",
-      "transcript_chars": 284
+      "stage": "audio_extract",
+      "mime_type": "video/mp4"
+    },
+    {
+      "stage": "openrouter_transcribe",
+      "transcript_length": 284
     },
     {
       "stage": "content_generation_en"

@@ -9,9 +9,12 @@
       "apify_used": true
     },
     {
-      "stage": "youtube_short_read",
-      "transcript_length": 612,
-      "duration_known": true
+      "stage": "audio_extract",
+      "mime_type": "audio/mpeg"
+    },
+    {
+      "stage": "openrouter_transcribe",
+      "transcript_length": 612
     },
     {
       "stage": "content_generation_ar"

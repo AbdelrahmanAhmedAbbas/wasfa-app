@@ -3,7 +3,7 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { router, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LocalizedText as Text } from "@/components/LocalizedText";
@@ -14,19 +14,40 @@ import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { getOnboardingAnswers, type OnboardingAnswers } from "@/lib/onboarding/answers";
 import { DIET_OPTIONS, getHouseholdOption } from "@/lib/onboarding/flow";
+import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors } from "@/lib/theme/wasfa";
 
-const QUOTES: { quoteKey: TranslationKey; byKey: TranslationKey }[] = [
-  { quoteKey: "qProofQuoteA", byKey: "qProofQuoteABy" },
-  { quoteKey: "qProofQuoteB", byKey: "qProofQuoteBBy" },
-  { quoteKey: "qProofQuoteC", byKey: "qProofQuoteCBy" },
-];
-// Quadrants of the four-colour Google ring, clockwise from the top-right.
-const GOOGLE_QUADRANTS = [
-  { color: "#EA4335", top: 0, left: 11 },
-  { color: "#FBBC05", top: 11, left: 11 },
-  { color: "#34A853", top: 11, left: 0 },
-  { color: "#4285F4", top: 0, left: 0 },
+type Review = {
+  quoteKey: TranslationKey;
+  nameKey: TranslationKey;
+  placeKey: TranslationKey;
+  /** Avatar circle and initial colours. */
+  tint: string;
+  ink: string;
+};
+
+const REVIEWS: Review[] = [
+  {
+    quoteKey: "qProofQuoteA",
+    nameKey: "qProofQuoteAName",
+    placeKey: "qProofQuoteAPlace",
+    tint: wasfaColors.primarySoft,
+    ink: wasfaColors.primaryDark,
+  },
+  {
+    quoteKey: "qProofQuoteB",
+    nameKey: "qProofQuoteBName",
+    placeKey: "qProofQuoteBPlace",
+    tint: wasfaColors.ctaSoft,
+    ink: wasfaColors.cta,
+  },
+  {
+    quoteKey: "qProofQuoteC",
+    nameKey: "qProofQuoteCName",
+    placeKey: "qProofQuoteCPlace",
+    tint: wasfaColors.primarySoft,
+    ink: wasfaColors.primaryDark,
+  },
 ];
 
 export default function SignupAuthScreen() {
@@ -103,7 +124,6 @@ export default function SignupAuthScreen() {
           .join(isRTL ? "، " : ", ") || t("obNoPref")
       }`
     : null;
-  const quotes = QUOTES;
 
   return (
     <View style={styles.screen}>
@@ -150,17 +170,31 @@ export default function SignupAuthScreen() {
           style={styles.quoteScroll}
           contentContainerStyle={styles.quoteRow}
         >
-          {quotes.map((quote) => (
-            <View key={quote.quoteKey} style={styles.quoteCard}>
-              <View style={styles.stars}>
-                {[0, 1, 2, 3, 4].map((star) => (
-                  <Feather key={star} name="star" size={13} color={wasfaColors.cta} />
-                ))}
+          {REVIEWS.map((review) => {
+            const name = t(review.nameKey);
+
+            return (
+              <View key={review.quoteKey} style={styles.quoteCard}>
+                <View style={styles.stars}>
+                  {[0, 1, 2, 3, 4].map((star) => (
+                    <FontAwesome key={star} name="star" size={14} color={wasfaColors.cta} />
+                  ))}
+                </View>
+                <Text style={styles.quoteText}>{t(review.quoteKey)}</Text>
+                <View style={styles.reviewer}>
+                  <View style={[styles.avatar, { backgroundColor: review.tint }]}>
+                    <Text style={[styles.avatarInitial, { color: review.ink }]}>
+                      {name.charAt(0)}
+                    </Text>
+                  </View>
+                  <View style={styles.reviewerCopy}>
+                    <Text style={styles.reviewerName}>{name}</Text>
+                    <Text style={styles.reviewerPlace}>{t(review.placeKey)}</Text>
+                  </View>
+                </View>
               </View>
-              <Text style={styles.quoteText}>{t(quote.quoteKey)}</Text>
-              <Text style={styles.quoteBy}>{t(quote.byKey)}</Text>
-            </View>
-          ))}
+            );
+          })}
         </ScrollView>
 
         <View style={styles.spacer} />
@@ -185,15 +219,7 @@ export default function SignupAuthScreen() {
             <ActivityIndicator color={wasfaColors.primaryDark} />
           ) : (
             <>
-              <View style={styles.googleMark}>
-                {GOOGLE_QUADRANTS.map(({ color, top, left }) => (
-                  <View
-                    key={color}
-                    style={[styles.googleQuadrant, { backgroundColor: color, top, left }]}
-                  />
-                ))}
-                <View style={styles.googleMarkCenter} />
-              </View>
+              <Image source={onboardingImages.googleLogo} style={styles.googleLogo} />
               <Text style={styles.googleText}>{t("qSignupGoogle")}</Text>
             </>
           )}
@@ -276,7 +302,7 @@ const styles = StyleSheet.create({
   quoteCard: {
     width: 220,
     padding: 14,
-    gap: 8,
+    gap: 10,
     borderRadius: 20,
     borderWidth: 1,
     borderColor: wasfaColors.line,
@@ -293,7 +319,34 @@ const styles = StyleSheet.create({
     color: wasfaColors.ink,
     textAlign: "left",
   },
-  quoteBy: {
+  // Pinned to the bottom so the reviewers line up across cards of different length.
+  reviewer: {
+    marginTop: "auto",
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+  },
+  avatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  avatarInitial: {
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  reviewerCopy: {
+    flex: 1,
+  },
+  reviewerName: {
+    fontSize: 13,
+    fontWeight: "700",
+    color: wasfaColors.ink,
+    textAlign: "left",
+  },
+  reviewerPlace: {
     fontSize: 12,
     color: wasfaColors.muted,
     textAlign: "left",
@@ -327,25 +380,9 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     color: wasfaColors.ink,
   },
-  // Four-colour ring standing in for the Google "G" (see GOOGLE_QUADRANTS).
-  googleMark: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  googleQuadrant: {
-    position: "absolute",
-    width: 11,
-    height: 11,
-  },
-  googleMarkCenter: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: wasfaColors.surface,
+  googleLogo: {
+    width: 20,
+    height: 20,
   },
   terms: {
     fontSize: 11,

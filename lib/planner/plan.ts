@@ -75,6 +75,17 @@ export function removeRecipeFromPlan(plan: MealPlan, dayKey: string, recipeId: s
   );
 }
 
+/** Moves a recipe between days; a recipe already on the target day is not duplicated. */
+export function moveRecipeInPlan(
+  plan: MealPlan,
+  fromDayKey: string,
+  toDayKey: string,
+  recipeId: string
+): MealPlan {
+  if (fromDayKey === toDayKey || !getPlanDay(plan, fromDayKey).includes(recipeId)) return plan;
+  return addRecipeToPlan(removeRecipeFromPlan(plan, fromDayKey, recipeId), toDayKey, recipeId);
+}
+
 /** True when the recipe sits in the unscheduled bucket or on any of `dayKeys`. */
 export function isRecipePlanned(plan: MealPlan, recipeId: string, dayKeys: string[]): boolean {
   return [ANY_DAY, ...dayKeys].some((dayKey) => getPlanDay(plan, dayKey).includes(recipeId));
@@ -83,6 +94,19 @@ export function isRecipePlanned(plan: MealPlan, recipeId: string, dayKeys: strin
 /** True when the recipe appears in any bucket of the plan, past weeks included. */
 export function isRecipeInPlan(plan: MealPlan, recipeId: string): boolean {
   return plan.any.includes(recipeId) || Object.values(plan.days).some((ids) => ids.includes(recipeId));
+}
+
+/** Takes a recipe out of every bucket, for when the recipe itself is deleted. */
+export function removeRecipeFromWholePlan(plan: MealPlan, recipeId: string): MealPlan {
+  if (!isRecipeInPlan(plan, recipeId)) return plan;
+  const days: Record<string, string[]> = {};
+
+  for (const [key, ids] of Object.entries(plan.days)) {
+    const kept = ids.filter((id) => id !== recipeId);
+    if (kept.length > 0) days[key] = kept;
+  }
+
+  return { any: plan.any.filter((id) => id !== recipeId), days };
 }
 
 export function countPlannedMeals(plan: MealPlan, dayKeys: string[]): number {

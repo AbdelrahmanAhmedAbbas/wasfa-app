@@ -1,7 +1,8 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { ImportLoader } from "@/components/import/ImportLoader";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 
@@ -124,14 +125,11 @@ export default function ShareImportEntryScreen() {
   if (loading) {
     return (
       <View style={[styles.screen, styles.loadingContent]}>
-        <View style={styles.loadingCircle}>
-          <Image source={onboardingImages.mascotTyping} style={styles.loadingMascot} resizeMode="contain" />
-        </View>
+        <ImportLoader style={styles.loadingMascot} />
         <Text style={[styles.kicker, !isRTL && styles.kickerLatin, { writingDirection }]}>
           {t("importProgressKicker")}
         </Text>
         <Text style={[styles.loadingTitle, { writingDirection }]}>{t("creatingImportJob")}</Text>
-        <ActivityIndicator color={wasfaColors.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
@@ -211,19 +209,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     padding: 28,
   },
-  loadingCircle: {
-    width: 230,
-    height: 230,
-    borderRadius: 115,
-    backgroundColor: wasfaColors.primarySoft,
-    alignItems: "center",
-    justifyContent: "flex-end",
-    overflow: "hidden",
-    marginBottom: 16,
-  },
   loadingMascot: {
-    width: 210,
-    height: 210,
+    marginBottom: 16,
   },
   kicker: {
     fontSize: 13,
@@ -243,9 +230,6 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     color: wasfaColors.ink,
     textAlign: "center",
-  },
-  loadingSpinner: {
-    marginTop: 22,
   },
   mascotCircle: {
     width: 120,

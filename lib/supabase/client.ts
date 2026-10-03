@@ -12,8 +12,7 @@ if (!supabaseUrl || !supabaseAnonKey || isPlaceholder) {
     "⚠️  Using placeholder Supabase credentials. Authentication will not work until you:",
     "\n1. Create a Supabase project at https://supabase.com",
     "\n2. Update .env file with your actual credentials",
-    "\n3. Restart the dev server",
-    "\nFor now, you can use Guest Mode to explore the app."
+    "\n3. Restart the dev server"
   );
 }
 

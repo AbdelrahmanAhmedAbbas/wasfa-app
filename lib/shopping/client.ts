@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/supabase/client";
 
 import { normalizeLocalizedRecipeText, type LocalizedRecipeText, type RecipeDetail } from "@/lib/recipes/client";
+import { assessRecipeIngredients, type RecipePreferenceInput } from "@/lib/recipes/ingredient-warnings";
 
 export type ShoppingListItem = {
   id: string;
@@ -86,15 +87,30 @@ export async function deleteShoppingListItem(itemId: string): Promise<void> {
   if (error) throw error;
 }
 
+/**
+ * Puts a recipe's ingredients on the shopping list. With `preferences`, a
+ * non-halal ingredient is listed as its halal swap (unless the user chose to
+ * keep the original), so the list matches what the recipe screen shows.
+ */
 export async function addRecipeIngredientsToShoppingList(
-  recipe: Pick<RecipeDetail, "id" | "ingredients_json">
+  recipe: Pick<RecipeDetail, "id" | "ingredients_json" | "localized">,
+  preferences?: RecipePreferenceInput
 ): Promise<void> {
   const { data: sessionData } = await supabase.auth.getSession();
   const userId = sessionData.session?.user?.id;
   if (!userId) throw new Error("Sign in is required to use shopping list.");
 
+  // Shopping items are written in the recipe's own language.
+  const recipeLanguage = /[\u0600-\u06FF]/.test(recipe.ingredients_json[0]?.name ?? "") ? "ar" : "en";
+  const assessments = preferences ? assessRecipeIngredients(recipe, preferences, recipeLanguage) : [];
+
   const rows = recipe.ingredients_json
-    .map((ingredient) => formatIngredient(ingredient))
+    .map((ingredient, index) => {
+      const halal = assessments[index]?.halal;
+      return formatIngredient(
+        halal?.swapped && halal.alternative ? { ...ingredient, name: halal.alternative } : ingredient
+      );
+    })
     .filter((text) => text.length > 0)
     .map((ingredient_text) => ({
       user_id: userId,

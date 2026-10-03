@@ -18,15 +18,41 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { CtaButton } from "@/components/wasfa/CtaButton";
-import { FoodEmojiTile } from "@/components/wasfa/FoodEmojiTile";
+import { FoodIconTile } from "@/components/wasfa/Glyph";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { planRecipe } from "@/lib/planner/actions";
-import { ANY_DAY, getWeekDates, isRecipePlanned, toDateKey } from "@/lib/planner/plan";
+import {
+  ANY_DAY,
+  getWeekDates,
+  isRecipePlanned,
+  removeRecipeFromWholePlan,
+  toDateKey,
+} from "@/lib/planner/plan";
 import { useMealPlan } from "@/lib/planner/storage";
-import { deleteRecipeById, getRecipeById, recalculateRecipeServings, type LocalizedRecipeText, type RecipeDetail } from "@/lib/recipes/client";
-import { getIngredientWarnings } from "@/lib/recipes/ingredient-warnings";
-import { loadRecipePreferences, type RecipePreferences } from "@/lib/recipes/preferences";
+import type { TranslationKey } from "@/lib/i18n/translations";
+import { ALLERGY_OPTIONS, DISLIKE_OPTIONS } from "@/lib/onboarding/flow";
+import {
+  deleteRecipeById,
+  getRecipeById,
+  localizeRecipe,
+  recalculateRecipeServings,
+  setIngredientUseOriginal,
+  type LocalizedRecipeText,
+  type RecipeDetail,
+} from "@/lib/recipes/client";
+import {
+  applyIngredientSwaps,
+  assessRecipeIngredients,
+  type IngredientAssessment,
+  type IngredientSwap,
+} from "@/lib/recipes/ingredient-warnings";
+import { hasLocalizedContent } from "@/lib/recipes/localization";
+import {
+  EMPTY_RECIPE_PREFERENCES,
+  loadRecipePreferences,
+  type RecipePreferences,
+} from "@/lib/recipes/preferences";
 import {
   formatStepMetaItems,
   getEstimatedIngredientLabel,
@@ -39,6 +65,7 @@ import {
   type MeasurementSystem,
 } from "@/lib/recipes/units";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
+import { refreshShoppingBadge } from "@/lib/shopping/badge";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaRadius, wasfaShadow } from "@/lib/theme/wasfa";
 
@@ -46,6 +73,11 @@ type RecipeIngredient = RecipeDetail["ingredients_json"][number];
 type RecipeStep = RecipeDetail["steps_json"][number];
 type LocalizedIngredient = RecipeIngredient & { localizedName: string; localizedNotes?: string };
 type RecipeView = "ingredients" | "cook";
+
+const HALAL_CONCERN_KEYS: Record<"pork" | "alcohol", TranslationKey> = {
+  pork: "recipeHalalConcernPork",
+  alcohol: "recipeHalalConcernAlcohol",
+};
 
 const colors = {
   ...wasfaColors,
@@ -157,13 +189,12 @@ export default function RecipeDetailsScreen() {
   const [recalculationMessage, setRecalculationMessage] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
   const [planNotice, setPlanNotice] = useState<string | null>(null);
-  const [preferences, setPreferences] = useState<RecipePreferences>({
-    diet: [],
-    allergies: [],
-    measurementSystem: null,
-    nutritionDisplay: "show",
-  });
+  const [preferences, setPreferences] = useState<RecipePreferences>(EMPTY_RECIPE_PREFERENCES);
+  const [translating, setTranslating] = useState(false);
   const recalculationRequestRef = useRef(0);
+  // Recipe and language pairs already sent for translation, so a recipe that
+  // cannot be translated is not retried on every render.
+  const translationAttempts = useRef(new Set<string>());
 
   const insets = useSafeAreaInsets();
   // Root layout sets `direction`, so "left" is the logical start in both languages.
@@ -210,6 +241,30 @@ export default function RecipeDetailsScreen() {
       isMounted = false;
     };
   }, [user?.id]);
+
+  // A recipe saved in one language only gets the other one written the first
+  // time it is opened in that language.
+  useEffect(() => {
+    if (!recipe || hasLocalizedContent(recipe, language)) return;
+    const attemptKey = `${recipe.id}:${language}`;
+    if (translationAttempts.current.has(attemptKey)) return;
+    translationAttempts.current.add(attemptKey);
+
+    setTranslating(true);
+    void localizeRecipe(recipe.id)
+      .then((updated) => {
+        if (!updated) return;
+        // Only the translations are taken, so a change made to the recipe
+        // while the request was running is kept.
+        setRecipe((current) =>
+          current && current.id === updated.id ? { ...current, localized: updated.localized } : current
+        );
+      })
+      .catch(() => {
+        // The recipe stays readable in its original language.
+      })
+      .finally(() => setTranslating(false));
+  }, [recipe, language]);
 
   useEffect(() => {
     if (!recipe) return;
@@ -259,6 +314,9 @@ export default function RecipeDetailsScreen() {
             try {
               setWorking(true);
               await deleteRecipeById(recipe.id);
+              // Its meals and grocery lines go with it, so the tab badges drop too.
+              await updatePlan((current) => removeRecipeFromWholePlan(current, recipe.id));
+              void refreshShoppingBadge();
               router.replace("/(tabs)");
             } catch (e) {
               setError(e instanceof Error ? e.message : t("recipeNotFound"));
@@ -323,6 +381,24 @@ export default function RecipeDetailsScreen() {
     });
   };
 
+  const setUseOriginal = (index: number, useOriginal: boolean) => {
+    if (!recipe) return;
+    const previous = recipe.ingredients_json;
+    setRecipe({
+      ...recipe,
+      ingredients_json: previous.map((ingredient, position) =>
+        position === index ? { ...ingredient, use_original: useOriginal } : ingredient
+      ),
+    });
+
+    void setIngredientUseOriginal(recipe, index, useOriginal).catch(() => {
+      setRecipe((current) =>
+        current && current.id === recipe.id ? { ...current, ingredients_json: previous } : current
+      );
+      Alert.alert(t("recipeSwapSaveFailed"));
+    });
+  };
+
   const toggleStepTips = (index: number) => {
     setExpandedTipSteps((current) => {
       const next = new Set(current);
@@ -367,7 +443,70 @@ export default function RecipeDetailsScreen() {
     localizedName: recipeText.ingredients[index]?.name ?? item.name,
     localizedNotes: recipeText.ingredients[index]?.notes,
   }));
-  const localizedSteps = recipeText.steps.slice().sort((a, b) => a.order - b.order);
+  const assessments = assessRecipeIngredients(recipe, preferences, language);
+
+  // Steps mention ingredients by name, so a halal swap is carried into them.
+  const swaps: IngredientSwap[] = localizedIngredients.flatMap((item, index) => {
+    const halal = assessments[index]?.halal;
+    return halal?.swapped && halal.alternative ? [{ from: item.localizedName, to: halal.alternative }] : [];
+  });
+  const swapText = (text: string) => applyIngredientSwaps(text, swaps);
+  const localizedSteps = recipeText.steps
+    .slice()
+    .sort((a, b) => a.order - b.order)
+    .map((step) =>
+      swaps.length === 0
+        ? step
+        : {
+            ...step,
+            title: step.title ? swapText(step.title) : step.title,
+            text: swapText(step.text),
+            ingredients_used: step.ingredients_used?.map(swapText),
+            tips: step.tips?.map(swapText),
+          }
+    );
+
+  const allergyLabel = (id: string) => {
+    const option = ALLERGY_OPTIONS.find((entry) => entry.id === id);
+    return option ? t(option.labelKey) : id;
+  };
+  const dislikeLabel = (id: string) => {
+    const option = DISLIKE_OPTIONS.find((entry) => entry.id === id);
+    return option ? t(option.labelKey) : id;
+  };
+  const listSeparator = isRTL ? "، " : ", ";
+  const uniqueLabels = (labels: string[]) => Array.from(new Set(labels)).join(listSeparator);
+  const alertLines = [
+    {
+      key: "allergy",
+      danger: true,
+      template: t("recipeAlertAllergy"),
+      names: uniqueLabels(assessments.flatMap((entry) => entry.allergies.map(allergyLabel))),
+    },
+    {
+      key: "not-halal",
+      danger: true,
+      template: t("recipeAlertNotHalal"),
+      names: uniqueLabels(
+        localizedIngredients.flatMap((item, index) => {
+          const halal = assessments[index]?.halal;
+          return halal && !halal.swapped ? [item.localizedName] : [];
+        })
+      ),
+    },
+    {
+      key: "halal-swap",
+      danger: false,
+      template: t("recipeAlertHalalSwap"),
+      names: uniqueLabels(swaps.map((swap) => swap.to)),
+    },
+    {
+      key: "dislike",
+      danger: false,
+      template: t("recipeAlertDislike"),
+      names: uniqueLabels(assessments.flatMap((entry) => entry.dislikes.map(dislikeLabel))),
+    },
+  ].filter((line) => line.names.length > 0);
   const isPlanned = isRecipePlanned(plan, recipe.id, weekDayKeys);
   const servingCount = Number(servingInput);
   const canDecreaseServings = Number.isFinite(servingCount) && servingCount > 1;
@@ -500,6 +639,34 @@ export default function RecipeDetailsScreen() {
 
           {activeView === "ingredients" ? (
             <>
+              {translating ? (
+                <View style={styles.translatingRow}>
+                  <ActivityIndicator color={colors.primary} size="small" />
+                  <Text style={[styles.preferenceHintText, { writingDirection }]}>
+                    {t("recipeTranslating")}
+                  </Text>
+                </View>
+              ) : null}
+
+              {alertLines.length > 0 ? (
+                <View style={styles.alertCard}>
+                  {alertLines.map((line) => (
+                    <View key={line.key} style={styles.alertLine}>
+                      <Feather
+                        name={line.danger ? "alert-triangle" : "info"}
+                        size={15}
+                        color={line.danger ? colors.danger : colors.primaryDark}
+                      />
+                      <Text
+                        style={[styles.alertText, line.danger && styles.alertTextDanger, { writingDirection }]}
+                      >
+                        {line.template.replace("{names}", line.names)}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+
               <View style={styles.ingredientsList}>
                 {localizedIngredients.map((item, index) => (
                   <IngredientRow
@@ -507,12 +674,15 @@ export default function RecipeDetailsScreen() {
                     item={item}
                     measurementSystem={preferences.measurementSystem}
                     checked={checkedIngredients.has(index)}
-                    warnings={getIngredientWarnings(recipe.ingredients_json[index], preferences)}
-                    suggestedAlternativeLabel={t("suggestedAlternative")}
+                    assessment={assessments[index]}
+                    allergyLabel={allergyLabel}
+                    dislikeLabel={dislikeLabel}
                     estimatedLabelText={t("estimatedIngredient")}
                     isRTL={isRTL}
                     language={language}
+                    t={t}
                     onToggle={() => toggleIngredientChecked(index)}
+                    onUseOriginal={(useOriginal) => setUseOriginal(index, useOriginal)}
                   />
                 ))}
               </View>
@@ -694,26 +864,37 @@ function IngredientRow({
   item,
   measurementSystem,
   checked,
-  warnings,
-  suggestedAlternativeLabel,
+  assessment,
+  allergyLabel,
+  dislikeLabel,
   estimatedLabelText,
   isRTL,
   language,
+  t,
   onToggle,
+  onUseOriginal,
 }: {
   item: LocalizedIngredient;
   measurementSystem: MeasurementSystem | null;
   checked: boolean;
-  warnings: ReturnType<typeof getIngredientWarnings>;
-  suggestedAlternativeLabel: string;
+  assessment: IngredientAssessment;
+  allergyLabel: (id: string) => string;
+  dislikeLabel: (id: string) => string;
   estimatedLabelText: string;
   isRTL: boolean;
   language: "en" | "ar";
+  t: (key: TranslationKey) => string;
   onToggle: () => void;
+  onUseOriginal: (useOriginal: boolean) => void;
 }) {
   const amount = getIngredientAmount(item, measurementSystem, language);
   const showEstimated = getEstimatedIngredientLabel(item) !== null;
   const writingDirection = isRTL ? "rtl" : "ltr";
+  const halal = assessment.halal;
+  // A halal swap takes the ingredient's place; the original stays one tap away.
+  const displayName = halal?.swapped && halal.alternative ? halal.alternative : item.localizedName;
+  const halalConcern =
+    halal?.concern ?? (halal?.concernKind ? t(HALAL_CONCERN_KEYS[halal.concernKind]) : undefined);
   return (
     <Pressable
       accessibilityRole="checkbox"
@@ -721,8 +902,8 @@ function IngredientRow({
       onPress={onToggle}
       style={[styles.ingredientRow, checked && styles.ingredientRowChecked]}
     >
-      {/* Both names feed the emoji lookup so it matches in either language. */}
-      <FoodEmojiTile name={`${item.name} ${item.localizedName}`} />
+      {/* Both names feed the icon lookup so it matches in either language. */}
+      <FoodIconTile name={halal?.swapped ? displayName : `${item.name} ${item.localizedName}`} />
       <View style={styles.ingredientNameBlock}>
         {amount ? (
           <Text style={[styles.ingredientAmount, checked && styles.strikeText, { writingDirection }]}>
@@ -737,7 +918,7 @@ function IngredientRow({
               { writingDirection },
             ]}
           >
-            {item.localizedName}
+            {displayName}
           </Text>
           {showEstimated ? (
             <View style={styles.estimatedIngredientBadge}>
@@ -745,19 +926,65 @@ function IngredientRow({
             </View>
           ) : null}
         </View>
-        {warnings.map((warning, index) => (
-          <View key={`${warning.kind}-${index}`} style={styles.warningBlock}>
-            <View style={styles.notePill}>
-              <Text style={styles.notePillText}>{warning.label}</Text>
+        {assessment.allergies.length > 0 || assessment.dislikes.length > 0 ? (
+          <View style={styles.flagRow}>
+            {assessment.allergies.map((allergy) => (
+              <View key={allergy} style={styles.notePill}>
+                <Text style={styles.notePillText}>
+                  {t("recipeFlagAllergy").replace("{name}", allergyLabel(allergy))}
+                </Text>
+              </View>
+            ))}
+            {assessment.dislikes.map((dislike) => (
+              <View key={dislike} style={styles.dislikePill}>
+                <Text style={styles.dislikePillText}>
+                  {t("recipeFlagDislike").replace("{name}", dislikeLabel(dislike))}
+                </Text>
+              </View>
+            ))}
+          </View>
+        ) : null}
+        {halal?.swapped ? (
+          <View style={styles.warningBlock}>
+            <View style={styles.swapPill}>
+              <Text style={styles.swapPillText}>{t("recipeHalalSwap")}</Text>
             </View>
-            {warning.detail ? <Text style={[styles.warningDetail, { writingDirection }]}>{warning.detail}</Text> : null}
-            {warning.suggestion ? (
-              <Text style={[styles.warningSuggestion, { writingDirection }]}>
-                {suggestedAlternativeLabel.replace("{name}", warning.suggestion)}
-              </Text>
+            <Text style={[styles.warningSuggestion, { writingDirection }]}>
+              {t("recipeHalalInsteadOf").replace("{name}", item.localizedName)}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              hitSlop={8}
+              onPress={() => onUseOriginal(true)}
+              style={styles.flagAction}
+            >
+              <Feather name="rotate-ccw" size={12} color={colors.muted} />
+              <Text style={styles.flagActionText}>{t("recipeUseOriginal")}</Text>
+            </Pressable>
+          </View>
+        ) : halal ? (
+          <View style={styles.warningBlock}>
+            <View style={styles.notePill}>
+              <Text style={styles.notePillText}>{t("recipeNotHalal")}</Text>
+            </View>
+            {halalConcern ? (
+              <Text style={[styles.warningDetail, { writingDirection }]}>{halalConcern}</Text>
+            ) : null}
+            {halal.alternative ? (
+              <Pressable
+                accessibilityRole="button"
+                hitSlop={8}
+                onPress={() => onUseOriginal(false)}
+                style={styles.flagAction}
+              >
+                <Feather name="repeat" size={12} color={colors.primaryDark} />
+                <Text style={[styles.flagActionText, styles.flagActionTextPrimary]}>
+                  {t("recipeUseHalalSwap").replace("{name}", halal.alternative)}
+                </Text>
+              </Pressable>
             ) : null}
           </View>
-        ))}
+        ) : null}
       </View>
       <CheckBox checked={checked} />
     </Pressable>
@@ -1258,6 +1485,83 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: "800",
   },
+  dislikePill: {
+    alignSelf: "flex-start",
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 1,
+    borderColor: colors.cta,
+    backgroundColor: colors.ctaSoft,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  dislikePillText: {
+    color: colors.cta,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  swapPill: {
+    alignSelf: "flex-start",
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 1,
+    borderColor: colors.primarySoftBorder,
+    backgroundColor: colors.primarySoft,
+    paddingHorizontal: 9,
+    paddingVertical: 3,
+  },
+  swapPillText: {
+    color: colors.primaryDark,
+    fontSize: 10,
+    fontWeight: "800",
+  },
+  flagRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    marginTop: 4,
+  },
+  flagAction: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingVertical: 2,
+  },
+  flagActionText: {
+    flexShrink: 1,
+    color: colors.muted,
+    fontSize: 12,
+    lineHeight: 16,
+    fontWeight: "700",
+    textDecorationLine: "underline",
+    textAlign: "left",
+  },
+  flagActionTextPrimary: {
+    color: colors.primaryDark,
+  },
+  alertCard: {
+    borderRadius: wasfaRadius.md,
+    borderWidth: 1,
+    borderColor: colors.line,
+    backgroundColor: colors.soft,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 8,
+  },
+  alertLine: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  alertText: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "600",
+    textAlign: "left",
+  },
+  alertTextDanger: {
+    color: colors.danger,
+  },
   warningBlock: {
     alignItems: "flex-start",
     gap: 3,
@@ -1274,6 +1578,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 16,
     textAlign: "left",
+  },
+  translatingRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingHorizontal: 4,
   },
   preferenceHint: {
     flexDirection: "row",

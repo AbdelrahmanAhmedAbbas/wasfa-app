@@ -29,15 +29,16 @@ async function getClientId(): Promise<string> {
   return generated;
 }
 
-async function getHeaders(options: { includeAuth?: boolean } = {}) {
-  const includeAuth = options.includeAuth ?? true;
+// Imports always run as the signed-in account; there is no guest import.
+async function getHeaders() {
   const { data } = await supabase.auth.getSession();
   const authToken = data.session?.access_token;
+  if (!authToken) throw new Error("Sign in is required to import recipes.");
   const apikey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY;
   return {
     "Content-Type": "application/json",
     ...(apikey ? { apikey } : {}),
-    ...(includeAuth && authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    Authorization: `Bearer ${authToken}`,
   };
 }
 
@@ -62,16 +63,15 @@ async function callEdge<T>(
       if (value) url.searchParams.set(key, value);
     }
   }
-  const executeRequest = async (includeAuth: boolean): Promise<Response> =>
-    fetch(url.toString(), {
-      method: options.method ?? "GET",
-      headers: await getHeaders({ includeAuth }),
-      body: options.body ? JSON.stringify(options.body) : undefined,
-    });
+  const headers = await getHeaders();
 
   let response: Response;
   try {
-    response = await executeRequest(true);
+    response = await fetch(url.toString(), {
+      method: options.method ?? "GET",
+      headers,
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
@@ -79,24 +79,13 @@ async function callEdge<T>(
         "Check Supabase function deployment and project auth/link."
     );
   }
-  let payload = response.ok ? "" : await response.text();
+  const payload = response.ok ? "" : await response.text();
 
-  // Recover from stale/wrong Supabase access tokens by retrying without auth.
+  // A rejected access token means the session is no longer valid: sign out so
+  // the app returns to the sign-in screen instead of carrying on signed out.
   if (!response.ok && isInvalidJwtResponse(response.status, payload)) {
-    try {
-      await supabase.auth.signOut();
-    } catch {
-      // Ignore sign-out failure and still retry without auth header.
-    }
-    try {
-      response = await executeRequest(false);
-      payload = response.ok ? "" : await response.text();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(
-        `Edge function request failed (${path}) after JWT recovery. ${message}.`
-      );
-    }
+    await supabase.auth.signOut().catch(() => undefined);
+    throw new Error("Your session has expired. Please sign in again.");
   }
 
   if (!response.ok) {

@@ -3,7 +3,7 @@ import Ionicons from "@expo/vector-icons/Ionicons";
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
-import { Image, Pressable, ScrollView, StyleSheet, Text as RNText, View } from "react-native";
+import { Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LocalizedText as Text } from "@/components/LocalizedText";
@@ -11,6 +11,7 @@ import { MASCOT_ASPECT } from "@/components/onboarding/MascotBadge";
 import { OnboardingFooter } from "@/components/onboarding/OnboardingFooter";
 import { eyebrowStyle, headingStyle } from "@/components/onboarding/text-styles";
 import { CtaButton } from "@/components/wasfa/CtaButton";
+import { Glyph } from "@/components/wasfa/Glyph";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import {
   getOnboardingAnswers,
@@ -21,6 +22,7 @@ import {
   ALLERGY_OPTIONS,
   DEFAULT_SOLUTION,
   DIET_OPTIONS,
+  DISLIKE_OPTIONS,
   getHouseholdOption,
   getStepIndex,
   GOAL_OPTIONS,
@@ -73,6 +75,7 @@ export default function KitchenQuestionnaireScreen() {
         painPoints: [],
         diet: [],
         allergies: [],
+        dislikes: [],
       });
       await setQuestionnaireStep(getStepIndex("chat"));
       // Pops back to the chat (or opens it after a resume) and restarts its questions.
@@ -93,6 +96,7 @@ export default function KitchenQuestionnaireScreen() {
   const household = getHouseholdOption(answers.householdSize);
   const diets = DIET_OPTIONS.filter((option) => answers.diet.includes(option.id));
   const allergies = ALLERGY_OPTIONS.filter((option) => answers.allergies.includes(option.id));
+  const dislikes = DISLIKE_OPTIONS.filter((option) => answers.dislikes.includes(option.id));
   const pickedPains = PAIN_OPTIONS.filter((option) => answers.painPoints.includes(option.id));
   const solutions = pickedPains.length > 0 ? pickedPains : [DEFAULT_SOLUTION];
 
@@ -149,7 +153,7 @@ export default function KitchenQuestionnaireScreen() {
                 {allergies.length > 0 ? (
                   allergies.map((allergy) => (
                     <View key={allergy.id} style={styles.avoidPill}>
-                      <RNText style={styles.avoidEmoji}>{allergy.emoji}</RNText>
+                      <Glyph name={allergy.icon} size={17} color="#FFFFFF" />
                       <Text style={styles.avoidPillText}>{t(allergy.labelKey)}</Text>
                     </View>
                   ))
@@ -160,6 +164,20 @@ export default function KitchenQuestionnaireScreen() {
                 )}
               </View>
             </View>
+
+            {dislikes.length > 0 ? (
+              <View style={styles.cardSection}>
+                <Text style={styles.cardLabel}>{t("obKitchenDislikes")}</Text>
+                <View style={styles.pillWrap}>
+                  {dislikes.map((dislike) => (
+                    <View key={dislike.id} style={styles.avoidPill}>
+                      <Glyph name={dislike.icon} size={17} color="#FFFFFF" />
+                      <Text style={styles.avoidPillText}>{t(dislike.labelKey)}</Text>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ) : null}
           </View>
         </View>
 
@@ -325,9 +343,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
-  },
-  avoidEmoji: {
-    fontSize: 17,
   },
   avoidPillText: {
     paddingStart: 4,

@@ -40,10 +40,16 @@ export const launchScreenColors = {
 
 export const onboardingImages = {
   logo: require("../../assets/images/logo.png"),
+  appIcon: require("../../assets/images/app-icon-logo.png"),
   mascot: require("../../assets/images/mascot.png"),
   mascotReading: require("../../assets/images/mascot-reading.png"),
   mascotTyping: require("../../assets/images/mascot-typing.png"),
+  // The typing pose split into layers for the import loader: the mascot with
+  // a blank clipboard, and the pen it holds.
+  mascotTypingBase: require("../../assets/images/mascot-typing-base.png"),
+  mascotTypingPen: require("../../assets/images/mascot-typing-pen.png"),
   demoKabsaSocial: require("../../assets/images/demo-kabsa-social.png"),
+  googleLogo: require("../../assets/images/google-g.png"),
 };
 
 export const dietImages: Record<string, number> = {

@@ -96,7 +96,7 @@ export default function WelcomeOnboardingScreen() {
       router.back();
       return;
     }
-    router.replace("/(auth)/welcome");
+    router.replace("/(auth)/signup");
   };
 
   const accentOrange = "#F5A623";

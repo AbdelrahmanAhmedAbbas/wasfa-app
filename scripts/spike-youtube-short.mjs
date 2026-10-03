@@ -1,45 +1,48 @@
 #!/usr/bin/env node
-// Checks the two outside calls a YouTube Shorts import depends on, using the same
+// Checks the two Apify calls a YouTube Shorts import depends on, using the same
 // requests the import pipeline sends:
-//   1. Gemini reading the Short from its link through OpenRouter
-//   2. the Apify actor returning the Short's title, description and duration
+//   1. the audio actor returning a downloadable MP3 of the Short
+//   2. the metadata actor returning the Short's title, description and duration
 //
 // Usage:
-//   OPENROUTER_API_KEY=... [APIFY_TOKEN=...] node scripts/spike-youtube-short.mjs <short-url>
+//   APIFY_TOKEN=... node scripts/spike-youtube-short.mjs <short-url>
 //
-// APIFY_TOKEN is optional; without it only the Gemini read is checked.
-// APIFY_ACTOR_YOUTUBE overrides the actor, as it does for the deployed functions.
+// APIFY_ACTOR_YOUTUBE and APIFY_ACTOR_YOUTUBE_AUDIO override the actors, as they do
+// for the deployed functions.
 
 import {
   DEFAULT_APIFY_ACTOR_YOUTUBE,
+  DEFAULT_APIFY_ACTOR_YOUTUBE_AUDIO,
   SHORT_MAX_DURATION_SECONDS,
-  YOUTUBE_SHORT_READ_PROVIDER,
-  YOUTUBE_SHORT_UNREADABLE_MARKER,
+  YOUTUBE_AUDIO_MAX_CHARGE_USD,
   buildYouTubeActorInput,
-  buildYouTubeShortReadRequest,
+  buildYouTubeAudioActorInput,
   canonicalYouTubeShortUrl,
   parseDurationSeconds,
   parseYouTubeShortId,
 } from "../supabase/functions/_shared/youtube.ts";
 
-const READ_TIMEOUT_MS = 90_000;
 const APIFY_TIMEOUT_MS = 90_000;
 
 function seconds(startedAt) {
   return ((Date.now() - startedAt) / 1000).toFixed(1);
 }
 
-async function readShort(label, request, apiKey) {
-  console.log(`\n--- Gemini read: ${label} ---`);
+async function downloadAudio(sourceUrl, apifyToken) {
+  const actorId = process.env.APIFY_ACTOR_YOUTUBE_AUDIO?.trim() || DEFAULT_APIFY_ACTOR_YOUTUBE_AUDIO;
+  console.log(`\n--- Apify audio: ${actorId} ---`);
   const startedAt = Date.now();
   let response;
   try {
-    response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ ...request, usage: { include: true } }),
-      signal: AbortSignal.timeout(READ_TIMEOUT_MS),
-    });
+    response = await fetch(
+      `https://api.apify.com/v2/acts/${actorId}/run-sync-get-dataset-items?format=json&clean=true&maxTotalChargeUsd=${YOUTUBE_AUDIO_MAX_CHARGE_USD}`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apifyToken}`, "Content-Type": "application/json" },
+        body: JSON.stringify(buildYouTubeAudioActorInput(sourceUrl)),
+        signal: AbortSignal.timeout(APIFY_TIMEOUT_MS),
+      }
+    );
   } catch (error) {
     console.log(`FAILED after ${seconds(startedAt)}s: ${String(error)}`);
     return false;
@@ -52,41 +55,35 @@ async function readShort(label, request, apiKey) {
     return false;
   }
 
-  let data;
+  let items;
   try {
-    data = JSON.parse(body);
+    items = JSON.parse(body);
   } catch {
     console.log(`FAILED after ${seconds(startedAt)}s: response was not JSON`);
-    console.log(body.slice(0, 600));
     return false;
   }
-  if (data.error) {
-    console.log(`FAILED after ${seconds(startedAt)}s: ${JSON.stringify(data.error).slice(0, 1200)}`);
+  const record = Array.isArray(items) ? items[0] : items;
+  console.log(`time:        ${seconds(startedAt)}s (the pipeline allows 60s)`);
+  if (!record || typeof record !== "object") {
+    console.log("FAILED: the actor returned no item for this link");
     return false;
   }
-
-  const text = data.choices?.[0]?.message?.content?.trim() ?? "";
-  const usage = data.usage ?? {};
-  console.log(`time:        ${seconds(startedAt)}s`);
-  console.log(`served by:   ${data.provider ?? "unknown"} (${data.model ?? "unknown model"})`);
-  console.log(
-    `tokens:      ${usage.prompt_tokens ?? "?"} in, ${usage.completion_tokens ?? "?"} out` +
-      (typeof usage.cost === "number" ? `, cost $${usage.cost.toFixed(5)}` : "")
-  );
-
-  if (!text) {
-    console.log("FAILED: the model returned no text");
-    return false;
-  }
-  if (text.includes(YOUTUBE_SHORT_UNREADABLE_MARKER)) {
-    console.log("FAILED: the model said it could not open the video");
+  console.log(`status:      ${record.status ?? "MISSING"}${record.error ? ` (${record.error})` : ""}`);
+  console.log(`duration:    ${record.duration ?? "MISSING"}`);
+  console.log(`file:        ${record.fileSize ?? "?"} ${record.contentType ?? ""}`);
+  if (!record.downloadUrl) {
+    console.log("FAILED: no downloadUrl in the result");
     return false;
   }
 
-  console.log(`characters:  ${text.length}`);
-  console.log("text (check it against the real video; a model that cannot see it may invent one):");
-  console.log(text.slice(0, 2500));
-  return true;
+  // The pipeline fetches the file with the token when it sits in Apify storage.
+  const fromApifyStorage = new URL(record.downloadUrl).hostname === "api.apify.com";
+  const file = await fetch(record.downloadUrl, {
+    headers: fromApifyStorage ? { Authorization: `Bearer ${apifyToken}` } : {},
+  });
+  const bytes = file.ok ? (await file.arrayBuffer()).byteLength : 0;
+  console.log(`download:    HTTP ${file.status}, ${file.headers.get("content-type")}, ${bytes} bytes`);
+  return file.ok && bytes > 0 && /^(audio|video)\//.test(file.headers.get("content-type") ?? "");
 }
 
 async function scrapeShort(sourceUrl, apifyToken) {
@@ -148,11 +145,10 @@ async function scrapeShort(sourceUrl, apifyToken) {
 }
 
 const sourceUrl = process.argv[2];
-const openRouterKey = process.env.OPENROUTER_API_KEY;
 const apifyToken = process.env.APIFY_TOKEN;
 
-if (!sourceUrl || !openRouterKey) {
-  console.error("Usage: OPENROUTER_API_KEY=... [APIFY_TOKEN=...] node scripts/spike-youtube-short.mjs <short-url>");
+if (!sourceUrl || !apifyToken) {
+  console.error("Usage: APIFY_TOKEN=... node scripts/spike-youtube-short.mjs <short-url>");
   process.exit(2);
 }
 
@@ -164,28 +160,10 @@ if (!shortId) {
 const canonicalUrl = canonicalYouTubeShortUrl(shortId);
 console.log(`Short: ${canonicalUrl}`);
 
-const production = buildYouTubeShortReadRequest(canonicalUrl);
-const withShortsLink = structuredClone(production);
-withShortsLink.messages[0].content[1].video_url.url = canonicalUrl;
-const { provider: _pinned, ...withoutProviderPin } = production;
-
-let readVerdict = "FAILED in every form: use the Apify subtitle fallback";
-if (await readShort(`as the pipeline sends it (watch link, ${YOUTUBE_SHORT_READ_PROVIDER} only)`, production, openRouterKey)) {
-  readVerdict = "works as built";
-} else if (await readShort(`/shorts/ link, ${YOUTUBE_SHORT_READ_PROVIDER} only`, withShortsLink, openRouterKey)) {
-  readVerdict = "works only with the /shorts/ link: youTubeLinkForServices in youtube.ts needs changing";
-} else if (await readShort("watch link, no provider pin", withoutProviderPin, openRouterKey)) {
-  readVerdict = `works only without the provider pin: YOUTUBE_SHORT_READ_PROVIDER ("${YOUTUBE_SHORT_READ_PROVIDER}") is the wrong slug`;
-}
-
-let scrapeVerdict = "not checked (no APIFY_TOKEN)";
-if (apifyToken) {
-  scrapeVerdict = (await scrapeShort(canonicalUrl, apifyToken))
-    ? "works as built"
-    : "did not return a title and a readable duration: check the fields above";
-}
+const audioOk = await downloadAudio(canonicalUrl, apifyToken);
+const scrapeOk = await scrapeShort(canonicalUrl, apifyToken);
 
 console.log("\n=== Result ===");
-console.log(`Gemini read:    ${readVerdict}`);
-console.log(`Apify metadata: ${scrapeVerdict}`);
-process.exit(readVerdict === "works as built" && scrapeVerdict !== "did not return a title and a readable duration: check the fields above" ? 0 : 1);
+console.log(`Apify audio:    ${audioOk ? "works as built" : "did not return a downloadable audio file: check the output above"}`);
+console.log(`Apify metadata: ${scrapeOk ? "works as built" : "did not return a title and a readable duration: check the fields above"}`);
+process.exit(audioOk && scrapeOk ? 0 : 1);

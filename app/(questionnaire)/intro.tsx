@@ -7,7 +7,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text as RNText,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -18,12 +17,14 @@ import { OnboardingFooter } from "@/components/onboarding/OnboardingFooter";
 import { headingStyle } from "@/components/onboarding/text-styles";
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { CtaButton } from "@/components/wasfa/CtaButton";
+import { Glyph } from "@/components/wasfa/Glyph";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { demoReel } from "@/lib/onboarding/demo-data";
 import { getStepIndex } from "@/lib/onboarding/flow";
 import { setQuestionnaireStep } from "@/lib/onboarding/storage";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
+import type { GlyphName } from "@/lib/theme/glyphs";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors } from "@/lib/theme/wasfa";
 
@@ -46,12 +47,13 @@ const WEEK_DAYS: { labelKey: TranslationKey; date: number }[] = [
 const PLANNED_DAYS = [1, 3, 5];
 const HIGHLIGHT_DAY = 5;
 
-const GROCERY_ROWS: { labelKey: TranslationKey; emoji: string; checked: boolean }[] = [
-  { labelKey: "obListRice", emoji: "🍚", checked: true },
-  { labelKey: "obListChicken", emoji: "🍗", checked: true },
-  { labelKey: "obListTomatoes", emoji: "🍅", checked: false },
-  { labelKey: "obListOnion", emoji: "🧅", checked: false },
-  { labelKey: "obListGarlic", emoji: "🧄", checked: false },
+const RECIPE_GLYPHS: GlyphName[] = ["cooked-rice", "poultry-leg", "tomato", "onion"];
+const GROCERY_ROWS: { labelKey: TranslationKey; icon: GlyphName; checked: boolean }[] = [
+  { labelKey: "obListRice", icon: "cooked-rice", checked: true },
+  { labelKey: "obListChicken", icon: "poultry-leg", checked: true },
+  { labelKey: "obListTomatoes", icon: "tomato", checked: false },
+  { labelKey: "obListOnion", icon: "onion", checked: false },
+  { labelKey: "obListGarlic", icon: "garlic", checked: false },
 ];
 
 // The artwork is drawn for a 396pt-tall stage and scaled down on short screens.
@@ -134,11 +136,9 @@ export default function IntroQuestionnaireScreen() {
 
               <View style={styles.recipeCard}>
                 <Text style={styles.recipeTitle}>{t("obKabsa")}</Text>
-                <View style={styles.emojiRow}>
-                  {["🍚", "🍗", "🍅", "🧅"].map((emoji) => (
-                    <RNText key={emoji} style={styles.recipeEmoji}>
-                      {emoji}
-                    </RNText>
+                <View style={styles.glyphRow}>
+                  {RECIPE_GLYPHS.map((glyph) => (
+                    <Glyph key={glyph} name={glyph} size={22} />
                   ))}
                 </View>
                 <View style={styles.recipeLines}>
@@ -210,7 +210,7 @@ export default function IntroQuestionnaireScreen() {
             <View style={styles.listCard}>
               {GROCERY_ROWS.map((row) => (
                 <View key={row.labelKey} style={styles.listRow}>
-                  <RNText style={styles.listEmoji}>{row.emoji}</RNText>
+                  <Glyph name={row.icon} size={22} />
                   <Text style={[styles.listText, row.checked && styles.listTextChecked]}>
                     {t(row.labelKey)}
                   </Text>
@@ -369,12 +369,9 @@ const styles = StyleSheet.create({
     color: wasfaColors.ink,
     textAlign: "left",
   },
-  emojiRow: {
+  glyphRow: {
     flexDirection: "row",
-    gap: 4,
-  },
-  recipeEmoji: {
-    fontSize: 22,
+    gap: 6,
   },
   recipeLines: {
     gap: 6,
@@ -531,9 +528,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 10,
     paddingVertical: 8,
-  },
-  listEmoji: {
-    fontSize: 22,
   },
   listText: {
     flex: 1,

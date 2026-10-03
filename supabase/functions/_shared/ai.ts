@@ -133,6 +133,7 @@ const localizedTextSchema = z.object({
     z.object({
       name: z.string().min(1),
       notes: z.string().nullable().optional(),
+      suggested_alternative: z.string().nullable().optional(),
     })
   ),
   steps: z.array(
@@ -356,9 +357,10 @@ Rules:
 - Infer servings, ingredient quantities, and ordered steps from transcript + caption + metadata + video OCR context.
 - Ingredient names alone are incomplete. For each ingredient, preserve exact quantity/unit/size details such as 150 g, 2 tbsp, 3 slices, 1 piece, 1 whole, 500 ml, 1 can, 2 cloves, etc.
 - Put preparation details like cooked, diced, chopped, or sliced in preparation, not in the ingredient name when possible.
-- For each ingredient, include allergen_hints when obvious (dairy, egg, gluten, wheat, peanut, tree_nut, seafood, shellfish).
-- For each ingredient, include dietary_flags when obvious (pork, alcohol, meat, dairy, egg, gluten).
-- Set is_halal=false for clearly non-halal ingredients such as pork or alcohol, include halal_concern, and suggest a practical halal alternative.
+- For each ingredient, set allergen_hints to every allergen it contains, using only these values: dairy, egg, gluten, wheat, peanut, tree_nut, seafood, shellfish. Include allergens hidden inside prepared foods (soy sauce has wheat and gluten, mayonnaise has egg, pesto has tree_nut and dairy).
+- For each ingredient, include dietary_flags when they apply (pork, alcohol, meat, dairy, egg, gluten).
+- Set is_halal=false for every non-halal ingredient: pork and anything made from it (bacon, ham, lard, prosciutto, pork gelatin), and alcohol in any form (wine, beer, spirits, mirin, cooking wine, liqueur). Give the reason in halal_concern.
+- For every is_halal=false ingredient, set suggested_alternative to the closest halal ingredient that keeps the dish working, as a short ingredient name only (for example "beef bacon" or "grape juice with a splash of vinegar"). Leave suggested_alternative null for halal ingredients.
 - Use source="caption" for caption text, source="transcript" for speech, source="web_research" for cited web fallback text, and source="ai_estimate" only when nothing in the source text supports the amount.
 - Include evidence_text when the source text explicitly contains the amount or visible overlay line.
 - Each step must include a short imperative title (3-6 words, e.g. "Sear the chicken") plus a procedural text body. Optionally include duration_minutes, temperature, equipment, ingredients_used (names from the ingredient list), and tips.
@@ -444,7 +446,7 @@ Rules:
 - Preserve the recipe's culinary meaning, sequence, and timing.
 - For each ingredient, the "name" field must be a pure noun phrase only. Do not include quantities, units, or parenthetical conversions in the name.
 - Notes, step tips, and equipment may be descriptive but must stay faithful to the recipe.
-- Keep halal concerns and suggested alternatives culturally accurate.
+- Ingredients marked "not halal" list a halal alternative. For each of them, return suggested_alternative: that alternative written in ${targetLabel} as a short ingredient name. Return null for every other ingredient.
 - Use ingredient names in ingredients_used that match the localized ingredient list when possible.
 - Each step needs a short imperative title plus natural procedural text suitable for a home cook.
 ${languageRules.map((rule) => `- ${rule}`).join("\n")}
@@ -457,7 +459,7 @@ Meal type: ${params.draft.meal_type}
 Ingredients:
 ${params.draft.ingredients
   .map((ingredient, index) =>
-    `${index + 1}. ${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""} ${ingredient.name}${ingredient.preparation ? ` | preparation: ${ingredient.preparation}` : ""}${ingredient.notes ? ` | notes: ${ingredient.notes}` : ""}`.trim()
+    `${index + 1}. ${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.size ?? ""} ${ingredient.name}${ingredient.preparation ? ` | preparation: ${ingredient.preparation}` : ""}${ingredient.notes ? ` | notes: ${ingredient.notes}` : ""}${ingredient.is_halal === false ? ` | not halal${ingredient.suggested_alternative ? `, halal alternative: ${ingredient.suggested_alternative}` : ""}` : ""}`.trim()
   )
   .join("\n")}
 Steps:
@@ -783,12 +785,64 @@ function assertArabicContentQuality(localized: LocalizedRecipeText) {
   }
 }
 
+// Mirrors the Arabic check for the fields a reader notices first: English
+// content that came back in Arabic script is rejected so the next model runs.
+function assertEnglishContentQuality(localized: LocalizedRecipeText) {
+  const issues: string[] = [];
+  const latinPattern = /[A-Za-z]/;
+
+  const requireEnglish = (value: string | undefined, issuePrefix: string) => {
+    const trimmed = optionalString(value);
+    if (!trimmed) return;
+    if (containsArabic(trimmed) && !latinPattern.test(trimmed)) issues.push(`${issuePrefix}_not_english`);
+  };
+
+  requireEnglish(localized.title, "title");
+  localized.ingredients.forEach((ingredient, index) => {
+    requireEnglish(ingredient.name, `ingredient_${index + 1}_name`);
+  });
+  localized.steps.forEach((step, index) => {
+    requireEnglish(step.text, `step_${index + 1}_text`);
+  });
+
+  if (issues.length > 0) {
+    throw new Error(`ENGLISH_CONTENT_QUALITY_FAILED ${issues.join(",")}`);
+  }
+}
+
+// A halal alternative only belongs on an ingredient that needs one, and an
+// alternative in the wrong script is dropped rather than failing the content.
+function normalizeLocalizedAlternative(
+  value: string | null | undefined,
+  ingredient: IngredientItem | undefined,
+  language: "en" | "ar"
+): string | undefined {
+  const alternative = optionalString(value);
+  if (!alternative || ingredient?.is_halal !== false) return undefined;
+  if (language === "ar") {
+    return containsArabic(alternative) && !/[A-Za-z]/.test(alternative) ? alternative : undefined;
+  }
+  return containsArabic(alternative) ? undefined : alternative;
+}
+
+function isWrittenInLanguage(value: string, language: "en" | "ar"): boolean {
+  const hasLatin = /[A-Za-z]/.test(value);
+  return language === "ar" ? containsArabic(value) && !hasLatin : hasLatin || !containsArabic(value);
+}
+
 function normalizeGeneratedLocalizedText(
   localized: z.infer<typeof localizedTextSchema>,
   draft: RecipeDraft,
   language: "en" | "ar"
 ): LocalizedRecipeText {
   const fallback = fallbackLocalizedText(draft, language);
+  // The fallback comes from the draft, which is in the source language. A gap
+  // in translated content must stay empty rather than be filled with text in
+  // the other language (which also fails the Arabic quality check below).
+  const inLanguage = (value: string | undefined) =>
+    value && isWrittenInLanguage(value, language) ? value : undefined;
+  const allInLanguage = (values: string[] | undefined) =>
+    values?.length && values.every((value) => isWrittenInLanguage(value, language)) ? values : undefined;
 
   if (localized.ingredients.length !== draft.ingredients.length || localized.steps.length !== draft.steps.length) {
     throw new Error("LOCALIZATION_SHAPE_MISMATCH");
@@ -801,31 +855,47 @@ function normalizeGeneratedLocalizedText(
     const tips = optionalStringArray(step.tips);
     return {
       order,
-      title: optionalString(step.title) ?? fallback.steps[index]?.title ?? fallbackStepTitle(order, language),
+      title:
+        optionalString(step.title) ??
+        inLanguage(fallback.steps[index]?.title) ??
+        fallbackStepTitle(order, language),
       text: step.text.trim() || fallback.steps[index]?.text || "",
       duration_minutes: optionalPositiveInt(step.duration_minutes) ?? fallback.steps[index]?.duration_minutes,
       temperature: step.temperature ?? fallback.steps[index]?.temperature,
-      equipment: equipment.length > 0 ? equipment : fallback.steps[index]?.equipment,
+      equipment: equipment.length > 0 ? equipment : allInLanguage(fallback.steps[index]?.equipment),
       ingredients_used:
-        ingredientsUsed.length > 0 ? ingredientsUsed : fallback.steps[index]?.ingredients_used,
-      tips: tips.length > 0 ? tips : fallback.steps[index]?.tips,
+        ingredientsUsed.length > 0
+          ? ingredientsUsed
+          : allInLanguage(fallback.steps[index]?.ingredients_used),
+      tips: tips.length > 0 ? tips : allInLanguage(fallback.steps[index]?.tips),
     };
   });
 
+  const normalizedIngredients = localized.ingredients.map((ingredient, index) => ({
+    name: ingredient.name.trim() || fallback.ingredients[index]?.name || draft.ingredients[index]?.name,
+    notes: optionalString(ingredient.notes) ?? inLanguage(fallback.ingredients[index]?.notes),
+    suggested_alternative: normalizeLocalizedAlternative(
+      ingredient.suggested_alternative,
+      draft.ingredients[index],
+      language
+    ),
+  }));
+
   const normalized = {
     title: localized.title.trim() || fallback.title,
-    description: optionalString(localized.description) ?? fallback.description,
-    cuisine: optionalString(localized.cuisine) ?? fallback.cuisine,
-    meal_type: optionalString(localized.meal_type) ?? fallback.meal_type,
-    ingredients: localized.ingredients.map((ingredient, index) => ({
-      name: ingredient.name.trim() || fallback.ingredients[index]?.name || draft.ingredients[index]?.name,
-      notes: optionalString(ingredient.notes) ?? fallback.ingredients[index]?.notes,
-    })),
-    steps: linkStepIngredients(normalizedSteps, draft.ingredients),
+    description: optionalString(localized.description) ?? inLanguage(fallback.description),
+    cuisine: optionalString(localized.cuisine) ?? inLanguage(fallback.cuisine),
+    meal_type: optionalString(localized.meal_type) ?? inLanguage(fallback.meal_type),
+    ingredients: normalizedIngredients,
+    // Step ingredients are matched to this language's own ingredient names;
+    // matching the source-language names would drop every translated one.
+    steps: linkStepIngredients(normalizedSteps, normalizedIngredients),
   } satisfies LocalizedRecipeText;
 
   if (language === "ar") {
     assertArabicContentQuality(normalized);
+  } else {
+    assertEnglishContentQuality(normalized);
   }
 
   return normalized;
@@ -885,6 +955,69 @@ export async function generateRecipeContent(
   throw new Error(
     `RECIPE_CONTENT_GENERATION_FAILED ${targetLanguage} ${truncateForLog(String(lastError))}`
   );
+}
+
+type RecipeLanguage = "en" | "ar";
+
+/** True when the draft has complete content in `language`, written in that language. */
+export function hasUsableLocalizedContent(draft: RecipeDraft, language: RecipeLanguage): boolean {
+  const localized = draft.localized?.[language];
+  if (!localized) return false;
+  if (
+    localized.ingredients.length !== draft.ingredients.length ||
+    localized.steps.length !== draft.steps.length
+  ) {
+    return false;
+  }
+
+  const arabicLetters = (localized.title.match(/[\u0600-\u06FF]/g) ?? []).length;
+  const latinLetters = (localized.title.match(/[A-Za-z]/g) ?? []).length;
+  return language === "ar" ? arabicLetters > 0 && arabicLetters >= latinLetters : latinLetters > arabicLetters;
+}
+
+export function getMissingLocalizedLanguages(draft: RecipeDraft): RecipeLanguage[] {
+  return (["en", "ar"] as const).filter((language) => !hasUsableLocalizedContent(draft, language));
+}
+
+/**
+ * Generates whichever of the English and Arabic versions a draft lacks. A
+ * language that still fails is reported in `failed` and left out of the draft.
+ */
+export async function completeLocalizedContent(
+  draft: RecipeDraft,
+  sourceText = ""
+): Promise<{ draft: RecipeDraft; filled: RecipeLanguage[]; failed: RecipeLanguage[] }> {
+  const missing = getMissingLocalizedLanguages(draft);
+  if (missing.length === 0) return { draft, filled: [], failed: [] };
+
+  // Unusable content must not seed the new attempt or survive a failed one.
+  const localized: NonNullable<RecipeDraft["localized"]> = { ...(draft.localized ?? {}) };
+  for (const language of missing) delete localized[language];
+  const base: RecipeDraft = { ...draft, localized };
+
+  const results = await Promise.all(
+    missing.map(async (language) => {
+      try {
+        const { content } = await generateRecipeContent(base, language, sourceText);
+        return { language, content };
+      } catch {
+        return { language, content: null };
+      }
+    })
+  );
+
+  const filled: RecipeLanguage[] = [];
+  const failed: RecipeLanguage[] = [];
+  for (const { language, content } of results) {
+    if (content) {
+      localized[language] = content;
+      filled.push(language);
+    } else {
+      failed.push(language);
+    }
+  }
+
+  return { draft: { ...draft, localized }, filled, failed };
 }
 
 export async function fillMissingRecipeDetails(
@@ -1333,10 +1466,17 @@ export async function recalculateRecipeServings(
   const sourceLanguage = getSourceRecipeLanguage(draft);
   const sourceSteps = rewrittenLocalized[sourceLanguage]?.steps ?? draft.steps;
 
+  // The rewrite fills a language the recipe lacks with source-language text.
+  // Storing that would make the recipe look translated when it is not.
+  const localized: NonNullable<RecipeDraft["localized"]> = {};
+  for (const language of ["en", "ar"] as const) {
+    if (draft.localized?.[language]) localized[language] = rewrittenLocalized[language];
+  }
+
   const candidate = validateRecipeDraft({
     ...draftWithScaledIngredients,
     steps: sourceSteps,
-    localized: rewrittenLocalized,
+    localized,
   });
   if (!candidate) throw new Error("Serving recalculation failed validation.");
 
@@ -1344,6 +1484,6 @@ export async function recalculateRecipeServings(
     servings: candidate.servings,
     ingredients: candidate.ingredients,
     steps: candidate.steps,
-    localized: rewrittenLocalized,
+    localized,
   };
 }

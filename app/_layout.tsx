@@ -10,7 +10,7 @@ import { View } from 'react-native';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
-import { AuthProvider } from '@/lib/auth/AuthProvider';
+import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { LanguageProvider, useLanguage } from '@/lib/i18n/LanguageProvider';
 import { getShareIntentKey, shouldRedirectShareIntent } from '@/lib/import/navigation';
 import { brandFontSources } from '@/lib/theme/fonts';
@@ -88,13 +88,21 @@ function RootLayoutNav() {
   const { isRTL } = useLanguage();
   const direction = isRTL ? "rtl" : "ltr";
   const router = useRouter();
+  const { user, loading: authLoading } = useAuth();
+  const isSignedIn = !!user;
   const { isReady, hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
   const lastShareKey = useRef<string | null>(null);
 
   useEffect(() => {
     const currentKey = getShareIntentKey(shareIntent);
-    if (!isReady || !hasShareIntent || !shouldRedirectShareIntent(currentKey, lastShareKey.current)) return;
+    if (!isReady || authLoading || !hasShareIntent) return;
+    if (!shouldRedirectShareIntent(currentKey, lastShareKey.current)) return;
     lastShareKey.current = currentKey;
+    // Importing needs an account, so a share received while signed out is dropped.
+    if (!isSignedIn) {
+      resetShareIntent(true);
+      return;
+    }
     const url = shareIntent.webUrl ?? undefined;
     const text = shareIntent.text ?? undefined;
     const firstFile = shareIntent.files?.[0];
@@ -107,7 +115,7 @@ function RootLayoutNav() {
     if (mediaMime) params.media_mime = mediaMime;
     resetShareIntent(true);
     router.replace({ pathname: "/import", params });
-  }, [isReady, hasShareIntent, shareIntent, resetShareIntent, router]);
+  }, [isReady, authLoading, isSignedIn, hasShareIntent, shareIntent, resetShareIntent, router]);
 
   return (
     <View style={{ flex: 1, direction }}>
@@ -119,11 +127,15 @@ function RootLayoutNav() {
             <Stack.Screen name="(questionnaire)" options={{ headerShown: false }} />
             <Stack.Screen name="(paywall)" options={{ headerShown: false }} />
             <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
-            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-            <Stack.Screen name="import/index" options={{ headerShown: false }} />
-            <Stack.Screen name="import/[jobId]" options={{ headerShown: false }} />
-            <Stack.Screen name="recipe/[id]" options={{ headerShown: false }} />
-            <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+            {/* There is no guest mode: without an account these screens do not
+                exist, so signing out (or an expired session) returns to index. */}
+            <Stack.Protected guard={isSignedIn}>
+              <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+              <Stack.Screen name="import/index" options={{ headerShown: false }} />
+              <Stack.Screen name="import/[jobId]" options={{ headerShown: false }} />
+              <Stack.Screen name="recipe/[id]" options={{ headerShown: false }} />
+              <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+            </Stack.Protected>
           </Stack>
         </ThemeProvider>
       </LocaleDirContext.Provider>

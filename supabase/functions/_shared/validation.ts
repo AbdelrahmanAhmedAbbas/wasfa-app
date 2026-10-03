@@ -267,6 +267,7 @@ function sanitizeIngredient(input: unknown): IngredientItem | null {
   if (typeof item.is_halal === "boolean") result.is_halal = item.is_halal;
   if (halalConcern) result.halal_concern = halalConcern;
   if (suggestedAlternative) result.suggested_alternative = suggestedAlternative;
+  if (item.use_original === true) result.use_original = true;
   if (source) result.source = source;
   if (typeof confidence === "number") result.confidence = confidence;
   if (evidenceText) result.evidence_text = evidenceText;
@@ -364,9 +365,12 @@ function sanitizeLocalized(input: unknown): RecipeDraft["localized"] | undefined
         return {
           name,
           notes: optionalString(ingredient.notes),
+          suggested_alternative: optionalString(ingredient.suggested_alternative),
         };
       })
-      .filter((entry): entry is { name: string; notes?: string } => !!entry);
+      .filter(
+        (entry): entry is { name: string; notes?: string; suggested_alternative?: string } => !!entry
+      );
 
     const steps = stepsRaw
       .map((entry, index) => {

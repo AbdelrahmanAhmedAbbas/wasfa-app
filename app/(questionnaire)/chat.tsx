@@ -9,7 +9,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text as RNText,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,12 +16,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { MascotBadge } from "@/components/onboarding/MascotBadge";
 import { CtaButton } from "@/components/wasfa/CtaButton";
+import { Glyph } from "@/components/wasfa/Glyph";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import {
   saveOnboardingAnswers,
   type AllergyOption,
   type DietOption,
+  type DislikeOption,
   type GoalOption,
   type HouseholdSize,
   type PainPoint,
@@ -30,6 +31,7 @@ import {
 import {
   ALLERGY_OPTIONS,
   DIET_OPTIONS,
+  DISLIKE_OPTIONS,
   getStepIndex,
   GOAL_OPTIONS,
   HOUSEHOLD_OPTIONS,
@@ -38,6 +40,7 @@ import {
 } from "@/lib/onboarding/flow";
 import { setQuestionnaireStep } from "@/lib/onboarding/storage";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
+import type { GlyphName } from "@/lib/theme/glyphs";
 import { dietImages } from "@/lib/theme/onboarding";
 import { wasfaColors } from "@/lib/theme/wasfa";
 
@@ -47,7 +50,8 @@ const QUESTIONS: { askKey: TranslationKey; replyKey: TranslationKey | null }[] =
   { askKey: "obQ2", replyKey: "obQ2Reply" },
   { askKey: "obQ3", replyKey: "obQ3Reply" },
   { askKey: "obQ4", replyKey: "obQ4Reply" },
-  { askKey: "obQ5", replyKey: null },
+  { askKey: "obQ5", replyKey: "obQ5Reply" },
+  { askKey: "obQ6", replyKey: null },
 ];
 const QUESTION_COUNT = QUESTIONS.length;
 const TYPING_MS = 750;
@@ -58,6 +62,7 @@ type ChatAnswers = {
   pains: PainPoint[];
   diets: DietOption[];
   allergies: AllergyOption[];
+  dislikes: DislikeOption[];
 };
 
 const EMPTY_ANSWERS: ChatAnswers = {
@@ -66,6 +71,7 @@ const EMPTY_ANSWERS: ChatAnswers = {
   pains: [],
   diets: [],
   allergies: [],
+  dislikes: [],
 };
 
 type Message = { bot: boolean; text?: string; typing?: boolean };
@@ -73,7 +79,7 @@ type Message = { bot: boolean; text?: string; typing?: boolean };
 type Chip = {
   key: string;
   label: string;
-  emoji?: string;
+  icon?: GlyphName;
   image?: number;
   selected: boolean;
   dimmed?: boolean;
@@ -92,6 +98,7 @@ export default function ChatQuestionnaireScreen() {
   const [typing, setTyping] = useState(false);
   const [answers, setAnswers] = useState<ChatAnswers>(EMPTY_ANSWERS);
   const [allergiesNone, setAllergiesNone] = useState(false);
+  const [dislikesNone, setDislikesNone] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const scrollRef = useRef<ScrollView>(null);
   const typingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -110,6 +117,7 @@ export default function ChatQuestionnaireScreen() {
     setTyping(false);
     setAnswers(EMPTY_ANSWERS);
     setAllergiesNone(false);
+    setDislikesNone(false);
   }, [restart]);
 
   useEffect(() => {
@@ -146,6 +154,7 @@ export default function ChatQuestionnaireScreen() {
     if (question === 2) void saveOnboardingAnswers({ painPoints: answers.pains });
     if (question === 3) void saveOnboardingAnswers({ diet: answers.diets });
     if (question === 4) void saveOnboardingAnswers({ allergies: answers.allergies });
+    if (question === 5) void saveOnboardingAnswers({ dislikes: answers.dislikes });
     advance();
   };
 
@@ -158,6 +167,7 @@ export default function ChatQuestionnaireScreen() {
         painPoints: answers.pains,
         diet: answers.diets,
         allergies: answers.allergies,
+        dislikes: answers.dislikes,
       });
       await setQuestionnaireStep(getStepIndex("kitchen"));
       router.push("/(questionnaire)/kitchen");
@@ -181,6 +191,7 @@ export default function ChatQuestionnaireScreen() {
     joinLabels(PAIN_OPTIONS, answers.pains),
     joinLabels(DIET_OPTIONS, answers.diets) || t("obNoPref"),
     joinLabels(ALLERGY_OPTIONS, answers.allergies) || t("obNone"),
+    joinLabels(DISLIKE_OPTIONS, answers.dislikes) || t("obNone"),
   ];
 
   const messages: Message[] = [
@@ -214,7 +225,7 @@ export default function ChatQuestionnaireScreen() {
       chips = GOAL_OPTIONS.map((option) => ({
         key: option.id,
         label: t(option.labelKey),
-        emoji: option.emoji,
+        icon: option.icon,
         selected: false,
         onPress: () => answerGoal(option.id),
       }));
@@ -222,7 +233,7 @@ export default function ChatQuestionnaireScreen() {
       chips = HOUSEHOLD_OPTIONS.map((option) => ({
         key: option.id,
         label: t(option.labelKey),
-        emoji: option.emoji,
+        icon: option.icon,
         selected: false,
         onPress: () => answerHousehold(option.id),
       }));
@@ -230,7 +241,7 @@ export default function ChatQuestionnaireScreen() {
       chips = PAIN_OPTIONS.map((option) => ({
         key: option.id,
         label: t(option.labelKey),
-        emoji: option.emoji,
+        icon: option.icon,
         selected: answers.pains.includes(option.id),
         onPress: () =>
           setAnswers((current) => ({ ...current, pains: toggle(current.pains, option.id) })),
@@ -258,7 +269,7 @@ export default function ChatQuestionnaireScreen() {
         ...ALLERGY_OPTIONS.map((option) => ({
           key: option.id,
           label: t(option.labelKey),
-          emoji: option.emoji,
+          icon: option.icon,
           selected: answers.allergies.includes(option.id),
           onPress: () => {
             setAllergiesNone(false);
@@ -275,6 +286,31 @@ export default function ChatQuestionnaireScreen() {
           onPress: () => {
             setAllergiesNone((current) => !current);
             setAnswers((current) => ({ ...current, allergies: [] }));
+          },
+        },
+      ];
+    } else if (question === 5) {
+      chips = [
+        ...DISLIKE_OPTIONS.map((option) => ({
+          key: option.id,
+          label: t(option.labelKey),
+          icon: option.icon,
+          selected: answers.dislikes.includes(option.id),
+          onPress: () => {
+            setDislikesNone(false);
+            setAnswers((current) => ({
+              ...current,
+              dislikes: toggle(current.dislikes, option.id),
+            }));
+          },
+        })),
+        {
+          key: "none",
+          label: t("obNone"),
+          selected: dislikesNone,
+          onPress: () => {
+            setDislikesNone((current) => !current);
+            setAnswers((current) => ({ ...current, dislikes: [] }));
           },
         },
       ];
@@ -389,14 +425,14 @@ export default function ChatQuestionnaireScreen() {
                 disabled={chip.dimmed}
                 style={[
                   styles.chip,
-                  !chip.emoji && !chip.image && styles.chipPlain,
+                  !chip.icon && !chip.image && styles.chipPlain,
                   chip.selected && styles.chipSelected,
                   chip.dimmed && styles.chipDimmed,
                 ]}
                 onPress={chip.onPress}
               >
                 {chip.image ? <Image source={chip.image} style={styles.chipImage} /> : null}
-                {chip.emoji ? <RNText style={styles.chipEmoji}>{chip.emoji}</RNText> : null}
+                {chip.icon ? <Glyph name={chip.icon} size={20} /> : null}
                 <Text style={styles.chipLabel}>{chip.label}</Text>
               </Pressable>
             ))}
@@ -655,9 +691,6 @@ const styles = StyleSheet.create({
     width: 30,
     height: 30,
     borderRadius: 15,
-  },
-  chipEmoji: {
-    fontSize: 20,
   },
   chipLabel: {
     flexShrink: 1,

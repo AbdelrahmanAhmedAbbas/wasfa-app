@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2.49.1";
 
 import {
+  completeLocalizedContent,
   estimateNutrition,
   extractRecipe,
   fillMissingRecipeDetails,
@@ -23,11 +24,11 @@ import { runSanityCheck } from "./sanity-check.ts";
 import type { ImportJobRow, LocalizedRecipeText, RecipeDraft } from "./types.ts";
 import {
   DEFAULT_APIFY_ACTOR_YOUTUBE,
+  DEFAULT_APIFY_ACTOR_YOUTUBE_AUDIO,
   SHORT_MAX_DURATION_SECONDS,
-  YOUTUBE_SHORT_READ_MODEL,
-  YOUTUBE_SHORT_UNREADABLE_MARKER,
+  YOUTUBE_AUDIO_MAX_CHARGE_USD,
   buildYouTubeActorInput,
-  buildYouTubeShortReadRequest,
+  buildYouTubeAudioActorInput,
   parseDurationSeconds,
   parseYouTubeShortId,
   youTubeThumbnailUrl,
@@ -40,12 +41,11 @@ const MAX_MEDIA_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 // Transcription: upload and transcribe whenever we have media, up to API limit (OpenAI 25 MB).
 const MAX_TRANSCRIPTION_UPLOAD_BYTES = 25 * 1024 * 1024;
 const DEFAULT_APIFY_ACTOR_INSTAGRAM = "nH2AHrwxeTRJoN5hX";
-const DEFAULT_APIFY_ACTOR_TIKTOK = "W2tevPiLZeuTLtcG7";
+const DEFAULT_APIFY_ACTOR_TIKTOK = "clockworks~tiktok-scraper";
 const APIFY_TIMEOUT_MS = 60_000;
 const YOUTUBE_APIFY_TIMEOUT_MS = 40_000;
 const MEDIA_FETCH_TIMEOUT_MS = 45_000;
 const OPENROUTER_TRANSCRIBE_TIMEOUT_MS = 90_000;
-const YOUTUBE_SHORT_READ_TIMEOUT_MS = 60_000;
 // Background tasks are cut off at 150 seconds on the Supabase free plan. Failing the job
 // before that leaves time to record the failure, instead of a job stuck in "processing".
 const PIPELINE_TIME_BUDGET_MS = 135_000;
@@ -70,7 +70,7 @@ type SourceMetadata = {
   mediaType?: string;
   thumbnailUrl?: string;
   mediaOrigin?: "apify";
-  transcript?: string;
+  mediaError?: string;
 };
 
 type PipelineBudget = { expired: boolean };
@@ -255,13 +255,14 @@ function isMediaContentType(type: string): boolean {
   return type.startsWith("audio/") || type.startsWith("video/");
 }
 
-async function safeFetch(url: string): Promise<Response | null> {
+async function safeFetch(url: string, headers: Record<string, string> = {}): Promise<Response | null> {
   try {
     return await fetchWithTimeout(
       url,
       {
         headers: {
           "User-Agent": "Mozilla/5.0 (MealPlannerBot/1.0)",
+          ...headers,
         },
         redirect: "follow",
       },
@@ -271,6 +272,13 @@ async function safeFetch(url: string): Promise<Response | null> {
   } catch {
     return null;
   }
+}
+
+// Media an actor stored for us sits in Apify storage, which can require the account token.
+function apifyStorageHeaders(url: string): Record<string, string> {
+  const apifyToken = Deno.env.get("APIFY_TOKEN");
+  if (!apifyToken || new URL(url).hostname !== "api.apify.com") return {};
+  return { Authorization: `Bearer ${apifyToken}` };
 }
 
 function extractApifyPrimaryRecord(payload: unknown): Record<string, unknown> | null {
@@ -314,14 +322,17 @@ async function runApifyActor(params: {
   sourceUrl: string;
   body: Record<string, unknown>;
   timeoutMs?: number;
+  maxTotalChargeUsd?: number;
 }): Promise<unknown> {
   const apifyToken = Deno.env.get("APIFY_TOKEN");
   if (!apifyToken) {
     throw new Error("APIFY_TOKEN_MISSING");
   }
 
+  const chargeCap =
+    typeof params.maxTotalChargeUsd === "number" ? `&maxTotalChargeUsd=${params.maxTotalChargeUsd}` : "";
   const response = await fetchWithTimeout(
-    `https://api.apify.com/v2/acts/${params.actorId}/run-sync-get-dataset-items?format=json&clean=true`,
+    `https://api.apify.com/v2/acts/${params.actorId}/run-sync-get-dataset-items?format=json&clean=true${chargeCap}`,
     {
       method: "POST",
       headers: {
@@ -369,10 +380,11 @@ function parseApifyMetadata(sourceUrl: string, payload: unknown): SourceMetadata
   const videoMeta = asRecord(record?.videoMeta) ?? {};
   const musicMeta = asRecord(record?.musicMeta) ?? {};
   const authorMeta = asRecord(record?.authorMeta) ?? {};
-  const transcript = asRecord(record?.transcript) ?? {};
-  const transcriptText = asString(transcript.text);
 
+  // A TikTok video the actor downloaded is listed in mediaUrls; TikTok's own links expire
+  // and refuse plain downloads, so the stored copy comes first.
   const videoUrl =
+    sanitizeHttpUrl(asStringArray(record?.mediaUrls)?.[0]) ||
     sanitizeHttpUrl(record?.videoUrl) ||
     sanitizeHttpUrl(videoMeta.downloadAddr) ||
     sanitizeHttpUrl(record?.["videoMeta.downloadAddr"]);
@@ -476,7 +488,6 @@ function parseApifyMetadata(sourceUrl: string, payload: unknown): SourceMetadata
     mediaType: videoUrl ? "video/mp4" : audioUrl ? "audio/mp4" : undefined,
     thumbnailUrl,
     mediaOrigin: mediaUrl ? "apify" : undefined,
-    transcript: transcriptText,
   };
 }
 
@@ -494,64 +505,27 @@ async function fetchInstagramViaApify(sourceUrl: string): Promise<SourceMetadata
   return parseApifyMetadata(sourceUrl, payload);
 }
 
-function buildTikTokApifyBodies(sourceUrl: string): Array<{
-  label: string;
-  body: Record<string, unknown>;
-}> {
-  return [
-    {
-      label: "postURLs",
-      body: {
-        postURLs: [sourceUrl],
-        shouldDownloadCovers: false,
-        shouldDownloadSlideshowImages: false,
-        shouldDownloadSubtitles: false,
-        shouldDownloadVideos: false,
-        translate: "english",
-        video_url: sourceUrl,
-      },
-    },
-    {
-      label: "legacy_video_url_string",
-      body: {
-        translate: "english",
-        video_url: sourceUrl,
-      },
-    },
-    {
-      label: "legacy_video_url_array",
-      body: {
-        translate: "english",
-        video_url: [sourceUrl],
-      },
-    },
-  ];
-}
-
 async function fetchTikTokViaApify(sourceUrl: string): Promise<SourceMetadata> {
   const actorId = getApifyActorId("APIFY_ACTOR_TIKTOK", DEFAULT_APIFY_ACTOR_TIKTOK);
-  let lastError: unknown;
 
-  for (const attempt of buildTikTokApifyBodies(sourceUrl)) {
-    try {
-      const payload = await runApifyActor({
-        actorId,
-        sourceUrl,
-        body: attempt.body,
-      });
-      return parseApifyMetadata(sourceUrl, payload);
-    } catch (error) {
-      if (String(error).includes("APIFY_TOKEN_MISSING")) throw error;
-      lastError = error;
-      console.warn("[import][apify] TikTok actor attempt failed", {
-        actorId,
-        inputShape: attempt.label,
-        error: truncateForLog(String(error), 800),
-      });
-    }
+  try {
+    const payload = await runApifyActor({
+      actorId,
+      sourceUrl,
+      body: {
+        postURLs: [sourceUrl],
+        resultsPerPage: 1,
+        shouldDownloadVideos: true,
+        shouldDownloadCovers: false,
+        shouldDownloadSlideshowImages: false,
+        downloadSubtitlesOptions: "NEVER_DOWNLOAD_SUBTITLES",
+      },
+    });
+    return parseApifyMetadata(sourceUrl, payload);
+  } catch (error) {
+    if (String(error).includes("APIFY_TOKEN_MISSING")) throw error;
+    throw new Error(`TIKTOK_APIFY_FAILED ${String(error)}`);
   }
-
-  throw new Error(`TIKTOK_APIFY_FAILED ${String(lastError)}`);
 }
 
 function parseYouTubeApifyMetadata(payload: unknown): SourceMetadata {
@@ -573,9 +547,39 @@ function parseYouTubeApifyMetadata(payload: unknown): SourceMetadata {
   };
 }
 
-async function fetchYouTubeViaApify(sourceUrl: string): Promise<SourceMetadata> {
-  const videoId = parseYouTubeShortId(sourceUrl);
-  const fallbackThumbnailUrl = videoId ? youTubeThumbnailUrl(videoId) : undefined;
+async function fetchYouTubeAudioViaApify(
+  sourceUrl: string
+): Promise<Pick<SourceMetadata, "mediaUrl" | "mediaType" | "mediaOrigin" | "mediaError">> {
+  const actorId = getApifyActorId("APIFY_ACTOR_YOUTUBE_AUDIO", DEFAULT_APIFY_ACTOR_YOUTUBE_AUDIO);
+
+  try {
+    const payload = await runApifyActor({
+      actorId,
+      sourceUrl,
+      body: buildYouTubeAudioActorInput(sourceUrl),
+      maxTotalChargeUsd: YOUTUBE_AUDIO_MAX_CHARGE_USD,
+    });
+    const record = extractApifyPrimaryRecord(payload);
+    const mediaUrl = sanitizeHttpUrl(record?.downloadUrl);
+    if (!mediaUrl) {
+      return { mediaError: asString(record?.error) ?? "YOUTUBE_AUDIO_NOT_RETURNED" };
+    }
+    return {
+      mediaUrl,
+      mediaType: asString(record?.contentType) ?? "audio/mpeg",
+      mediaOrigin: "apify",
+    };
+  } catch (error) {
+    if (String(error).includes("APIFY_TOKEN_MISSING")) throw error;
+    console.warn("[import][apify] YouTube audio actor failed, continuing without audio", {
+      actorId,
+      error: truncateForLog(String(error), 800),
+    });
+    return { mediaError: truncateForLog(String(error), 300) };
+  }
+}
+
+async function fetchYouTubeDetailsViaApify(sourceUrl: string): Promise<SourceMetadata> {
   const actorId = getApifyActorId("APIFY_ACTOR_YOUTUBE", DEFAULT_APIFY_ACTOR_YOUTUBE);
 
   try {
@@ -585,22 +589,36 @@ async function fetchYouTubeViaApify(sourceUrl: string): Promise<SourceMetadata> 
       body: buildYouTubeActorInput(sourceUrl),
       timeoutMs: YOUTUBE_APIFY_TIMEOUT_MS,
     });
-    const metadata = parseYouTubeApifyMetadata(payload);
-    return {
-      ...metadata,
-      sourcePostId: metadata.sourcePostId ?? videoId ?? undefined,
-      thumbnailUrl: metadata.thumbnailUrl ?? fallbackThumbnailUrl,
-    };
+    return parseYouTubeApifyMetadata(payload);
   } catch (error) {
     if (String(error).includes("APIFY_TOKEN_MISSING")) throw error;
-    // The Short itself is read from its link, so a failed scrape loses the description
+    // The audio comes from its own actor, so a failed scrape loses the description
     // and the duration check but does not have to fail the import.
     console.warn("[import][apify] YouTube actor failed, continuing without metadata", {
       actorId,
       error: truncateForLog(String(error), 800),
     });
-    return { sourcePostId: videoId ?? undefined, thumbnailUrl: fallbackThumbnailUrl };
+    return {};
   }
+}
+
+// One actor gives a Short's description and duration, another its audio. They run
+// together so a Short takes about as long to fetch as an Instagram reel.
+async function fetchYouTubeViaApify(sourceUrl: string): Promise<SourceMetadata> {
+  const videoId = parseYouTubeShortId(sourceUrl);
+  const fallbackThumbnailUrl = videoId ? youTubeThumbnailUrl(videoId) : undefined;
+
+  const [details, audio] = await Promise.all([
+    fetchYouTubeDetailsViaApify(sourceUrl),
+    fetchYouTubeAudioViaApify(sourceUrl),
+  ]);
+
+  return {
+    ...details,
+    ...audio,
+    sourcePostId: details.sourcePostId ?? videoId ?? undefined,
+    thumbnailUrl: details.thumbnailUrl ?? fallbackThumbnailUrl,
+  };
 }
 
 async function fetchApifyMetadata(params: {
@@ -628,7 +646,7 @@ async function downloadMediaForTranscription(metadata: SourceMetadata): Promise<
     mediaOrigin: metadata.mediaOrigin,
   });
 
-  const response = await safeFetch(metadata.mediaUrl);
+  const response = await safeFetch(metadata.mediaUrl, apifyStorageHeaders(metadata.mediaUrl));
   if (!response?.ok) {
     console.error("[import][download] fetch failed", {
       status: response?.status ?? "null",
@@ -771,45 +789,6 @@ async function transcribeWithOpenRouter(media: {
     console.warn("[import][openrouter-transcribe] empty text", { body: truncateForLog(body, 300) });
     throw new Error("TRANSCRIPTION_EMPTY");
   }
-  return text;
-}
-
-// YouTube media cannot be downloaded like an Instagram reel, so the model is given the
-// Short's link and reads the speech and the on-screen text from the video itself.
-async function readYouTubeShort(sourceUrl: string): Promise<string> {
-  const apiKey = requiredEnv("OPENROUTER_API_KEY");
-
-  const response = await fetchWithTimeout(
-    "https://openrouter.ai/api/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://meal-planner.app",
-        "X-Title": "Meal Planner Import",
-      },
-      body: JSON.stringify(buildYouTubeShortReadRequest(sourceUrl)),
-    },
-    YOUTUBE_SHORT_READ_TIMEOUT_MS,
-    "YOUTUBE_SHORT_READ_TIMEOUT"
-  );
-
-  const body = await response.text();
-  if (!response.ok) {
-    throw new Error(`YOUTUBE_SHORT_READ_FAILED ${response.status} ${truncateForLog(body, 1200)}`);
-  }
-
-  let data: { choices?: Array<{ message?: { content?: string } }> };
-  try {
-    data = JSON.parse(body);
-  } catch {
-    throw new Error(`YOUTUBE_SHORT_READ_FAILED 200 invalid_json ${truncateForLog(body, 500)}`);
-  }
-
-  const text = data?.choices?.[0]?.message?.content?.trim() ?? "";
-  if (!text) throw new Error("YOUTUBE_SHORT_READ_EMPTY");
-  if (text.includes(YOUTUBE_SHORT_UNREADABLE_MARKER)) throw new Error("YOUTUBE_SHORT_UNREADABLE");
   return text;
 }
 
@@ -1066,7 +1045,29 @@ async function runPipelineSteps(params: {
     });
 
     if (cachedExtraction) {
-      const cachedDraft = cachedExtraction.payload;
+      // A cached recipe can lack a language: it was stored by an older import,
+      // or one generation failed that day. Fill the gap once, for everyone.
+      const completion = await completeLocalizedContent(cachedExtraction.payload);
+      const cachedDraft = completion.draft;
+      if (completion.filled.length > 0 || completion.failed.length > 0) {
+        if (completion.filled.length > 0) {
+          await upsertExtractionCache(params.adminClient, {
+            normalizedUrl: normalizedCacheUrl,
+            payload: cachedDraft,
+            sourcePlatform: cachedExtraction.source_platform,
+            sourcePostId: cachedExtraction.source_post_id,
+            sourceThumbnailUrl: cachedExtraction.source_thumbnail_url,
+            modelInfo: { extractionModel: cachedExtraction.extraction_model },
+          });
+        }
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "cache_localization_repair",
+          filled: completion.filled,
+          failed: completion.failed,
+        });
+        throwIfOutOfTime(params.budget);
+      }
+
       await upsertRecipeDraft(params.adminClient, {
         jobId: params.job.id,
         userId: params.job.user_id,
@@ -1115,6 +1116,7 @@ async function runPipelineSteps(params: {
       hashtags_count: metadata.hashtags?.length ?? 0,
       media_origin: metadata.mediaOrigin ?? null,
       has_thumbnail: !!metadata.thumbnailUrl,
+      media_error: metadata.mediaError ?? null,
       apify_used: true,
     });
 
@@ -1133,74 +1135,47 @@ async function runPipelineSteps(params: {
     }
 
     let transcriptionSkippedReason: string | null = null;
-    if (metadata.transcript?.trim()) {
-      transcript = metadata.transcript.trim();
+    try {
+      const media = await downloadMediaForTranscription(metadata);
+      const mediaEligibleForTranscription =
+        media.buffer.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES;
       await logJobEvent(params.adminClient, params.job.id, "normalized", {
-        stage: "tiktok_apify_transcript_used",
-        transcript_chars: transcript.length,
+        stage: "audio_extract",
+        mime_type: media.mimeType,
+        media_bytes: media.buffer.byteLength,
+        transcription_eligible: mediaEligibleForTranscription,
+        transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
       });
-    } else if (params.job.source_platform === "youtube") {
-      try {
-        transcript = await readYouTubeShort(params.job.source_url);
-        await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "youtube_short_read",
-          transcript_length: transcript.length,
-          model: YOUTUBE_SHORT_READ_MODEL,
-          duration_known: typeof metadata.videoDurationSeconds === "number",
-        });
-      } catch (error) {
-        transcriptionSkippedReason = "youtube_short_read_error";
-        transcript = null;
-        await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "youtube_short_read_failed",
-          reason: transcriptionSkippedReason,
-          model: YOUTUBE_SHORT_READ_MODEL,
-          details: truncateForLog(String(error), 1200),
-        });
-      }
-    } else {
-      try {
-        const media = await downloadMediaForTranscription(metadata);
-        const mediaEligibleForTranscription =
-          media.buffer.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES;
-        await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "audio_extract",
-          mime_type: media.mimeType,
-          media_bytes: media.buffer.byteLength,
-          transcription_eligible: mediaEligibleForTranscription,
-          transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
-        });
 
-        if (mediaEligibleForTranscription) {
-          transcript = await transcribeWithOpenRouter(media);
-          await logJobEvent(params.adminClient, params.job.id, "normalized", {
-            stage: "openrouter_transcribe",
-            transcript_length: transcript.length,
-            model: OPENROUTER_TRANSCRIBE_MODEL,
-          });
-        } else {
-          transcriptionSkippedReason = "media_too_large_for_transcription_upload";
-          transcript = null;
-          await logJobEvent(params.adminClient, params.job.id, "normalized", {
-            stage: "openrouter_transcribe_skipped",
-            reason: transcriptionSkippedReason,
-            model: OPENROUTER_TRANSCRIBE_MODEL,
-            media_bytes: media.buffer.byteLength,
-            transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
-          });
-        }
-      } catch (error) {
-        transcriptionSkippedReason = isTranscriptionOversizeError(error)
-          ? "media_too_large"
-          : "transcription_error";
+      if (mediaEligibleForTranscription) {
+        transcript = await transcribeWithOpenRouter(media);
+        await logJobEvent(params.adminClient, params.job.id, "normalized", {
+          stage: "openrouter_transcribe",
+          transcript_length: transcript.length,
+          model: OPENROUTER_TRANSCRIBE_MODEL,
+        });
+      } else {
+        transcriptionSkippedReason = "media_too_large_for_transcription_upload";
         transcript = null;
         await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "openrouter_transcribe_failed",
+          stage: "openrouter_transcribe_skipped",
           reason: transcriptionSkippedReason,
           model: OPENROUTER_TRANSCRIBE_MODEL,
-          details: truncateForLog(String(error), 1200),
+          media_bytes: media.buffer.byteLength,
+          transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
         });
       }
+    } catch (error) {
+      transcriptionSkippedReason = isTranscriptionOversizeError(error)
+        ? "media_too_large"
+        : "transcription_error";
+      transcript = null;
+      await logJobEvent(params.adminClient, params.job.id, "normalized", {
+        stage: "openrouter_transcribe_failed",
+        reason: transcriptionSkippedReason,
+        model: OPENROUTER_TRANSCRIBE_MODEL,
+        details: truncateForLog(String(error), 1200),
+      });
     }
 
     if (
@@ -1428,8 +1403,8 @@ async function runPipelineSteps(params: {
         ...extraction.confidence,
         cache_hit: false,
         cache_source_url: normalizedCacheUrl,
-        transcription_model: metadata.transcript ? null : transcript ? OPENROUTER_TRANSCRIBE_MODEL : null,
-        transcription_provider: metadata.transcript ? "apify" : transcript ? "openrouter" : "skipped",
+        transcription_model: transcript ? OPENROUTER_TRANSCRIBE_MODEL : null,
+        transcription_provider: transcript ? "openrouter" : "skipped",
         transcription_chars: transcript?.length ?? 0,
         transcription_skipped: !transcript,
         missing_fields_completed: {

@@ -2,16 +2,15 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-test("TikTok transcript path verifies confirmed bilingual rich recipe without audio transcription", () => {
+test("TikTok path verifies confirmed bilingual rich recipe through the same transcription as Instagram", () => {
   const pipeline = readFileSync(new URL("./pipeline.ts", import.meta.url), "utf8");
   const expected = JSON.parse(
     readFileSync(new URL("./fixtures/tiktok-honey-bbq-mac.expected.json", import.meta.url), "utf8")
   );
 
-  const transcriptBranch = pipeline.match(/if \(metadata\.transcript\?\.trim\(\)\) \{([\s\S]*?)\n    \} else \{/);
-  assert.ok(transcriptBranch, "metadata transcript branch should exist");
-  assert.match(transcriptBranch[1], /tiktok_apify_transcript_used/);
-  assert.doesNotMatch(transcriptBranch[1], /openrouter_transcribe/);
+  assert.doesNotMatch(pipeline, /tiktok_apify_transcript_used/);
+  assert.ok(expected.events.some((event) => event.stage === "openrouter_transcribe"));
+  assert.ok(!expected.events.some((event) => event.stage === "tiktok_apify_transcript_used"));
 
   assert.match(pipeline, /extractRecipe/);
   assert.match(pipeline, /generateRecipeContent/);

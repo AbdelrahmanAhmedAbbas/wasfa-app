@@ -21,6 +21,8 @@ export type IngredientItem = {
   is_halal?: boolean | null;
   halal_concern?: string;
   suggested_alternative?: string;
+  /** Set when the user keeps a non-halal ingredient instead of its halal swap. */
+  use_original?: boolean;
   source?: "caption" | "transcript" | "web_research" | "ai_estimate" | "user_edit";
   confidence?: number;
   evidence_text?: string;
@@ -63,6 +65,8 @@ export type LocalizedRecipeText = {
   ingredients: Array<{
     name: string;
     notes?: string;
+    /** The halal alternative for a non-halal ingredient, in this language. */
+    suggested_alternative?: string;
   }>;
   steps: StepItem[];
 };

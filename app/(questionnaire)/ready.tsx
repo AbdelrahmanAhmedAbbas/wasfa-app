@@ -14,8 +14,7 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { clearOnboardingAnswers, getOnboardingAnswers } from "@/lib/onboarding/answers";
-import { hasQuestionnaireAnswers } from "@/lib/onboarding/flow";
-import { setHouseholdSize } from "@/lib/onboarding/storage";
+import { hasQuestionnaireAnswers, pickChatAnswers } from "@/lib/onboarding/flow";
 import { getOnboardingProfile, saveOnboardingProfile } from "@/lib/onboarding/supabase";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors } from "@/lib/theme/wasfa";
@@ -63,15 +62,14 @@ export default function ReadyQuestionnaireScreen() {
       const answers = await getOnboardingAnswers();
 
       await wait(STEP_DELAY);
-      // Someone who skipped the chat to sign in to an existing account has no
-      // answers on this device; their saved profile must not be overwritten.
-      const keepExistingProfile =
-        !hasQuestionnaireAnswers(answers) && (await getOnboardingProfile(userId)) !== null;
-      if (!keepExistingProfile) {
-        await saveOnboardingProfile(userId, answers);
-      }
-      if (answers.householdSize) {
-        await setHouseholdSize(answers.householdSize);
+      if (hasQuestionnaireAnswers(answers)) {
+        // Only the chat answers are written, so settings chosen earlier
+        // (units, nutrition) survive a repeat of the onboarding.
+        await saveOnboardingProfile(userId, pickChatAnswers(answers));
+      } else if ((await getOnboardingProfile(userId)) === null) {
+        // Someone who skipped the chat to sign in has no answers on this
+        // device: an existing profile is kept, a new account gets an empty one.
+        await saveOnboardingProfile(userId, {});
       }
       if (isMounted.current) setDoneCount(1);
 

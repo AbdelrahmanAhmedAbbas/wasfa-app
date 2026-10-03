@@ -1,6 +1,8 @@
 ---
-status: proposed (becomes accepted once a spike confirms OpenRouter can pass a Short's link to Gemini)
+status: superseded on 2026-10-04 (the Shorts-only rule stands; the Gemini link read was replaced)
 ---
+
+> **Superseded in part, 2026-10-04.** The first live Arabic Shorts imported this way lost most of their ingredients and steps, while Instagram imports of the same kind were complete. Shorts now follow the Instagram steps exactly: an Apify actor downloads the Short's audio, the audio is transcribed through OpenRouter, and the transcript plus the description go to extraction. TikTok was moved to the same steps at the same time. The cost is that a Short whose recipe appears only as on-screen text over music is no longer read, the same as an Instagram reel. The Shorts-only rule, the three-minute limit and the caching decision below still apply.
 
 # YouTube imports are Shorts only, and Gemini reads the Short from its link
 

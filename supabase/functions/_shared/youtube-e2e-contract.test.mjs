@@ -4,9 +4,9 @@ import { test } from "node:test";
 
 import { normalizeSourceUrlForCache } from "./cache.ts";
 import {
-  YOUTUBE_SHORT_READ_PROMPT,
+  YOUTUBE_AUDIO_MAX_CHARGE_USD,
   buildYouTubeActorInput,
-  buildYouTubeShortReadRequest,
+  buildYouTubeAudioActorInput,
   canonicalYouTubeShortUrl,
   parseYouTubeShortId,
   youTubeThumbnailUrl,
@@ -55,57 +55,57 @@ test("YouTube metadata comes from its own Apify actor and a failed scrape does n
   assert.match(pipeline, /if \(params\.sourcePlatform === "youtube"\) return fetchYouTubeViaApify\(params\.sourceUrl\)/);
 
   const fetcher = functionBody(pipeline, "fetchYouTubeViaApify");
-  assert.match(fetcher, /body: buildYouTubeActorInput\(sourceUrl\)/);
-  assert.match(fetcher, /APIFY_TOKEN_MISSING"\)\) throw error/);
+  const details = functionBody(pipeline, "fetchYouTubeDetailsViaApify");
+  assert.match(details, /body: buildYouTubeActorInput\(sourceUrl\)/);
+  assert.match(details, /APIFY_TOKEN_MISSING"\)\) throw error/);
+  assert.match(details, /return \{\};/);
   assert.deepEqual(buildYouTubeActorInput(expected.source_url), {
     startUrls: [{ url: "https://www.youtube.com/watch?v=abcDEF12345" }],
     maxResults: 1,
     maxResultsShorts: 1,
     maxResultStreams: 0,
   });
-  assert.match(fetcher, /thumbnailUrl: fallbackThumbnailUrl/);
+  assert.match(fetcher, /thumbnailUrl: details\.thumbnailUrl \?\? fallbackThumbnailUrl/);
 
   const parser = functionBody(pipeline, "parseYouTubeApifyMetadata");
   assert.match(parser, /parseDurationSeconds\(record\.duration\)/);
   assert.match(parser, /asString\(record\.text\)/);
 });
 
-test("a Short over three minutes is rejected before the video is read", () => {
+test("a Short over three minutes is rejected before its audio is transcribed", () => {
   const durationCheck = pipeline.indexOf('throw new Error("SHORT_TOO_LONG")');
-  const videoRead = pipeline.indexOf("await readYouTubeShort(");
+  const transcription = pipeline.indexOf("await transcribeWithOpenRouter(media)");
   assert.notEqual(durationCheck, -1);
-  assert.notEqual(videoRead, -1);
-  assert.ok(durationCheck < videoRead, "the duration check must come before the paid video read");
+  assert.notEqual(transcription, -1);
+  assert.ok(durationCheck < transcription, "the duration check must come before the transcription");
 
   assert.match(pipeline, /metadata\.videoDurationSeconds > SHORT_MAX_DURATION_SECONDS/);
   assert.match(pipeline, /typeof metadata\.videoDurationSeconds === "number" &&/);
   assert.match(pipeline, new RegExp(`code:\\s*"${expected.rejections.too_long.error_code}"`));
 });
 
-test("a Short is read from its link by Gemini on AI Studio, never downloaded", () => {
-  const branch = pipeline.match(
-    /\} else if \(params\.job\.source_platform === "youtube"\) \{([\s\S]*?)\n    \} else \{/
-  );
-  assert.ok(branch, "the Shorts branch should sit between the transcript branch and the download branch");
-  assert.match(branch[1], /readYouTubeShort\(params\.job\.source_url\)/);
-  assert.match(branch[1], /stage:\s*"youtube_short_read"/);
-  assert.match(branch[1], /stage:\s*"youtube_short_read_failed"/);
-  assert.doesNotMatch(branch[1], /downloadMediaForTranscription|transcribeWithOpenRouter|openrouter_transcribe/);
+test("a Short's audio is downloaded by its own Apify actor and transcribed like an Instagram reel", () => {
+  assert.doesNotMatch(pipeline, /readYouTubeShort|youtube_short_read|video_url/);
+  assert.doesNotMatch(pipeline, /source_platform === "youtube"\) \{\s*try/);
 
-  const reader = functionBody(pipeline, "readYouTubeShort");
-  assert.match(reader, /JSON\.stringify\(buildYouTubeShortReadRequest\(sourceUrl\)\)/);
-  assert.match(reader, /YOUTUBE_SHORT_UNREADABLE/);
+  const fetcher = functionBody(pipeline, "fetchYouTubeViaApify");
+  assert.match(fetcher, /Promise\.all\(\[\s*fetchYouTubeDetailsViaApify\(sourceUrl\),\s*fetchYouTubeAudioViaApify\(sourceUrl\),/);
 
-  const request = buildYouTubeShortReadRequest(expected.source_url);
-  assert.equal(request.model, "google/gemini-3-flash-preview");
-  assert.deepEqual(request.provider, { only: ["google-ai-studio"] });
-  assert.deepEqual(request.messages[0].content[1], {
-    type: "video_url",
-    video_url: { url: "https://www.youtube.com/watch?v=abcDEF12345" },
+  const audio = functionBody(pipeline, "fetchYouTubeAudioViaApify");
+  assert.match(audio, /APIFY_ACTOR_YOUTUBE_AUDIO/);
+  assert.match(audio, /body: buildYouTubeAudioActorInput\(sourceUrl\)/);
+  assert.match(audio, /maxTotalChargeUsd: YOUTUBE_AUDIO_MAX_CHARGE_USD/);
+  assert.match(audio, /sanitizeHttpUrl\(record\?\.downloadUrl\)/);
+  assert.match(audio, /APIFY_TOKEN_MISSING"\)\) throw error/);
+  assert.match(audio, /return \{ mediaError:/);
+
+  assert.deepEqual(buildYouTubeAudioActorInput(expected.source_url), {
+    urls: [{ url: "https://www.youtube.com/watch?v=abcDEF12345" }],
+    format: "mp3",
+    residentialProxyMode: "disabled",
   });
-  assert.match(YOUTUBE_SHORT_READ_PROMPT, /Spoken:/);
-  assert.match(YOUTUBE_SHORT_READ_PROMPT, /On-screen text:/);
-  assert.match(YOUTUBE_SHORT_READ_PROMPT, /VIDEO_UNAVAILABLE/);
+  assert.ok(YOUTUBE_AUDIO_MAX_CHARGE_USD <= 0.05);
+  assert.match(pipeline, /&maxTotalChargeUsd=\$\{params\.maxTotalChargeUsd\}/);
 });
 
 test("the extraction schema and the fixture accept youtube as a platform", () => {
@@ -113,8 +113,8 @@ test("the extraction schema and the fixture accept youtube as a platform", () =>
 
   assert.equal(expected.status, "confirmed");
   assert.equal(expected.source_platform, "youtube");
-  assert.ok(expected.events.some((event) => event.stage === "youtube_short_read"));
-  assert.ok(!expected.events.some((event) => event.stage === "openrouter_transcribe"));
+  assert.ok(expected.events.some((event) => event.stage === "openrouter_transcribe"));
+  assert.ok(!expected.events.some((event) => event.stage === "youtube_short_read"));
   assert.ok(expected.recipe.ingredients.every((ingredient) => typeof ingredient.is_estimated === "boolean"));
   assert.ok(expected.recipe.localized.en.steps.length > 0);
   assert.ok(expected.recipe.localized.ar.steps.length > 0);

@@ -40,3 +40,19 @@ test("cross-user re-import hits normalized URL cache without model or Apify call
     "cache_write"
   ]);
 });
+
+test("a cached recipe that lacks a language is completed and stored again", () => {
+  const pipeline = readFileSync(new URL("./pipeline.ts", import.meta.url), "utf8");
+  const ai = readFileSync(new URL("./ai.ts", import.meta.url), "utf8");
+
+  const cacheHitBranch = pipeline.match(/if \(cachedExtraction\) \{([\s\S]*?)\n    \}\n\n    const metadata/);
+  assert.ok(cacheHitBranch);
+  assert.match(cacheHitBranch[1], /completeLocalizedContent\(cachedExtraction\.payload\)/);
+  assert.match(cacheHitBranch[1], /upsertExtractionCache/);
+  assert.match(cacheHitBranch[1], /stage:\s*"cache_localization_repair"/);
+  // The repaired draft, not the stored one, is what the user receives.
+  assert.match(cacheHitBranch[1], /const cachedDraft = completion\.draft/);
+
+  // A complete entry returns before any model is called.
+  assert.match(ai, /if \(missing\.length === 0\) return \{ draft, filled: \[\], failed: \[\] \}/);
+});
