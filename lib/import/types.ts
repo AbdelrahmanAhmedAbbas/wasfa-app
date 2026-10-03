@@ -1,4 +1,4 @@
-export type SourcePlatform = "instagram" | "tiktok" | "unknown";
+export type SourcePlatform = "instagram" | "tiktok" | "youtube" | "unknown";
 
 export type ImportEntrypoint = "paste_url" | "share_intent" | "manual_retry";
 

@@ -54,6 +54,7 @@ export async function getOnboardingProfile(
 
   return {
     goal: data.goal,
+    householdSize: null,
     painPoints: data.pain_points || [],
     diet: data.diet || [],
     allergies: data.allergies || [],

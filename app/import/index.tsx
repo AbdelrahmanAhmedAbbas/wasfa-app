@@ -1,13 +1,19 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from "react-native";
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, TextInput, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LocalizedText as Text } from "@/components/LocalizedText";
+import { CtaButton } from "@/components/wasfa/CtaButton";
 
 import { createShareImport } from "@/lib/import/client";
+import { getImportErrorCode, getImportErrorTranslationKey } from "@/lib/import/errors";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { onboardingImages } from "@/lib/theme/onboarding";
+import { wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
 
 export default function ShareImportEntryScreen() {
   const { isRTL, t } = useLanguage();
+  const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     url?: string;
     text?: string;
@@ -19,6 +25,12 @@ export default function ShareImportEntryScreen() {
   const [loading, setLoading] = useState(true);
   const [manualUrl, setManualUrl] = useState("");
   const [submittingManual, setSubmittingManual] = useState(false);
+
+  function describeImportError(error: unknown, fallback: string): string {
+    const localizedKey = getImportErrorTranslationKey(getImportErrorCode(error));
+    if (localizedKey) return t(localizedKey);
+    return error instanceof Error ? error.message : fallback;
+  }
 
   const sourceUrl = useMemo(
     () => (typeof params.url === "string" ? params.url : undefined),
@@ -66,7 +78,7 @@ export default function ShareImportEntryScreen() {
         });
       } catch (e) {
         if (!active) return;
-        setError(e instanceof Error ? e.message : "Failed to create share import job.");
+        setError(describeImportError(e, "Failed to create share import job."));
       } finally {
         if (active) setLoading(false);
       }
@@ -99,35 +111,56 @@ export default function ShareImportEntryScreen() {
         },
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to create import job.");
+      setError(describeImportError(e, "Failed to create import job."));
     } finally {
       setSubmittingManual(false);
     }
   }
 
+  // Root direction already flips logical-start alignment for Arabic (see RTL_LAYOUT.md).
+  const textAlign = "left";
+  const writingDirection = isRTL ? "rtl" : "ltr";
+
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator color="#2c5f37" />
-        <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
-          {t("creatingImportJob")}
+      <View style={[styles.screen, styles.loadingContent]}>
+        <View style={styles.loadingCircle}>
+          <Image source={onboardingImages.mascotTyping} style={styles.loadingMascot} resizeMode="contain" />
+        </View>
+        <Text style={[styles.kicker, !isRTL && styles.kickerLatin, { writingDirection }]}>
+          {t("importProgressKicker")}
         </Text>
+        <Text style={[styles.loadingTitle, { writingDirection }]}>{t("creatingImportJob")}</Text>
+        <ActivityIndicator color={wasfaColors.primary} style={styles.loadingSpinner} />
       </View>
     );
   }
 
+  const needsLink = !sourceUrl && !sharedText;
+
   return (
-    <View style={styles.container}>
-      <Text style={[styles.title, { textAlign: isRTL ? "right" : "left" }]}>{t("shareImportTitle")}</Text>
-      {!sourceUrl && !sharedText ? (
+    <ScrollView
+      style={styles.screen}
+      contentContainerStyle={[
+        styles.content,
+        { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
+      ]}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    >
+      <View style={styles.mascotCircle}>
+        <Image source={onboardingImages.mascotReading} style={styles.mascot} resizeMode="contain" />
+      </View>
+      <Text style={[styles.title, { textAlign, writingDirection }]}>{t("shareImportTitle")}</Text>
+      {needsLink ? (
         <>
-          <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
+          <Text style={[styles.subtitle, { textAlign, writingDirection }]}>
             {mediaUri
               ? t("mediaSharedWithoutUrl")
               : t("pasteVideoUrl")}
           </Text>
           {mediaUri ? (
-            <Text style={[styles.caption, { textAlign: isRTL ? "right" : "left" }]}>
+            <Text style={[styles.caption, { textAlign, writingDirection }]}>
               {t("receivedMediaShare")}
               {mediaMime ? ` (${mediaMime})` : ""}
             </Text>
@@ -135,87 +168,148 @@ export default function ShareImportEntryScreen() {
           <TextInput
             value={manualUrl}
             onChangeText={setManualUrl}
-            placeholder="https://www.instagram.com/..."
-            placeholderTextColor="#8a8a82"
-            style={[styles.input, isRTL && styles.textRtl]}
+            placeholder={t("recipeLinkPlaceholder")}
+            placeholderTextColor={wasfaColors.muted}
+            style={[styles.input, { writingDirection }]}
             autoCapitalize="none"
             autoCorrect={false}
           />
-          <Pressable
-            style={[styles.button, submittingManual && styles.buttonDisabled]}
+          <CtaButton
+            label={t("importUrl")}
             onPress={() => void onManualImportPress()}
-            disabled={submittingManual}
-          >
-            {submittingManual ? (
-              <ActivityIndicator color="#f5f8f3" />
-            ) : (
-              <Text style={styles.buttonText}>{t("importUrl")}</Text>
-            )}
-          </Pressable>
+            loading={submittingManual}
+          />
         </>
       ) : null}
-      <Text style={[styles.subtitle, { textAlign: isRTL ? "right" : "left" }]}>
-        {error ?? (!sourceUrl && !sharedText ? t("awaitingUrlInput") : t("couldNotInitShare"))}
+      <Text style={[styles.status, error ? styles.statusError : null, { textAlign, writingDirection }]}>
+        {error ?? (needsLink ? t("awaitingUrlInput") : t("couldNotInitShare"))}
       </Text>
-      <Pressable style={styles.button} onPress={() => router.replace("/(tabs)")}>
-        <Text style={styles.buttonText}>{t("backToHome")}</Text>
+      <Pressable
+        accessibilityRole="button"
+        style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
+        onPress={() => router.replace("/(tabs)")}
+      >
+        <Text style={styles.secondaryButtonText}>{t("backToHome")}</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  screen: {
     flex: 1,
-    padding: 24,
-    gap: 14,
+    backgroundColor: wasfaColors.background,
+  },
+  content: {
+    flexGrow: 1,
     justifyContent: "center",
-    backgroundColor: "#E8DCCB",
+    paddingHorizontal: 24,
+    gap: 14,
+  },
+  loadingContent: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 28,
+  },
+  loadingCircle: {
+    width: 230,
+    height: 230,
+    borderRadius: 115,
+    backgroundColor: wasfaColors.primarySoft,
+    alignItems: "center",
+    justifyContent: "flex-end",
+    overflow: "hidden",
+    marginBottom: 16,
+  },
+  loadingMascot: {
+    width: 210,
+    height: 210,
+  },
+  kicker: {
+    fontSize: 13,
+    fontWeight: "800",
+    color: wasfaColors.primary,
+    textAlign: "center",
+  },
+  // Letter spacing breaks Arabic joining, so only the Latin label is tracked out.
+  kickerLatin: {
+    textTransform: "uppercase",
+    letterSpacing: 1,
+  },
+  loadingTitle: {
+    marginTop: 16,
+    fontSize: 22,
+    lineHeight: 27,
+    fontWeight: "800",
+    color: wasfaColors.ink,
+    textAlign: "center",
+  },
+  loadingSpinner: {
+    marginTop: 22,
+  },
+  mascotCircle: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: wasfaColors.primarySoft,
+    alignItems: "center",
+    justifyContent: "center",
+    alignSelf: "center",
+    marginBottom: 10,
+  },
+  mascot: {
+    width: 96,
+    height: 96,
   },
   title: {
-    fontSize: 28,
+    fontSize: 26,
     fontWeight: "800",
-    color: "#22321f",
+    color: wasfaColors.ink,
   },
   subtitle: {
     fontSize: 16,
-    color: "#4f5347",
+    color: wasfaColors.muted,
     lineHeight: 24,
   },
   caption: {
     fontSize: 13,
-    color: "#5f6f58",
+    color: wasfaColors.muted,
     marginTop: -4,
   },
   input: {
     width: "100%",
-    marginTop: 8,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#c6cfba",
-    backgroundColor: "#fcfbf8",
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    height: 50,
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: wasfaColors.line,
+    backgroundColor: wasfaColors.surface,
+    paddingHorizontal: 14,
     fontSize: 15,
-    color: "#2f2f2a",
+    color: wasfaColors.ink,
   },
-  textRtl: {
-    writingDirection: "rtl",
+  status: {
+    fontSize: 15,
+    color: wasfaColors.muted,
+    lineHeight: 22,
   },
-  button: {
-    marginTop: 4,
-    borderRadius: 14,
-    backgroundColor: "#7C9B68",
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    alignSelf: "flex-start",
+  statusError: {
+    color: wasfaColors.danger,
   },
-  buttonText: {
+  secondaryButton: {
+    height: 54,
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 2,
+    borderColor: wasfaColors.line,
+    backgroundColor: wasfaColors.surface,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  secondaryButtonText: {
     fontSize: 16,
-    fontWeight: "700",
-    color: "#f5f8f3",
+    fontWeight: "800",
+    color: wasfaColors.ink,
   },
-  buttonDisabled: {
-    opacity: 0.55,
+  pressed: {
+    opacity: 0.7,
   },
 });

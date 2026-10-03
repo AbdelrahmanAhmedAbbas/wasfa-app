@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Animated,
+  KeyboardAvoidingView,
   Modal,
   Pressable,
   StyleSheet,
@@ -27,6 +28,8 @@ type BottomDrawerProps = {
   showCloseButton?: boolean;
   showHandle?: boolean;
   dockToBottom?: boolean;
+  /** Lift the sheet above the keyboard. Only needed by sheets that contain a text field. */
+  avoidKeyboard?: boolean;
   sheetStyle?: StyleProp<ViewStyle>;
   contentStyle?: StyleProp<ViewStyle>;
 };
@@ -44,6 +47,7 @@ export function BottomDrawer({
   showCloseButton = false,
   showHandle = true,
   dockToBottom = false,
+  avoidKeyboard = false,
   sheetStyle,
   contentStyle,
 }: BottomDrawerProps) {
@@ -107,15 +111,8 @@ export function BottomDrawer({
 
   if (!mounted) return null;
 
-  return (
-    <Modal
-      transparent
-      visible={mounted}
-      animationType="none"
-      statusBarTranslucent
-      onRequestClose={onClose}
-    >
-      <View style={[styles.root, { direction }]}>
+  const body = (
+    <>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose}>
           <Animated.View
             pointerEvents="none"
@@ -153,7 +150,24 @@ export function BottomDrawer({
 
           <View style={contentStyle}>{children}</View>
         </Animated.View>
-      </View>
+    </>
+  );
+
+  return (
+    <Modal
+      transparent
+      visible={mounted}
+      animationType="none"
+      statusBarTranslucent
+      onRequestClose={onClose}
+    >
+      {avoidKeyboard ? (
+        <KeyboardAvoidingView behavior="padding" style={[styles.root, { direction }]}>
+          {body}
+        </KeyboardAvoidingView>
+      ) : (
+        <View style={[styles.root, { direction }]}>{body}</View>
+      )}
     </Modal>
   );
 }

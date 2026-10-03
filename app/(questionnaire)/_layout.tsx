@@ -3,21 +3,8 @@ import { Platform } from "react-native";
 import { Stack, useRouter, useSegments } from "expo-router";
 
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { getResumeRoute, STEP_ROUTES } from "@/lib/onboarding/flow";
 import { getQuestionnaireStep } from "@/lib/onboarding/storage";
-
-const STEP_ROUTES = [
-  "welcome",
-  "goal",
-  "pain",
-  "proof",
-  "solution",
-  "diet",
-  "allergies",
-  "processing",
-  "demo",
-  "value",
-  "setup",
-] as const;
 
 export default function QuestionnaireLayout() {
   const { isRTL } = useLanguage();
@@ -36,11 +23,12 @@ export default function QuestionnaireLayout() {
     let isMounted = true;
 
     async function resumeFlow() {
-      const step = await getQuestionnaireStep();
-      if (step > 0 && step < STEP_ROUTES.length) {
-        const targetRoute = STEP_ROUTES[step];
-        const currentSegment = segments[segments.length - 1];
-        if (currentSegment !== targetRoute) {
+      // Only a launch that lands on the first step is resumed. Explicit
+      // entries (e.g. the paywall opening "ready") stay where they were sent.
+      const currentSegment = segments[segments.length - 1];
+      if (currentSegment === STEP_ROUTES[0]) {
+        const targetRoute = getResumeRoute(await getQuestionnaireStep());
+        if (targetRoute) {
           router.replace(`/(questionnaire)/${targetRoute}` as any);
         }
       }
@@ -62,7 +50,7 @@ export default function QuestionnaireLayout() {
   }
 
   return (
-    <Stack initialRouteName="welcome" screenOptions={{ headerShown: false, animation }}>
+    <Stack initialRouteName={STEP_ROUTES[0]} screenOptions={{ headerShown: false, animation }}>
       {STEP_ROUTES.map((route) => (
         <Stack.Screen key={route} name={route} />
       ))}

@@ -50,6 +50,65 @@ export function matchesRecipeSearch(recipe: RecentRecipeInput, query: string) {
     .some((value) => value.toLowerCase().includes(normalized));
 }
 
+export type HomeMood = "quick" | "chicken" | "veggie" | "rice";
+
+export const HOME_MOODS: HomeMood[] = ["quick", "chicken", "veggie", "rice"];
+
+const QUICK_MOOD_MAX_MINUTES = 30;
+
+const MOOD_KEYWORDS = {
+  chicken: ["chicken", "دجاج", "فراخ"],
+  rice: ["rice", "kabsa", "biryani", "mandi", "machboos", "أرز", "الرز", "كبسة", "برياني", "مندي", "مجبوس"],
+  vegetarian: ["vegetarian", "vegan", "veggie", "نباتي"],
+  meat: [
+    "chicken", "beef", "lamb", "meat", "mutton", "veal", "turkey", "fish", "salmon", "tuna", "shrimp", "prawn",
+    "دجاج", "فراخ", "لحم", "ضأن", "خروف", "سمك", "سلمون", "تونة", "روبيان", "جمبري",
+  ],
+};
+
+function getRecipeIngredientNames(recipe: RecentRecipeInput): string[] {
+  return (["en", "ar"] as const).flatMap((language) =>
+    (recipe.localized?.[language]?.ingredients ?? [])
+      .map((ingredient) =>
+        ingredient && typeof ingredient === "object" ? (ingredient as { name?: unknown }).name : null
+      )
+      .filter((name): name is string => typeof name === "string" && name.trim().length > 0)
+      .map((name) => name.toLowerCase())
+  );
+}
+
+function includesAny(haystack: string[], keywords: string[]) {
+  return haystack.some((value) => keywords.some((keyword) => value.includes(keyword)));
+}
+
+/** Quick filters behind the home mood tiles. */
+export function matchesHomeMood(recipe: RecentRecipeInput, mood: HomeMood): boolean {
+  if (mood === "quick") {
+    const totalMinutes = (recipe.prep_minutes || 0) + (recipe.cook_minutes || 0);
+    return totalMinutes > 0 && totalMinutes <= QUICK_MOOD_MAX_MINUTES;
+  }
+
+  const ingredientNames = getRecipeIngredientNames(recipe);
+  const titles = [
+    recipe.title,
+    recipe.description,
+    recipe.localized?.en?.title,
+    recipe.localized?.ar?.title,
+    recipe.localized?.en?.description,
+    recipe.localized?.ar?.description,
+  ]
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.toLowerCase());
+
+  if (mood === "veggie") {
+    if (includesAny(titles, MOOD_KEYWORDS.vegetarian)) return true;
+    // Without an ingredient list there is nothing to rule meat out with.
+    return ingredientNames.length > 0 && !includesAny([...ingredientNames, ...titles], MOOD_KEYWORDS.meat);
+  }
+
+  return includesAny([...titles, ...ingredientNames], MOOD_KEYWORDS[mood]);
+}
+
 function interpolate(template: string, replacements: Record<string, string | number>) {
   return Object.entries(replacements).reduce(
     (result, [key, value]) => result.replaceAll(`{${key}}`, String(value)),

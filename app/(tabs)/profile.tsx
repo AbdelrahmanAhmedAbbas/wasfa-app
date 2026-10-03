@@ -1,13 +1,26 @@
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text as RNText,
+  View,
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
+import { CtaButton } from "@/components/wasfa/CtaButton";
 
 import { supabase } from "@/lib/supabase/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
-import { onboardingImages } from "@/lib/theme/onboarding";
+import type { TranslationKey } from "@/lib/i18n/translations";
+import { dietImages, onboardingImages } from "@/lib/theme/onboarding";
+import { getTabBarClearance, wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
 import { setOnboardingDone, clearOnboardingStep } from "@/lib/onboarding/storage";
 import {
   clearOnboardingAnswers,
@@ -18,29 +31,30 @@ import {
 } from "@/lib/onboarding/answers";
 import { loadRecipePreferences, saveRecipePreferences, type RecipePreferences } from "@/lib/recipes/preferences";
 
-const DIET_OPTIONS: { id: DietOption; labelKey: string }[] = [
+const DIET_OPTIONS: { id: DietOption; labelKey: TranslationKey }[] = [
   { id: "halal", labelKey: "dietHalal" },
-  { id: "omnivore", labelKey: "dietOmnivore" },
+  { id: "omnivore", labelKey: "profileDietOmnivore" },
   { id: "vegetarian", labelKey: "dietVegetarian" },
   { id: "vegan", labelKey: "dietVegan" },
   { id: "keto", labelKey: "dietKeto" },
-  { id: "pescatarian", labelKey: "dietPescatarian" },
+  { id: "pescatarian", labelKey: "profileDietPescatarian" },
 ];
 
-const ALLERGY_OPTIONS: { id: AllergyOption; labelKey: string }[] = [
-  { id: "shellfish", labelKey: "allergyShellfish" },
-  { id: "seafood", labelKey: "allergySeafood" },
-  { id: "dairy", labelKey: "allergyDairy" },
-  { id: "peanut", labelKey: "allergyPeanut" },
-  { id: "tree_nut", labelKey: "allergyTreeNut" },
-  { id: "egg", labelKey: "allergyEgg" },
-  { id: "gluten", labelKey: "allergyGluten" },
-  { id: "wheat", labelKey: "allergyWheat" },
+const ALLERGY_OPTIONS: { id: AllergyOption; labelKey: TranslationKey; emoji: string }[] = [
+  { id: "shellfish", labelKey: "profileAllergyShellfish", emoji: "🍤" },
+  { id: "seafood", labelKey: "profileAllergySeafood", emoji: "🐟" },
+  { id: "dairy", labelKey: "profileAllergyDairy", emoji: "🥛" },
+  { id: "peanut", labelKey: "profileAllergyPeanut", emoji: "🥜" },
+  { id: "tree_nut", labelKey: "profileAllergyTreeNut", emoji: "🌰" },
+  { id: "egg", labelKey: "profileAllergyEgg", emoji: "🥚" },
+  { id: "gluten", labelKey: "profileAllergyGluten", emoji: "🍞" },
+  { id: "wheat", labelKey: "profileAllergyWheat", emoji: "🌾" },
 ];
 
 export default function ProfileScreen() {
   const { language, isRTL, setLanguage, t } = useLanguage();
   const { user, signInWithGoogle, signOut } = useAuth();
+  const insets = useSafeAreaInsets();
   const [isLoading, setIsLoading] = useState(false);
   const [preferences, setPreferences] = useState<RecipePreferences>({
     diet: [],
@@ -50,7 +64,9 @@ export default function ProfileScreen() {
   });
   const [preferencesSaving, setPreferencesSaving] = useState(false);
 
-  const textAlign = isRTL ? "right" : "left";
+  // Root direction already flips logical-start alignment for Arabic (see RTL_LAYOUT.md).
+  const textAlign = "left";
+  const writingDirection = isRTL ? "rtl" : "ltr";
 
   useEffect(() => {
     let isMounted = true;
@@ -124,15 +140,15 @@ export default function ProfileScreen() {
 
   const handleDeleteAccount = () => {
     Alert.alert(
-      t("profileDeleteConfirmTitle" as any),
-      t("profileDeleteConfirmMessage" as any),
+      t("profileDeleteConfirmTitle"),
+      t("profileDeleteConfirmMessage"),
       [
         {
-          text: t("profileDeleteCancel" as any),
+          text: t("profileDeleteCancel"),
           style: "cancel",
         },
         {
-          text: t("profileDeleteConfirmAction" as any),
+          text: t("profileDeleteConfirmAction"),
           style: "destructive",
           onPress: async () => {
             try {
@@ -160,177 +176,232 @@ export default function ProfileScreen() {
     );
   };
 
+  const avatarUrl = user?.user_metadata?.avatar_url;
+  const displayName = user ? user.user_metadata?.full_name || t("profileUserInfo") : t("profileGuestMode");
+
   return (
     <ScreenTransition>
-      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <ScrollView
+        style={styles.container}
+        contentContainerStyle={{ paddingBottom: getTabBarClearance(insets.bottom) }}
+        showsVerticalScrollIndicator={false}
+      >
         {/* Profile Header */}
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: insets.top + 18 }]}>
+          <View pointerEvents="none" style={styles.headerCircle} />
+          <View style={styles.avatarRing}>
+            {avatarUrl ? (
+              <Image source={{ uri: avatarUrl }} style={styles.avatarPhoto} />
+            ) : (
+              <Image source={onboardingImages.mascot} style={styles.avatarMascot} resizeMode="contain" />
+            )}
+          </View>
+          <Text style={styles.userName} numberOfLines={1}>
+            {displayName}
+          </Text>
           {user ? (
-            <>
-              {/* User Avatar */}
-              {user.user_metadata?.avatar_url ? (
-                <Image source={{ uri: user.user_metadata.avatar_url }} style={styles.avatar} />
-              ) : (
-                <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                  <Text style={styles.avatarText}>
-                    {user.user_metadata?.full_name?.[0]?.toUpperCase() || user.email?.[0]?.toUpperCase() || "U"}
-                  </Text>
-                </View>
-              )}
-
-              {/* User Info */}
-              <Text style={[styles.userName, { textAlign }]}>{user.user_metadata?.full_name || "User"}</Text>
-              <Text style={[styles.userEmail, { textAlign }]}>{user.email}</Text>
-              <Text style={[styles.userLabel, { textAlign }]}>{t("profileUserInfo")}</Text>
-            </>
+            user.email ? (
+              <Text style={styles.userEmail} numberOfLines={1}>
+                {user.email}
+              </Text>
+            ) : null
           ) : (
-            <>
-              {/* Guest Mode */}
-              <View style={[styles.avatar, styles.avatarPlaceholder]}>
-                <Image source={onboardingImages.logo} style={styles.guestLogo} resizeMode="cover" />
-              </View>
-              <Text style={[styles.userName, { textAlign }]}>{t("profileGuestMode")}</Text>
-              <Text style={[styles.userEmail, { textAlign }]}>{t("profileSignIn")}</Text>
-            </>
+            <Text style={styles.guestHint}>{t("profileSignIn")}</Text>
           )}
+        </View>
+
+        {!user ? (
+          <CtaButton
+            label={t("authSignInGoogle")}
+            onPress={handleSignIn}
+            loading={isLoading}
+            style={styles.signInButton}
+          />
+        ) : null}
+
+        {/* App preferences */}
+        <SectionLabel label={t("profileSectionPreferences")} busy={preferencesSaving} isRTL={isRTL} />
+        <View style={styles.card}>
+          <SettingRow emoji="🌐" label={t("language")} isRTL={isRTL}>
+            <SegmentedControl
+              value={language}
+              onChange={(next) => void setLanguage(next)}
+              options={[
+                { id: "en", label: t("profileLanguageEnglish") },
+                { id: "ar", label: t("profileLanguageArabic") },
+              ]}
+            />
+          </SettingRow>
+          <View style={styles.hairline} />
+          <SettingRow emoji="📏" label={t("profileMeasurements")} isRTL={isRTL}>
+            <SegmentedControl
+              value={preferences.measurementSystem}
+              onChange={setMeasurementSystem}
+              options={[
+                { id: "metric", label: t("profileMeasurementMetric") },
+                { id: "imperial", label: t("profileMeasurementImperial") },
+              ]}
+            />
+          </SettingRow>
+          <View style={styles.hairline} />
+          <SettingRow emoji="📊" label={t("profileNutrition")} isRTL={isRTL}>
+            <SegmentedControl
+              // Unset means nutrition is shown (the recipe screen only hides on "hide").
+              value={preferences.nutritionDisplay ?? "show"}
+              onChange={setNutritionDisplay}
+              options={[
+                { id: "show", label: t("nutritionShow") },
+                { id: "hide", label: t("nutritionHide") },
+              ]}
+            />
+          </SettingRow>
+        </View>
+
+        {/* Dietary preferences */}
+        <SectionLabel label={t("profileSectionDietary")} busy={preferencesSaving} isRTL={isRTL} />
+        <View style={styles.card}>
+          <View style={styles.chipBlock}>
+            <Text style={[styles.rowLabel, { textAlign, writingDirection }]}>{t("recipePreferencesDiet")}</Text>
+            <View style={styles.chipWrap}>
+              {DIET_OPTIONS.map((option) => (
+                <PreferenceChip
+                  key={option.id}
+                  label={t(option.labelKey)}
+                  active={preferences.diet.includes(option.id)}
+                  onPress={() => toggleDiet(option.id)}
+                  leading={<Image source={dietImages[option.id]} style={styles.chipImage} />}
+                />
+              ))}
+            </View>
+          </View>
+          <View style={styles.hairline} />
+          <View style={styles.chipBlock}>
+            <Text style={[styles.rowLabel, { textAlign, writingDirection }]}>
+              {t("recipePreferencesAllergies")}
+            </Text>
+            <View style={styles.chipWrap}>
+              {ALLERGY_OPTIONS.map((option) => (
+                <PreferenceChip
+                  key={option.id}
+                  label={t(option.labelKey)}
+                  active={preferences.allergies.includes(option.id)}
+                  onPress={() => toggleAllergy(option.id)}
+                  leading={<RNText style={styles.chipEmoji}>{option.emoji}</RNText>}
+                />
+              ))}
+            </View>
+          </View>
         </View>
 
         {/* Actions */}
-        <View style={styles.actions}>
-          {user ? (
-            <>
-              <Pressable
-                style={[styles.button, styles.signOutButton]}
-                onPress={handleSignOut}
-                disabled={isLoading}
-              >
-                <Text style={styles.buttonText}>{t("profileSignOut")}</Text>
-              </Pressable>
-              <Pressable
-                style={[styles.button, styles.deleteButton]}
-                onPress={handleDeleteAccount}
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color="#d64545" />
-                ) : (
-                  <Text style={styles.deleteButtonText}>{t("profileDeleteAccount" as any)}</Text>
-                )}
-              </Pressable>
-            </>
-          ) : (
+        {user ? (
+          <View style={styles.actions}>
             <Pressable
-              style={[styles.button, styles.signInButton]}
-              onPress={handleSignIn}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.signOutButton, pressed && styles.pressed]}
+              onPress={handleSignOut}
+              disabled={isLoading}
+            >
+              <Text style={styles.signOutText}>{t("profileSignOut")}</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
+              onPress={handleDeleteAccount}
               disabled={isLoading}
             >
               {isLoading ? (
-                <ActivityIndicator color="#fff" />
+                <ActivityIndicator color={wasfaColors.danger} />
               ) : (
-                <>
-                  <Text style={styles.googleIcon}>G</Text>
-                  <Text style={styles.buttonText}>{t("authSignInGoogle")}</Text>
-                </>
+                <Text style={styles.deleteButtonText}>{t("profileDeleteAccountAction")}</Text>
               )}
             </Pressable>
-          )}
-        </View>
-
-        {/* Language Settings */}
-        <View style={styles.languageSection}>
-          <Text style={[styles.sectionTitle, { textAlign }]}>{t("language")}</Text>
-          <View style={styles.pillSelector}>
-            <Pressable
-              style={[styles.pill, language === "en" && styles.pillActive]}
-              onPress={() => setLanguage("en")}
-            >
-              <Text style={[styles.pillText, language === "en" && styles.pillTextActive]}>
-                {t("english")}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.pill, language === "ar" && styles.pillActive]}
-              onPress={() => setLanguage("ar")}
-            >
-              <Text style={[styles.pillText, language === "ar" && styles.pillTextActive]}>
-                {t("arabic")}
-              </Text>
-            </Pressable>
           </View>
-        </View>
-
-        <View style={styles.preferencesSection}>
-          <View style={styles.sectionTitleRow}>
-            <Text style={[styles.sectionTitle, { textAlign }]}>{t("recipePreferences" as any)}</Text>
-            {preferencesSaving ? <ActivityIndicator color="#1e9f92" size="small" /> : null}
-          </View>
-
-          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesDiet" as any)}</Text>
-          <View style={styles.chipWrap}>
-            {DIET_OPTIONS.map((option) => (
-              <PreferenceChip
-                key={option.id}
-                label={t(option.labelKey as any)}
-                active={preferences.diet.includes(option.id)}
-                onPress={() => toggleDiet(option.id)}
-              />
-            ))}
-          </View>
-
-          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesAllergies" as any)}</Text>
-          <View style={styles.chipWrap}>
-            {ALLERGY_OPTIONS.map((option) => (
-              <PreferenceChip
-                key={option.id}
-                label={t(option.labelKey as any)}
-                active={preferences.allergies.includes(option.id)}
-                onPress={() => toggleAllergy(option.id)}
-              />
-            ))}
-          </View>
-
-          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesMeasurements" as any)}</Text>
-          <View style={styles.pillSelector}>
-            <Pressable
-              style={[styles.pill, preferences.measurementSystem === "imperial" && styles.pillActive]}
-              onPress={() => setMeasurementSystem("imperial")}
-            >
-              <Text style={[styles.pillText, preferences.measurementSystem === "imperial" && styles.pillTextActive]}>
-                {t("measurementImperial")}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.pill, preferences.measurementSystem === "metric" && styles.pillActive]}
-              onPress={() => setMeasurementSystem("metric")}
-            >
-              <Text style={[styles.pillText, preferences.measurementSystem === "metric" && styles.pillTextActive]}>
-                {t("measurementMetric")}
-              </Text>
-            </Pressable>
-          </View>
-
-          <Text style={[styles.preferenceLabel, { textAlign }]}>{t("recipePreferencesNutrition" as any)}</Text>
-          <View style={styles.pillSelector}>
-            <Pressable
-              style={[styles.pill, preferences.nutritionDisplay === "show" && styles.pillActive]}
-              onPress={() => setNutritionDisplay("show")}
-            >
-              <Text style={[styles.pillText, preferences.nutritionDisplay === "show" && styles.pillTextActive]}>
-                {t("nutritionShow")}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.pill, preferences.nutritionDisplay === "hide" && styles.pillActive]}
-              onPress={() => setNutritionDisplay("hide")}
-            >
-              <Text style={[styles.pillText, preferences.nutritionDisplay === "hide" && styles.pillTextActive]}>
-                {t("nutritionHide")}
-              </Text>
-            </Pressable>
-          </View>
-        </View>
+        ) : null}
       </ScrollView>
     </ScreenTransition>
+  );
+}
+
+function SectionLabel({ label, busy, isRTL }: { label: string; busy: boolean; isRTL: boolean }) {
+  return (
+    <View style={styles.sectionLabelRow}>
+      <Text
+        style={[
+          styles.sectionLabel,
+          !isRTL && styles.sectionLabelLatin,
+          { textAlign: "left", writingDirection: isRTL ? "rtl" : "ltr" },
+        ]}
+      >
+        {label}
+      </Text>
+      {busy ? <ActivityIndicator color={wasfaColors.primary} size="small" /> : null}
+    </View>
+  );
+}
+
+function SettingRow({
+  emoji,
+  label,
+  isRTL,
+  children,
+}: {
+  emoji: string;
+  label: string;
+  isRTL: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <View style={styles.row}>
+      <RNText style={styles.rowEmoji}>{emoji}</RNText>
+      <Text
+        style={[styles.rowLabel, styles.rowLabelFlex, { textAlign: "left", writingDirection: isRTL ? "rtl" : "ltr" }]}
+        numberOfLines={1}
+        adjustsFontSizeToFit
+        minimumFontScale={0.8}
+      >
+        {label}
+      </Text>
+      {children}
+    </View>
+  );
+}
+
+function SegmentedControl<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T | null;
+  options: { id: T; label: string }[];
+  onChange: (next: T) => void;
+}) {
+  return (
+    <View style={styles.segmented}>
+      {options.map((option) => {
+        const active = option.id === value;
+        return (
+          <Pressable
+            key={option.id}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            style={[styles.segment, active && styles.segmentActive]}
+            onPress={() => {
+              if (!active) onChange(option.id);
+            }}
+          >
+            <Text
+              style={[styles.segmentText, active && styles.segmentTextActive]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.8}
+            >
+              {option.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
   );
 }
 
@@ -338,14 +409,22 @@ function PreferenceChip({
   label,
   active,
   onPress,
+  leading,
 }: {
   label: string;
   active: boolean;
   onPress: () => void;
+  leading: ReactNode;
 }) {
   return (
-    <Pressable style={[styles.preferenceChip, active && styles.preferenceChipActive]} onPress={onPress}>
-      <Text style={[styles.preferenceChipText, active && styles.preferenceChipTextActive]}>{label}</Text>
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={[styles.preferenceChip, active && styles.preferenceChipActive]}
+      onPress={onPress}
+    >
+      {leading}
+      <Text style={styles.preferenceChipText}>{label}</Text>
     </Pressable>
   );
 }
@@ -353,125 +432,163 @@ function PreferenceChip({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#E8DCCB",
-  },
-  content: {
-    paddingTop: 60,
-    paddingHorizontal: 24,
-    paddingBottom: 40,
+    backgroundColor: wasfaColors.background,
   },
   header: {
     alignItems: "center",
-    marginBottom: 32,
+    paddingHorizontal: 20,
+    paddingBottom: 26,
+    backgroundColor: wasfaColors.primary,
+    borderBottomLeftRadius: wasfaRadius.hero,
+    borderBottomRightRadius: wasfaRadius.hero,
+    overflow: "hidden",
   },
-  avatar: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    marginBottom: 16,
+  headerCircle: {
+    position: "absolute",
+    top: -70,
+    end: -60,
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    backgroundColor: "rgba(255,255,255,0.1)",
   },
-  avatarPlaceholder: {
-    backgroundColor: "#fff",
+  avatarRing: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    borderWidth: 4,
+    borderColor: "#FFFFFF",
+    backgroundColor: wasfaColors.primarySoft,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 2,
-    borderColor: "#e2e2e2",
+    overflow: "hidden",
+    marginBottom: 12,
   },
-  avatarText: {
-    fontSize: 40,
-    fontWeight: "700",
-    color: "#25292f",
+  avatarPhoto: {
+    width: "100%",
+    height: "100%",
   },
-  guestLogo: {
-    width: 66,
-    height: 66,
-    borderRadius: 18,
+  avatarMascot: {
+    width: 78,
+    height: 78,
   },
   userName: {
     fontSize: 24,
-    fontWeight: "700",
-    color: "#252821",
-    marginBottom: 4,
+    fontWeight: "800",
+    color: "#FFFFFF",
+    textAlign: "center",
   },
   userEmail: {
-    fontSize: 16,
-    color: "#4f5347",
-    marginBottom: 4,
-  },
-  userLabel: {
+    marginTop: 4,
     fontSize: 14,
-    color: "#8b8b8b",
+    color: "rgba(255,255,255,0.85)",
+    textAlign: "center",
+    // Email addresses always read left to right.
+    writingDirection: "ltr",
   },
-  actions: {
-    marginBottom: 32,
-  },
-  button: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingVertical: 16,
-    paddingHorizontal: 24,
-    borderRadius: 999,
-    shadowColor: "#000",
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 2 },
-    elevation: 2,
-    minHeight: 56,
-    gap: 12,
+  guestHint: {
+    marginTop: 4,
+    fontSize: 14,
+    lineHeight: 20,
+    color: "rgba(255,255,255,0.85)",
+    textAlign: "center",
   },
   signInButton: {
-    backgroundColor: "#1e9f92",
+    marginTop: 20,
+    marginHorizontal: 20,
   },
-  signOutButton: {
-    backgroundColor: "#d64545",
-  },
-  deleteButton: {
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: "#d64545",
-  },
-  deleteButtonText: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#d64545",
-  },
-  buttonText: {
-    fontSize: 18,
-    fontWeight: "700",
-    color: "#ffffff",
-  },
-  googleIcon: {
-    fontSize: 20,
-    fontWeight: "700",
-    backgroundColor: "#ffffff",
-    color: "#1e9f92",
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    textAlign: "center",
-    lineHeight: 32,
-  },
-  preferencesSection: {
-    padding: 24,
-    borderRadius: 16,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e2e2e2",
-    gap: 14,
-  },
-  sectionTitleRow: {
+  sectionLabelRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
+    minHeight: 20,
+    marginTop: 24,
+    marginBottom: 8,
+    paddingHorizontal: 24,
     gap: 12,
   },
-  preferenceLabel: {
+  sectionLabel: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: "800",
+    color: wasfaColors.muted,
+  },
+  // Letter spacing breaks Arabic joining, so only the Latin label is tracked out.
+  sectionLabelLatin: {
+    textTransform: "uppercase",
+    letterSpacing: 0.96,
+  },
+  card: {
+    marginHorizontal: 20,
+    borderRadius: wasfaRadius.lg,
+    borderWidth: 1,
+    borderColor: wasfaColors.line,
+    backgroundColor: wasfaColors.surface,
+    overflow: "hidden",
+  },
+  hairline: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: wasfaColors.line,
+    marginHorizontal: 16,
+  },
+  row: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  rowEmoji: {
+    width: 30,
+    fontSize: 24,
+    lineHeight: 30,
+    textAlign: "center",
+  },
+  rowLabel: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: wasfaColors.ink,
+  },
+  rowLabelFlex: {
+    flex: 1,
+  },
+  segmented: {
+    width: 150,
+    flexDirection: "row",
+    padding: 3,
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: wasfaColors.soft,
+    borderWidth: 1,
+    borderColor: wasfaColors.line,
+  },
+  segment: {
+    flex: 1,
+    height: 38,
+    borderRadius: wasfaRadius.pill,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  segmentActive: {
+    backgroundColor: wasfaColors.surface,
+    shadowColor: "#000000",
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  segmentText: {
     fontSize: 13,
     fontWeight: "700",
-    color: "#4f5347",
-    textTransform: "uppercase",
-    marginTop: 4,
+    color: wasfaColors.muted,
+  },
+  segmentTextActive: {
+    color: wasfaColors.ink,
+  },
+  chipBlock: {
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    gap: 12,
   },
   chipWrap: {
     flexDirection: "row",
@@ -479,63 +596,67 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   preferenceChip: {
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: "#dfe5d7",
-    backgroundColor: "#f7f8f1",
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    height: 40,
+    borderRadius: wasfaRadius.pill,
+    borderWidth: 2,
+    borderColor: wasfaColors.line,
+    backgroundColor: wasfaColors.surface,
+    paddingStart: 6,
+    paddingEnd: 14,
   },
   preferenceChipActive: {
-    borderColor: "#1e9f92",
-    backgroundColor: "#E0F7EF",
+    borderColor: wasfaColors.cta,
+    backgroundColor: wasfaColors.ctaSoft,
   },
   preferenceChipText: {
-    color: "#4f5347",
+    color: wasfaColors.ink,
     fontSize: 14,
-    fontWeight: "600",
-  },
-  preferenceChipTextActive: {
-    color: "#087563",
-  },
-  languageSection: {
-    marginBottom: 32,
-    padding: 24,
-    borderRadius: 16,
-    backgroundColor: "#fff",
-    borderWidth: 1,
-    borderColor: "#e2e2e2",
-  },
-  sectionTitle: {
-    fontSize: 18,
     fontWeight: "700",
-    color: "#252821",
-    marginBottom: 16,
   },
-  pillSelector: {
-    flexDirection: "row",
-    gap: 12,
+  chipImage: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
   },
-  pill: {
-    flex: 1,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
-    borderRadius: 999,
-    backgroundColor: "#f5f5f5",
-    alignItems: "center",
+  chipEmoji: {
+    width: 28,
+    fontSize: 20,
+    lineHeight: 26,
+    textAlign: "center",
+  },
+  actions: {
+    marginTop: 24,
+    marginHorizontal: 20,
+    gap: 6,
+  },
+  signOutButton: {
+    height: 54,
+    borderRadius: wasfaRadius.pill,
     borderWidth: 2,
-    borderColor: "transparent",
+    borderColor: wasfaColors.line,
+    backgroundColor: wasfaColors.surface,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  pillActive: {
-    backgroundColor: "#1e9f92",
-    borderColor: "#1e9f92",
-  },
-  pillText: {
+  signOutText: {
     fontSize: 16,
-    fontWeight: "600",
-    color: "#4f5347",
+    fontWeight: "800",
+    color: wasfaColors.ink,
   },
-  pillTextActive: {
-    color: "#ffffff",
+  deleteButton: {
+    minHeight: 48,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  deleteButtonText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: wasfaColors.danger,
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });

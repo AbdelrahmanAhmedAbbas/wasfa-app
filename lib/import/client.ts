@@ -3,6 +3,7 @@ import { randomUUID } from "expo-crypto";
 
 import { supabase } from "@/lib/supabase/client";
 
+import { ImportRequestError } from "./errors";
 import type {
   ImportCreateInput,
   ImportCreateResponse,
@@ -100,13 +101,18 @@ async function callEdge<T>(
 
   if (!response.ok) {
     let parsedError: string | null = null;
+    let parsedCode: string | null = null;
     try {
-      const parsed = JSON.parse(payload) as { error?: string; message?: string };
+      const parsed = JSON.parse(payload) as { error?: string; message?: string; code?: string };
       parsedError = parsed?.error ?? parsed?.message ?? null;
+      parsedCode = typeof parsed?.code === "string" ? parsed.code : null;
     } catch {
       // Ignore parse errors and fall back to raw payload.
     }
-    throw new Error(parsedError || payload || `Request failed (${response.status})`);
+    throw new ImportRequestError(
+      parsedError || payload || `Request failed (${response.status})`,
+      parsedCode
+    );
   }
   return (await response.json()) as T;
 }
