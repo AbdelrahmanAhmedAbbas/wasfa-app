@@ -3,7 +3,18 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import { router, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
-import { ActivityIndicator, Alert, Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import {
+  ActivityIndicator,
+  Alert,
+  Image,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LocalizedText as Text } from "@/components/LocalizedText";
@@ -51,7 +62,7 @@ const REVIEWS: Review[] = [
 ];
 
 export default function SignupAuthScreen() {
-  const { signInWithGoogle, signInWithApple, user, loading } = useAuth();
+  const { signInWithGoogle, signInWithApple, signInWithEmail, user, loading } = useAuth();
   const { isRTL, t } = useLanguage();
   const insets = useSafeAreaInsets();
   // "I already have an account" on the intro replaces the questionnaire with
@@ -60,6 +71,9 @@ export default function SignupAuthScreen() {
   const cameFromIntro = from === "intro";
   const [isLoading, setIsLoading] = useState(false);
   const [answers, setAnswers] = useState<OnboardingAnswers | null>(null);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   useEffect(() => {
     if (!loading && user) {
@@ -116,6 +130,22 @@ export default function SignupAuthScreen() {
     }
   };
 
+  const canSubmitEmail = email.trim().length > 0 && password.length > 0 && !isLoading;
+
+  const handleEmailAuth = async () => {
+    if (!canSubmitEmail) return;
+
+    try {
+      setIsLoading(true);
+      await signInWithEmail(email, password);
+    } catch (error) {
+      console.error("Failed to sign in with email:", error);
+      Alert.alert(t("authErrorTitle"), t("obSignupEmailError"));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // The kitchen card strip only makes sense once the chat has been answered.
   const kitchenSummary = answers?.householdSize
     ? `${t(getHouseholdOption(answers.householdSize).labelKey)} · ${
@@ -126,7 +156,10 @@ export default function SignupAuthScreen() {
     : null;
 
   return (
-    <View style={styles.screen}>
+    <KeyboardAvoidingView
+      style={styles.screen}
+      behavior={Platform.OS === "ios" ? "padding" : undefined}
+    >
       <StatusBar style="dark" />
       {cameFromIntro ? (
         <Pressable
@@ -149,6 +182,7 @@ export default function SignupAuthScreen() {
           { paddingTop: insets.top + 52, paddingBottom: Math.max(insets.bottom + 16, 40) },
         ]}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {kitchenSummary ? (
           <View style={styles.kitchenStrip}>
@@ -225,9 +259,63 @@ export default function SignupAuthScreen() {
           )}
         </Pressable>
 
+        {emailOpen ? (
+          <View style={styles.emailForm}>
+            <TextInput
+              style={[styles.input, { textAlign: isRTL ? "right" : "left" }]}
+              value={email}
+              onChangeText={setEmail}
+              placeholder={t("obSignupEmailPlaceholder")}
+              placeholderTextColor={wasfaColors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="email"
+              keyboardType="email-address"
+              textContentType="username"
+              returnKeyType="next"
+              editable={!isLoading}
+            />
+            <TextInput
+              style={[styles.input, { textAlign: isRTL ? "right" : "left" }]}
+              value={password}
+              onChangeText={setPassword}
+              placeholder={t("obSignupPasswordPlaceholder")}
+              placeholderTextColor={wasfaColors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="current-password"
+              textContentType="password"
+              secureTextEntry
+              returnKeyType="go"
+              onSubmitEditing={() => void handleEmailAuth()}
+              editable={!isLoading}
+            />
+            <Pressable
+              accessibilityRole="button"
+              style={[styles.button, styles.emailSubmit, !canSubmitEmail && styles.emailSubmitDisabled]}
+              onPress={() => void handleEmailAuth()}
+              disabled={!canSubmitEmail}
+            >
+              <Text style={[styles.emailSubmitText, !canSubmitEmail && styles.emailSubmitTextDisabled]}>
+                {t("obSignupEmailSubmit")}
+              </Text>
+            </Pressable>
+          </View>
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            hitSlop={8}
+            style={styles.emailLink}
+            onPress={() => setEmailOpen(true)}
+            disabled={isLoading}
+          >
+            <Text style={styles.emailLinkText}>{t("obSignupEmail")}</Text>
+          </Pressable>
+        )}
+
         <Text style={styles.terms}>{t("obTerms")}</Text>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
@@ -383,6 +471,42 @@ const styles = StyleSheet.create({
   googleLogo: {
     width: 20,
     height: 20,
+  },
+  emailLink: {
+    alignSelf: "center",
+    paddingVertical: 4,
+  },
+  emailLinkText: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: wasfaColors.primaryDark,
+  },
+  emailForm: {
+    gap: 10,
+  },
+  input: {
+    height: 52,
+    paddingHorizontal: 18,
+    borderRadius: 18,
+    borderWidth: 1.5,
+    borderColor: wasfaColors.line,
+    backgroundColor: wasfaColors.surface,
+    fontSize: 16,
+    color: wasfaColors.ink,
+  },
+  emailSubmit: {
+    backgroundColor: wasfaColors.primary,
+  },
+  emailSubmitDisabled: {
+    backgroundColor: wasfaColors.disabled,
+  },
+  emailSubmitText: {
+    fontSize: 16,
+    fontWeight: "700",
+    color: "#FFFFFF",
+  },
+  emailSubmitTextDisabled: {
+    color: wasfaColors.disabledText,
   },
   terms: {
     fontSize: 11,

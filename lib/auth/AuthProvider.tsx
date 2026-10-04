@@ -126,6 +126,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log("Apple Sign-In not yet configured");
   };
 
+  // Email accounts are created from the Supabase dashboard (App Review and
+  // beta testers), so the app only signs in and never signs up.
+  const signInWithEmail = async (email: string, password: string) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: email.trim(),
+      password,
+    });
+    if (error) throw error;
+  };
+
   const completeOnboarding = async () => {
     await setOnboardingDone(true);
     setState((prev) => ({
@@ -138,6 +148,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     ...state,
     signInWithGoogle,
     signInWithApple,
+    signInWithEmail,
     signOut,
     completeOnboarding,
   };
