@@ -16,6 +16,7 @@ import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { FoodIconTile, Glyph } from "@/components/wasfa/Glyph";
 import Feather from "@expo/vector-icons/Feather";
+import { checkCarrefourReach } from "@/lib/grocery-prices/carrefour";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import {
@@ -30,6 +31,9 @@ import { getFoodGlyph } from "@/lib/theme/glyphs";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { getTabBarClearance, wasfaColors } from "@/lib/theme/wasfa";
 
+const CARREFOUR_CHECK_TERMS = [
+  "أرز مصري", "دجاج", "طماطم", "بصل", "ثوم", "زيت زيتون", "لبن", "بيض", "زبدة", "دقيق",
+];
 
 type GroupedItem = {
   id: string;
@@ -153,6 +157,18 @@ export default function GroceryScreen() {
     }
   };
 
+  // Development builds only: long-press the title to check that this phone can read
+  // Carrefour's search pages, which the site refuses to server addresses.
+  const checkCarrefour = async () => {
+    setError("Checking Carrefour…");
+    const report = await checkCarrefourReach(CARREFOUR_CHECK_TERMS);
+    setError(null);
+    Alert.alert(
+      `Carrefour: ${report.withProducts} of ${report.searches} in ${report.seconds.toFixed(1)}s`,
+      report.lines.join("\n")
+    );
+  };
+
   const confirmRemoveGroup = (group: GroupedItem) => {
     Alert.alert(t("groceryRemoveTitle"), group.ingredient_text, [
       { text: t("cancel"), style: "cancel" },
@@ -203,7 +219,9 @@ export default function GroceryScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.eyebrow}>{t("groceryTitle")}</Text>
+        <Text style={styles.eyebrow} onLongPress={__DEV__ ? () => void checkCarrefour() : undefined}>
+          {t("groceryTitle")}
+        </Text>
         {items.length > 0 ? (
           <>
             <View style={styles.countRow}>
