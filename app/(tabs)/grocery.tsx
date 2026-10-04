@@ -157,8 +157,9 @@ export default function GroceryScreen() {
     }
   };
 
-  // Development builds only: long-press the title to check that this phone can read
-  // Carrefour's search pages, which the site refuses to server addresses.
+  // Hidden check, to be removed before public release: long-press the title to see
+  // whether this phone can read Carrefour's search pages, which the site refuses to
+  // server addresses.
   const checkCarrefour = async () => {
     setError("Checking Carrefour…");
     const report = await checkCarrefourReach(CARREFOUR_CHECK_TERMS);
@@ -219,7 +220,7 @@ export default function GroceryScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.eyebrow} onLongPress={__DEV__ ? () => void checkCarrefour() : undefined}>
+        <Text style={styles.eyebrow} onLongPress={() => void checkCarrefour()}>
           {t("groceryTitle")}
         </Text>
         {items.length > 0 ? (
