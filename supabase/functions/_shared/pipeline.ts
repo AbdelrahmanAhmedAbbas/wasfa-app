@@ -20,6 +20,8 @@ import {
   upsertRecipeDraft,
 } from "./db.ts";
 import { hasIngredientsNeedingReview } from "./ingredient-details.ts";
+import { extractAacFromMp4 } from "./mp4-audio.ts";
+import { isProviderCreditError, mapPipelineError } from "./pipeline-errors.ts";
 import { runSanityCheck } from "./sanity-check.ts";
 import type { ImportJobRow, LocalizedRecipeText, RecipeDraft } from "./types.ts";
 import {
@@ -34,7 +36,11 @@ import {
   youTubeThumbnailUrl,
 } from "./youtube.ts";
 
-const OPENROUTER_TRANSCRIBE_MODEL = "google/gemini-3-flash-preview";
+// Tried in order: the second model only runs when the first one fails.
+const OPENROUTER_TRANSCRIBE_MODELS = ["google/gemini-3-flash-preview", "google/gemini-2.5-flash"];
+const TRANSCRIBE_MAX_TOKENS = 8000;
+// What the model answers when the video has no speech to write down.
+const NO_SPEECH_MARKER = "[NO_SPEECH]";
 // Allow reasonably large source downloads so we can still extract metadata/captions
 // even when transcription upload limits are lower.
 const MAX_MEDIA_DOWNLOAD_BYTES = 64 * 1024 * 1024;
@@ -45,7 +51,10 @@ const DEFAULT_APIFY_ACTOR_TIKTOK = "clockworks~tiktok-scraper";
 const APIFY_TIMEOUT_MS = 60_000;
 const YOUTUBE_APIFY_TIMEOUT_MS = 40_000;
 const MEDIA_FETCH_TIMEOUT_MS = 45_000;
-const OPENROUTER_TRANSCRIBE_TIMEOUT_MS = 90_000;
+const OPENROUTER_TRANSCRIBE_TIMEOUT_MS = 60_000;
+// Time kept back for the steps after transcription: extraction, both languages, saving.
+const POST_TRANSCRIPTION_RESERVE_MS = 55_000;
+const MIN_TRANSCRIBE_ATTEMPT_MS = 10_000;
 // Background tasks are cut off at 150 seconds on the Supabase free plan. Failing the job
 // before that leaves time to record the failure, instead of a job stuck in "processing".
 const PIPELINE_TIME_BUDGET_MS = 135_000;
@@ -73,7 +82,21 @@ type SourceMetadata = {
   mediaError?: string;
 };
 
-type PipelineBudget = { expired: boolean };
+type PipelineBudget = { expired: boolean; startedAt: number };
+
+type TranscriptionMedia = {
+  buffer: Uint8Array;
+  mimeType: string;
+  filename: string;
+};
+
+// Why an import has no transcript. Only "unavailable" is worth retrying later: the video
+// has speech we could not get to (a provider error, a failed download, no time left).
+type TranscriptSkipReason = "no_speech" | "no_media" | "media_too_large" | "unavailable";
+
+type TranscriptionOutcome =
+  | { transcript: string; model: string; uploadBytes: number; uploadMimeType: string }
+  | { transcript: null; reason: TranscriptSkipReason; details: string };
 
 type ContentGenerationResult =
   | {
@@ -630,11 +653,7 @@ async function fetchApifyMetadata(params: {
   return fetchInstagramViaApify(params.sourceUrl);
 }
 
-async function downloadMediaForTranscription(metadata: SourceMetadata): Promise<{
-  buffer: Uint8Array;
-  mimeType: string;
-  filename: string;
-}> {
+async function downloadMediaForTranscription(metadata: SourceMetadata): Promise<TranscriptionMedia> {
   if (!metadata.mediaUrl) {
     console.error("[import][download] no mediaUrl in metadata");
     throw new Error("MEDIA_NOT_AVAILABLE");
@@ -703,26 +722,44 @@ function uint8ToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-async function transcribeWithOpenRouter(media: {
-  buffer: Uint8Array;
-  mimeType: string;
-  filename: string;
-}): Promise<string> {
+/**
+ * The uploads to try for one downloaded file, smallest first: the audio track on its
+ * own, then the file as downloaded when it fits the upload limit.
+ */
+function buildTranscriptionCandidates(media: TranscriptionMedia): TranscriptionMedia[] {
+  const candidates: TranscriptionMedia[] = [];
+  const isMp4 = media.mimeType.includes("mp4") || media.mimeType.startsWith("video/");
+
+  if (isMp4) {
+    const audio = extractAacFromMp4(media.buffer);
+    if (audio && audio.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES) {
+      candidates.push({ buffer: audio, mimeType: "audio/aac", filename: "source.aac" });
+    }
+  }
+  if (media.buffer.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES) candidates.push(media);
+
+  return candidates;
+}
+
+function audioFormatFor(mimeType: string): string {
+  if (mimeType.includes("aac")) return "aac";
+  if (mimeType.includes("mp4")) return "mp4";
+  if (mimeType.includes("m4a")) return "m4a";
+  if (mimeType.includes("webm")) return "webm";
+  if (mimeType.includes("wav")) return "wav";
+  if (mimeType.includes("mp3") || mimeType.includes("mpeg")) return "mp3";
+  return "mp4";
+}
+
+async function transcribeWithOpenRouter(
+  media: TranscriptionMedia,
+  model: string,
+  timeoutMs: number
+): Promise<string> {
   const apiKey = requiredEnv("OPENROUTER_API_KEY");
 
   const base64Data = uint8ToBase64(media.buffer);
-
-  const audioFormat = media.mimeType.includes("mp4")
-    ? "mp4"
-    : media.mimeType.includes("m4a")
-      ? "m4a"
-      : media.mimeType.includes("webm")
-        ? "webm"
-        : media.mimeType.includes("wav")
-          ? "wav"
-          : media.mimeType.includes("mp3") || media.mimeType.includes("mpeg")
-            ? "mp3"
-            : "mp4";
+  const audioFormat = audioFormatFor(media.mimeType);
 
   const response = await fetchWithTimeout(
     "https://openrouter.ai/api/v1/chat/completions",
@@ -735,14 +772,16 @@ async function transcribeWithOpenRouter(media: {
         "X-Title": "Meal Planner Import",
       },
       body: JSON.stringify({
-        model: OPENROUTER_TRANSCRIBE_MODEL,
+        model,
+        max_tokens: TRANSCRIBE_MAX_TOKENS,
+        temperature: 0,
         messages: [
           {
             role: "user",
             content: [
               {
                 type: "text",
-                text: "Transcribe all spoken words in this audio/video exactly as said. Return ONLY the transcript text, nothing else. If the speech is in Arabic or any non-English language, transcribe it in that language.",
+                text: `Transcribe every spoken word in this recording exactly as said, in the language and dialect it is spoken in. Arabic speech, including Egyptian, Gulf and Levantine dialects, must be written in Arabic script and never translated. Keep every ingredient, amount and number the speaker says. Return ONLY the transcript text. If nobody speaks (music or silence only), return exactly ${NO_SPEECH_MARKER}.`,
               },
               {
                 type: "input_audio",
@@ -756,7 +795,7 @@ async function transcribeWithOpenRouter(media: {
         ],
       }),
     },
-    OPENROUTER_TRANSCRIBE_TIMEOUT_MS,
+    timeoutMs,
     "TRANSCRIPTION_TIMEOUT"
   );
 
@@ -767,11 +806,12 @@ async function transcribeWithOpenRouter(media: {
       body: truncateForLog(body, 800),
       fileBytes: media.buffer.byteLength,
       format: audioFormat,
+      model,
     });
     if (response.status === 413) {
       throw new Error(`MEDIA_TOO_LARGE_OPENROUTER ${truncateForLog(body, 1200)}`);
     }
-    throw new Error(`TRANSCRIPTION_FAILED ${response.status} ${body}`);
+    throw new Error(`TRANSCRIPTION_FAILED ${response.status} ${truncateForLog(body, 1200)}`);
   }
 
   let data: { choices?: Array<{ message?: { content?: string } }> };
@@ -781,15 +821,90 @@ async function transcribeWithOpenRouter(media: {
     console.error("[import][openrouter-transcribe] invalid json", {
       body: truncateForLog(body, 500),
     });
-    throw new Error(`TRANSCRIPTION_FAILED 200 invalid_json ${body}`);
+    throw new Error(`TRANSCRIPTION_FAILED 200 invalid_json ${truncateForLog(body, 500)}`);
   }
 
   const text = data?.choices?.[0]?.message?.content?.trim() ?? "";
-  if (!text) {
-    console.warn("[import][openrouter-transcribe] empty text", { body: truncateForLog(body, 300) });
-    throw new Error("TRANSCRIPTION_EMPTY");
+  if (!text || text.includes(NO_SPEECH_MARKER)) {
+    console.warn("[import][openrouter-transcribe] no speech", { body: truncateForLog(body, 300) });
+    throw new Error("TRANSCRIPTION_NO_SPEECH");
   }
   return text;
+}
+
+/**
+ * Downloads the post's media and transcribes it, trying a smaller upload and a second
+ * model before giving up. Never throws: a missing transcript comes back with its reason.
+ */
+async function transcribeSourceMedia(
+  metadata: SourceMetadata,
+  budget: PipelineBudget,
+  onDownloaded: (media: TranscriptionMedia, candidates: TranscriptionMedia[]) => Promise<void>
+): Promise<TranscriptionOutcome> {
+  if (!metadata.mediaUrl) {
+    // A media error means the post has audio that the downloader failed to fetch.
+    return metadata.mediaError
+      ? { transcript: null, reason: "unavailable", details: metadata.mediaError }
+      : { transcript: null, reason: "no_media", details: "MEDIA_NOT_AVAILABLE" };
+  }
+
+  let candidates: TranscriptionMedia[];
+  try {
+    const media = await downloadMediaForTranscription(metadata);
+    candidates = buildTranscriptionCandidates(media);
+    await onDownloaded(media, candidates);
+  } catch (error) {
+    const raw = String(error);
+    const reason = raw.includes("MEDIA_DOWNLOAD_TOO_LARGE")
+      ? "media_too_large"
+      : raw.includes("MEDIA_TYPE_NOT_SUPPORTED")
+        ? "no_media"
+        : "unavailable";
+    return { transcript: null, reason, details: truncateForLog(raw, 1200) };
+  }
+
+  if (candidates.length === 0) {
+    return { transcript: null, reason: "media_too_large", details: "MEDIA_TOO_LARGE_FOR_TRANSCRIPTION_UPLOAD" };
+  }
+
+  // The smallest upload goes to each model first; the file as downloaded is the last resort.
+  const attempts = [
+    ...OPENROUTER_TRANSCRIBE_MODELS.map((model) => ({ model, media: candidates[0] })),
+    ...(candidates.length > 1 ? [{ model: OPENROUTER_TRANSCRIBE_MODELS[0], media: candidates[1] }] : []),
+  ];
+
+  let lastError = "";
+  for (const attempt of attempts) {
+    const remainingMs =
+      PIPELINE_TIME_BUDGET_MS - (Date.now() - budget.startedAt) - POST_TRANSCRIPTION_RESERVE_MS;
+    if (remainingMs < MIN_TRANSCRIBE_ATTEMPT_MS) {
+      lastError = lastError || "TRANSCRIPTION_OUT_OF_TIME";
+      break;
+    }
+
+    try {
+      const transcript = await transcribeWithOpenRouter(
+        attempt.media,
+        attempt.model,
+        Math.min(OPENROUTER_TRANSCRIBE_TIMEOUT_MS, remainingMs)
+      );
+      return {
+        transcript,
+        model: attempt.model,
+        uploadBytes: attempt.media.buffer.byteLength,
+        uploadMimeType: attempt.media.mimeType,
+      };
+    } catch (error) {
+      lastError = truncateForLog(String(error), 1200);
+      if (lastError.includes("TRANSCRIPTION_NO_SPEECH")) {
+        return { transcript: null, reason: "no_speech", details: lastError };
+      }
+      // Another model or a smaller file does not help an account that is out of credit.
+      if (isProviderCreditError(error)) break;
+    }
+  }
+
+  return { transcript: null, reason: "unavailable", details: lastError };
 }
 
 function buildCombinedContext(params: {
@@ -821,7 +936,7 @@ function buildCombinedContext(params: {
   if (params.transcript?.trim()) {
     lines.push(`Transcript:\n${params.transcript.trim()}`);
   } else {
-    lines.push("Transcript: unavailable (transcription skipped).");
+    lines.push("Transcript: none. Nothing spoken in the video is known, so use only the text above.");
   }
 
   return lines.join("\n\n");
@@ -858,121 +973,6 @@ function applySourceLanguageContent(
   };
 }
 
-function isTranscriptionOversizeError(error: unknown): boolean {
-  const raw = String(error);
-  return (
-    raw.includes("MEDIA_TOO_LARGE") ||
-    raw.includes("MEDIA_TOO_LARGE_OPENROUTER") ||
-    raw.includes("TRANSCRIPTION_FAILED 413")
-  );
-}
-
-function mapPipelineError(error: unknown): { code: string; message: string } {
-  const raw = String(error);
-  if (raw.includes("SHORT_TOO_LONG")) {
-    return {
-      code: "SHORT_TOO_LONG",
-      message: "This video is longer than 3 minutes. Only YouTube Shorts can be imported.",
-    };
-  }
-  if (raw.includes("MEDIA_NOT_AVAILABLE")) {
-    return {
-      code: "MEDIA_NOT_AVAILABLE",
-      message: "Could not resolve a downloadable media URL from this post.",
-    };
-  }
-  if (raw.includes("TIKTOK_APIFY_FAILED")) {
-    return {
-      code: "TIKTOK_APIFY_FAILED",
-      message: "TikTok actor failed while resolving this media URL.",
-    };
-  }
-  if (raw.includes("APIFY_RUN_FAILED")) {
-    return {
-      code: "APIFY_FAILED",
-      message: "Apify scraping failed while resolving this media URL.",
-    };
-  }
-  if (raw.includes("APIFY_TOKEN_MISSING")) {
-    return {
-      code: "APIFY_NOT_CONFIGURED",
-      message: "APIFY_TOKEN is missing in Edge Function secrets.",
-    };
-  }
-  if (raw.includes("APIFY_TIMEOUT")) {
-    return {
-      code: "APIFY_FAILED",
-      message: "Apify timed out while resolving this media URL.",
-    };
-  }
-  if (raw.includes("APIFY_INVALID_JSON")) {
-    return {
-      code: "APIFY_FAILED",
-      message: "Apify returned an invalid response payload.",
-    };
-  }
-  if (raw.includes("MEDIA_DOWNLOAD_FAILED")) {
-    return {
-      code: "MEDIA_NOT_AVAILABLE",
-      message: "Found a media URL but failed to download it.",
-    };
-  }
-  if (raw.includes("MEDIA_DOWNLOAD_TOO_LARGE")) {
-    return {
-      code: "MEDIA_TOO_LARGE",
-      message: "Media file is too large to download in the current pipeline limits.",
-    };
-  }
-  if (raw.includes("MEDIA_TOO_LARGE")) {
-    return {
-      code: "MEDIA_TOO_LARGE",
-      message: "Media file is too large for transcription upload limits.",
-    };
-  }
-  if (raw.includes("TRANSCRIPTION_REQUIRED")) {
-    return {
-      code: "TRANSCRIPTION_FAILED",
-      message:
-        "Could not produce a transcript for this media. Transcript is required for extraction.",
-    };
-  }
-  if (raw.includes("INSUFFICIENT_CONTEXT_AFTER_TRANSCRIPTION_SKIP")) {
-    return {
-      code: "TRANSCRIPTION_FAILED",
-      message:
-        "Transcription couldn't be used and the post has no caption or text to extract a recipe from. Try a link that has a caption or description.",
-    };
-  }
-  if (raw.includes("MEDIA_TYPE_NOT_SUPPORTED")) {
-    return {
-      code: "MEDIA_TYPE_NOT_SUPPORTED",
-      message: "Resolved media type is not supported for transcription.",
-    };
-  }
-  if (raw.includes("TRANSCRIPTION")) {
-    return {
-      code: "TRANSCRIPTION_FAILED",
-      message: "Audio transcription failed for this media.",
-    };
-  }
-  if (raw.includes("OPENROUTER_TIMEOUT")) {
-    return {
-      code: "AI_EXTRACTION_FAILED",
-      message: "The recipe import provider timed out before finishing the recipe.",
-    };
-  }
-  if (raw.includes("Generated recipe did not pass validation")) {
-    return {
-      code: "PARSER_SCHEMA_FAILED",
-      message: "Recipe parser output did not meet schema requirements.",
-    };
-  }
-  return {
-    code: "AI_EXTRACTION_FAILED",
-    message: "Automatic extraction failed for this video URL. Please try another URL.",
-  };
-}
-
 function throwIfOutOfTime(budget: PipelineBudget) {
   if (budget.expired) throw new Error(PIPELINE_TIMED_OUT_CODE);
 }
@@ -982,7 +982,7 @@ export async function runImportPipeline(params: {
   job: ImportJobRow;
   sharedText?: string | null;
 }) {
-  const budget: PipelineBudget = { expired: false };
+  const budget: PipelineBudget = { expired: false, startedAt: Date.now() };
   let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   const budgetExpiry = new Promise<"expired">((resolve) => {
     budgetTimer = setTimeout(() => {
@@ -1021,6 +1021,9 @@ async function runPipelineSteps(params: {
   budget: PipelineBudget;
 }) {
   let transcript: string | null = null;
+  // Set when the video's speech could not be reached this time, so the failure message
+  // and the shared cache can tell a missed transcript from a video with nothing to hear.
+  let transcriptUnavailable = false;
 
   await updateJobStatus(params.adminClient, {
     jobId: params.job.id,
@@ -1126,6 +1129,9 @@ async function runPipelineSteps(params: {
       media_type: metadata.mediaType ?? null,
     });
 
+    // The scraper found nothing at this link: a private or deleted post, or a wrong link.
+    if (Object.keys(metadata).length === 0) throw new Error("POST_NOT_FOUND");
+
     if (
       params.job.source_platform === "youtube" &&
       typeof metadata.videoDurationSeconds === "number" &&
@@ -1134,47 +1140,33 @@ async function runPipelineSteps(params: {
       throw new Error("SHORT_TOO_LONG");
     }
 
-    let transcriptionSkippedReason: string | null = null;
-    try {
-      const media = await downloadMediaForTranscription(metadata);
-      const mediaEligibleForTranscription =
-        media.buffer.byteLength <= MAX_TRANSCRIPTION_UPLOAD_BYTES;
+    const transcription = await transcribeSourceMedia(metadata, params.budget, async (media, candidates) => {
       await logJobEvent(params.adminClient, params.job.id, "normalized", {
         stage: "audio_extract",
         mime_type: media.mimeType,
         media_bytes: media.buffer.byteLength,
-        transcription_eligible: mediaEligibleForTranscription,
+        audio_track_extracted: candidates[0]?.mimeType === "audio/aac",
+        upload_bytes: candidates[0]?.buffer.byteLength ?? null,
+        transcription_eligible: candidates.length > 0,
         transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
       });
+    });
 
-      if (mediaEligibleForTranscription) {
-        transcript = await transcribeWithOpenRouter(media);
-        await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "openrouter_transcribe",
-          transcript_length: transcript.length,
-          model: OPENROUTER_TRANSCRIBE_MODEL,
-        });
-      } else {
-        transcriptionSkippedReason = "media_too_large_for_transcription_upload";
-        transcript = null;
-        await logJobEvent(params.adminClient, params.job.id, "normalized", {
-          stage: "openrouter_transcribe_skipped",
-          reason: transcriptionSkippedReason,
-          model: OPENROUTER_TRANSCRIBE_MODEL,
-          media_bytes: media.buffer.byteLength,
-          transcription_upload_limit_bytes: MAX_TRANSCRIPTION_UPLOAD_BYTES,
-        });
-      }
-    } catch (error) {
-      transcriptionSkippedReason = isTranscriptionOversizeError(error)
-        ? "media_too_large"
-        : "transcription_error";
-      transcript = null;
+    if (transcription.transcript !== null) {
+      transcript = transcription.transcript;
       await logJobEvent(params.adminClient, params.job.id, "normalized", {
-        stage: "openrouter_transcribe_failed",
-        reason: transcriptionSkippedReason,
-        model: OPENROUTER_TRANSCRIBE_MODEL,
-        details: truncateForLog(String(error), 1200),
+        stage: "openrouter_transcribe",
+        transcript_length: transcript.length,
+        model: transcription.model,
+        upload_bytes: transcription.uploadBytes,
+        upload_mime_type: transcription.uploadMimeType,
+      });
+    } else {
+      transcriptUnavailable = transcription.reason === "unavailable";
+      await logJobEvent(params.adminClient, params.job.id, "normalized", {
+        stage: transcriptUnavailable ? "openrouter_transcribe_failed" : "openrouter_transcribe_skipped",
+        reason: transcription.reason,
+        details: transcription.details,
       });
     }
 
@@ -1185,9 +1177,6 @@ async function runPipelineSteps(params: {
         transcript,
       })
     ) {
-      if (transcriptionSkippedReason) {
-        throw new Error("INSUFFICIENT_CONTEXT_AFTER_TRANSCRIPTION_SKIP");
-      }
       throw new Error("INSUFFICIENT_TEXT_CONTEXT");
     }
 
@@ -1210,6 +1199,7 @@ async function runPipelineSteps(params: {
       stage: "gemini_parse",
       model: extraction.model,
       provider: extraction.provider,
+      failed_models: extraction.confidence.extraction_failed_models ?? [],
     });
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
       stage: "web_measurement_fill",
@@ -1403,10 +1393,11 @@ async function runPipelineSteps(params: {
         ...extraction.confidence,
         cache_hit: false,
         cache_source_url: normalizedCacheUrl,
-        transcription_model: transcript ? OPENROUTER_TRANSCRIBE_MODEL : null,
+        transcription_model: transcription.transcript !== null ? transcription.model : null,
         transcription_provider: transcript ? "openrouter" : "skipped",
         transcription_chars: transcript?.length ?? 0,
         transcription_skipped: !transcript,
+        transcription_skip_reason: transcription.transcript === null ? transcription.reason : null,
         missing_fields_completed: {
           description: detailCompletion.filledDescription,
           prep_minutes: detailCompletion.filledPrepMinutes,
@@ -1447,18 +1438,23 @@ async function runPipelineSteps(params: {
       language: extraction.draft.source.language ?? null,
     });
 
-    await upsertExtractionCache(params.adminClient, {
-      normalizedUrl: normalizedCacheUrl,
-      payload: enrichedDraft,
-      sourcePlatform: params.job.source_platform,
-      sourcePostId: metadata.sourcePostId ?? null,
-      sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
-      modelInfo: { extractionModel: extraction.model },
-    });
+    // A recipe built without the speech we failed to reach stays out of the shared cache,
+    // so the next import of this link listens to the video again.
+    if (!transcriptUnavailable) {
+      await upsertExtractionCache(params.adminClient, {
+        normalizedUrl: normalizedCacheUrl,
+        payload: enrichedDraft,
+        sourcePlatform: params.job.source_platform,
+        sourcePostId: metadata.sourcePostId ?? null,
+        sourceThumbnailUrl: metadata.thumbnailUrl ?? null,
+        modelInfo: { extractionModel: extraction.model },
+      });
+    }
     await logJobEvent(params.adminClient, params.job.id, "normalized", {
       stage: "cache_write",
       model: extraction.model,
       payload_bytes: JSON.stringify(enrichedDraft).length,
+      skipped: transcriptUnavailable,
     });
 
     const needsIngredientReview = hasIngredientsNeedingReview(enrichedDraft.ingredients);
@@ -1496,7 +1492,7 @@ async function runPipelineSteps(params: {
     // Once the time budget has run out the job is already marked failed.
     if (params.budget.expired) return;
 
-    const mapped = mapPipelineError(error);
+    const mapped = mapPipelineError(error, { transcriptUnavailable });
     await updateJobStatus(params.adminClient, {
       jobId: params.job.id,
       status: "failed",

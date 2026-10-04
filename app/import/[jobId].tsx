@@ -9,7 +9,7 @@ import { CheckBox } from "@/components/wasfa/CheckBox";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { getImportJob } from "@/lib/import/client";
-import { getImportErrorTranslationKey } from "@/lib/import/errors";
+import { getJobFailureTranslationKey } from "@/lib/import/errors";
 import { shouldRedirectImportHome } from "@/lib/import/navigation";
 import { wasfaColors } from "@/lib/theme/wasfa";
 
@@ -112,14 +112,7 @@ export default function ImportJobScreen() {
       setReachedStep((prev) => Math.max(prev, stepIndex));
       if (response.job.status === "failed" && !failureNotifiedRef.current) {
         failureNotifiedRef.current = true;
-        const localizedKey = getImportErrorTranslationKey(response.job.error_code);
-        if (localizedKey) {
-          Alert.alert(t("importFailedTitle"), t(localizedKey));
-        } else {
-          const message =
-            response.job.error_message ?? "Import failed. Please try another link.";
-          Alert.alert("Import failed", message);
-        }
+        Alert.alert(t("importFailedTitle"), t(getJobFailureTranslationKey(response.job.error_code)));
       }
     } catch {
       // Swallow polling errors and let the next tick retry.

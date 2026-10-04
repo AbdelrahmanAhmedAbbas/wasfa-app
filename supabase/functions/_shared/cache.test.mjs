@@ -30,3 +30,20 @@ test("every form of a YouTube Short link shares one cache key", () => {
     assert.equal(normalizeSourceUrlForCache(url), "https://youtube.com/shorts/abcDEF12345");
   }
 });
+
+test("every share of one Instagram reel or TikTok video uses the same cache key", () => {
+  const reel = "https://instagram.com/reel/DKcYeG9R4D8";
+  for (const url of [
+    "https://www.instagram.com/reel/DKcYeG9R4D8/?stkn=MWY5Z2N5YnQ2bXNhbQ==",
+    "https://www.instagram.com/reel/DKcYeG9R4D8/?stkn=cml1dzl5dDJ6aXBq",
+    "https://www.instagram.com/reel/DKcYeG9R4D8/?igsh=abc&stkn=zzz",
+    "https://instagram.com/reel/DKcYeG9R4D8",
+  ]) {
+    assert.equal(normalizeSourceUrlForCache(url), reel);
+  }
+
+  assert.equal(
+    normalizeSourceUrlForCache("https://www.tiktok.com/@chef/video/7500559359378820360?is_from_webapp=1&sender_device=pc"),
+    "https://tiktok.com/@chef/video/7500559359378820360"
+  );
+});

@@ -60,7 +60,10 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
 
   if (!isSupportedSource(submittedUrl)) {
     return jsonResponse(
-      { error: "Unsupported source URL. Only Instagram, TikTok and YouTube Shorts are allowed." },
+      {
+        error: "Unsupported source URL. Only Instagram, TikTok and YouTube Shorts are allowed.",
+        code: "UNSUPPORTED_URL",
+      },
       422
     );
   }
@@ -68,7 +71,10 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
   const submittedPlatform = detectSourcePlatform(submittedUrl);
   if (submittedPlatform === "unknown") {
     return jsonResponse(
-      { error: "Could not detect source platform. Only Instagram, TikTok and YouTube Shorts are supported." },
+      {
+        error: "Could not detect source platform. Only Instagram, TikTok and YouTube Shorts are supported.",
+        code: "UNSUPPORTED_URL",
+      },
       422
     );
   }
@@ -91,7 +97,7 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
   } catch (error) {
     if (String(error).includes("RATE_LIMITED")) {
       return jsonResponse(
-        { error: "Rate limit reached. Please wait before creating more import jobs." },
+        { error: "Rate limit reached. Please wait before creating more import jobs.", code: "RATE_LIMITED" },
         429
       );
     }
@@ -107,7 +113,10 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
 
   if (!isSupportedSource(normalizedUrl)) {
     return jsonResponse(
-      { error: "Unsupported source URL. Only Instagram, TikTok and YouTube Shorts are allowed." },
+      {
+        error: "Unsupported source URL. Only Instagram, TikTok and YouTube Shorts are allowed.",
+        code: "UNSUPPORTED_URL",
+      },
       422
     );
   }
@@ -115,7 +124,10 @@ export async function handleImportCreate(req: Request, defaultEntrypoint: Import
   const sourcePlatform = detectSourcePlatform(normalizedUrl);
   if (sourcePlatform === "unknown") {
     return jsonResponse(
-      { error: "Could not detect source platform. Only Instagram, TikTok and YouTube Shorts are supported." },
+      {
+        error: "Could not detect source platform. Only Instagram, TikTok and YouTube Shorts are supported.",
+        code: "UNSUPPORTED_URL",
+      },
       422
     );
   }

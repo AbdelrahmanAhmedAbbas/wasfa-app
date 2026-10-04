@@ -15,8 +15,11 @@ import {
   markIngredientReviewStates,
   MEASURE_UNITS,
   mergeIngredientSources,
+  normalizeIngredientKey,
+  normalizeQuantity,
   normalizeUnit,
 } from "./ingredient-details.ts";
+import { getArabicTextIssues } from "./sanity-check.ts";
 import { linkStepIngredients } from "./step-rewriter.ts";
 import { validateRecipeDraft } from "./validation.ts";
 
@@ -57,12 +60,20 @@ const ARABIC_CONTENT_MODELS = [
 ];
 const GEMINI_NUTRITION_MODEL = "google/gemini-3-flash-preview";
 const WEB_RESEARCH_MODEL = "google/gemini-2.5-pro";
-const OPENROUTER_TIMEOUT_MS = 90_000;
+const OPENROUTER_TIMEOUT_MS = 60_000;
+// The web search for amounts is the slowest call and the least likely to help, so it
+// gets a short leash; estimated amounts take over when it runs out.
+const WEB_RESEARCH_TIMEOUT_MS = 25_000;
+// Output caps. Without one a request reserves the model's whole output window, and
+// OpenRouter refuses it when the balance cannot cover that reservation.
+const RECIPE_MAX_TOKENS = 12_000;
+const DETAIL_MAX_TOKENS = 4_000;
 
 const defaultNutritionDisclaimer =
   "Estimated nutrition values only. Verify with a certified nutrition source before medical use.";
 
 const recipeObjectSchema = z.object({
+  recipe_in_source: z.boolean().nullable().optional(),
   title: z.string().min(1),
   description: z.string().nullable().optional(),
   cuisine: z.string().nullable().optional(),
@@ -230,6 +241,7 @@ const ingredientResearchSchema = z.object({
 const forcedIngredientMeasurementSchema = z.object({
   ingredients: z.array(
     z.object({
+      number: z.number().int().nullable().optional(),
       name: z.string().min(1),
       quantity: z.string().min(1),
       unit: z.string().min(1),
@@ -353,9 +365,15 @@ function buildExtractionPrompt(input: RecipeInput): string {
   return `Extract a cooking recipe from the provided video source context.
 Rules:
 - Return only recipe information in the requested schema.
-- Include cuisine and meal_type. Use cuisine="General" and meal_type="Meal" only when the source is unclear.
-- Infer servings, ingredient quantities, and ordered steps from transcript + caption + metadata + video OCR context.
-- Ingredient names alone are incomplete. For each ingredient, preserve exact quantity/unit/size details such as 150 g, 2 tbsp, 3 slices, 1 piece, 1 whole, 500 ml, 1 can, 2 cloves, etc.
+- Use only what the source says. Every ingredient must be spoken in the transcript or written in the caption, description, first comment or shared text. Never add an ingredient from general knowledge of the dish, and never build a recipe from a title or hashtags alone.
+- Set recipe_in_source=true only when the source itself states at least two ingredients. Otherwise set recipe_in_source=false and return empty ingredients and steps arrays.
+- When the source states the ingredients but not the method, write the steps a home cook would follow using only those ingredients.
+- Write the title, description, ingredient names, preparation, notes and steps in the language the recipe is told in. An Arabic recipe stays Arabic, keeping the creator's own ingredient words (for example "حبهان", "كزبرة ناشفة"); never translate it to English. Set source.language to "ar" or "en".
+- Include cuisine and meal_type in that same language. Use cuisine="General" and meal_type="Meal" only when the source is unclear.
+- Infer servings and the order of steps from transcript + caption + metadata.
+- Ingredient names alone are incomplete. For each ingredient, preserve the exact quantity/unit/size the source gives, such as 150 g, 2 tbsp, 3 slices, 1 piece, 1 whole, 500 ml, 1 can, 2 cloves.
+- quantity uses Western digits only (2, 0.5, 1/4), whatever the language. Convert Arabic digits and spoken amounts: "٢" is 2, "نص" or "نصف" is 0.5, "ربع" is 0.25, "تلت" is 1/3, "ملعقتين" is 2, "كوبين" is 2.
+- unit is always one of these English words, whatever the language: ${ALLOWED_UNITS_FOR_PROMPT.join(", ")}. For example "ملعقة كبيرة" or "معلقة أكل" is tbsp, "ملعقة صغيرة" or "معلقة شاي" is tsp, "كوب" or "كوباية" is cup, "جرام" is g, "كيلو" is kg, "فص" is clove, "حبة" is whole, "رشة" is pinch. Leave quantity and unit null when the source gives no amount ("شوية", "حسب الرغبة", "to taste").
 - Put preparation details like cooked, diced, chopped, or sliced in preparation, not in the ingredient name when possible.
 - For each ingredient, set allergen_hints to every allergen it contains, using only these values: dairy, egg, gluten, wheat, peanut, tree_nut, seafood, shellfish. Include allergens hidden inside prepared foods (soy sauce has wheat and gluten, mayonnaise has egg, pesto has tree_nut and dairy).
 - For each ingredient, include dietary_flags when they apply (pork, alcohol, meat, dairy, egg, gluten).
@@ -553,13 +571,17 @@ const ALLOWED_UNITS_FOR_PROMPT = [
 
 function buildForcedMeasurementPrompt(draft: RecipeDraft): string {
   const missing = draft.ingredients
-    .filter((ingredient) => !isIngredientDetailComplete(ingredient))
-    .map((ingredient) => `- ${ingredient.name}${ingredient.preparation ? `, ${ingredient.preparation}` : ""}`)
+    .map((ingredient, index) =>
+      isIngredientDetailComplete(ingredient)
+        ? null
+        : `${index + 1}. ${ingredient.name}${ingredient.preparation ? `, ${ingredient.preparation}` : ""}`
+    )
+    .filter(Boolean)
     .join("\n");
 
   return `Estimate practical cooking measurements for the incomplete ingredients.
 Rules:
-- Return ONLY ingredients listed under Incomplete ingredients.
+- Return ONLY ingredients listed under Incomplete ingredients, each with the number it is listed under and its name copied exactly.
 - Every returned ingredient MUST include a non-empty numeric quantity (digits only, e.g. "2", "1.5", "0.25") and a unit chosen STRICTLY from this allowlist: ${ALLOWED_UNITS_FOR_PROMPT.join(", ")}.
 - Do NOT use units outside the allowlist. Do NOT use phrases like "to taste", "as needed", or descriptive words. If you would say "to taste", convert to "1 pinch".
 - Use lowercase singular form for the unit (e.g. "tbsp" not "Tbsp." or "tablespoons").
@@ -620,9 +642,11 @@ export function containsArabic(text: string): boolean {
 }
 
 export function getSourceRecipeLanguage(draft: RecipeDraft): "en" | "ar" {
-  if (draft.source.language) {
-    return draft.source.language.toLowerCase().startsWith("ar") ? "ar" : "en";
-  }
+  // Models label the language loosely ("ar", "Arabic", "عربي", "English"), so only a
+  // label that is clearly one of the two is trusted; anything else is read off the text.
+  const label = draft.source.language?.trim().toLowerCase() ?? "";
+  if (label.startsWith("ar") || containsArabic(label)) return "ar";
+  if (label.startsWith("en")) return "en";
   const sample = `${draft.title} ${draft.steps.map((step) => step.text).join(" ")}`;
   return containsArabic(sample) ? "ar" : "en";
 }
@@ -641,8 +665,8 @@ function normalizeRecipeCandidate(
     cook_minutes: optionalPositiveInt(candidate.cook_minutes),
     ingredients: candidate.ingredients.map((item) => ({
       name: item.name.trim(),
-      quantity: optionalString(item.quantity),
-      unit: optionalString(item.unit),
+      quantity: normalizeQuantity(item.quantity) || undefined,
+      unit: normalizeUnit(item.unit) || undefined,
       preparation: optionalString(item.preparation),
       size: optionalString(item.size),
       notes: optionalString(item.notes),
@@ -687,8 +711,8 @@ function normalizeResearchIngredients(
     const citationUrl = optionalString(ingredient.citation_url);
     const base = {
       name: ingredient.name.trim(),
-      quantity: optionalString(ingredient.quantity),
-      unit: optionalString(ingredient.unit),
+      quantity: normalizeQuantity(ingredient.quantity) || undefined,
+      unit: normalizeUnit(ingredient.unit) || undefined,
       preparation: optionalString(ingredient.preparation),
       size: optionalString(ingredient.size),
       notes: optionalString(ingredient.notes),
@@ -747,13 +771,11 @@ function fallbackLocalizedText(
 
 function assertArabicContentQuality(localized: LocalizedRecipeText) {
   const issues: string[] = [];
-  const latinPattern = /[A-Za-z]/;
 
   const requireArabic = (value: string | undefined, issuePrefix: string) => {
     const trimmed = optionalString(value);
     if (!trimmed) return;
-    if (latinPattern.test(trimmed)) issues.push(`${issuePrefix}_contains_latin`);
-    if (!containsArabic(trimmed)) issues.push(`${issuePrefix}_missing_arabic`);
+    issues.push(...getArabicTextIssues(trimmed).map((issue) => `${issuePrefix}_${issue}`));
   };
 
   requireArabic(localized.title, "title");
@@ -924,6 +946,7 @@ export async function generateRecipeContent(
           generateObject({
             model: providerClient(modelName),
             schema: localizedTextSchema,
+            maxTokens: RECIPE_MAX_TOKENS,
             temperature: 0.2,
             system:
               "You generate natural localized recipe content while preserving exact ingredient and step counts.",
@@ -1052,6 +1075,7 @@ export async function fillMissingRecipeDetails(
         generateObject({
           model,
           schema: missingDetailsSchema,
+          maxTokens: DETAIL_MAX_TOKENS,
           temperature: 0.2,
           system:
             "You complete missing recipe metadata conservatively and never modify ingredients or steps.",
@@ -1094,25 +1118,34 @@ async function fillMissingMeasurements(params: {
   draft: RecipeDraft;
   input: RecipeInput;
 }): Promise<IngredientResearchResult> {
-  const content = await openRouterChatCompletion({
-    model: WEB_RESEARCH_MODEL,
-    plugins: [{ id: "web" }],
-    messages: [
-      {
-        role: "user",
-        content: buildIngredientResearchPrompt({
-          draft: params.draft,
-          sourceUrl: params.input.sourceUrl,
-          sourcePlatform: params.input.sourcePlatform,
-          sourceText: params.input.sourceText,
-        }),
-      },
-    ],
-  });
+  const content = await openRouterChatCompletion(
+    {
+      model: WEB_RESEARCH_MODEL,
+      max_tokens: RECIPE_MAX_TOKENS,
+      plugins: [{ id: "web" }],
+      messages: [
+        {
+          role: "user",
+          content: buildIngredientResearchPrompt({
+            draft: params.draft,
+            sourceUrl: params.input.sourceUrl,
+            sourcePlatform: params.input.sourcePlatform,
+            sourceText: params.input.sourceText,
+          }),
+        },
+      ],
+    },
+    { timeoutMs: WEB_RESEARCH_TIMEOUT_MS }
+  );
 
   const parsed = ingredientResearchSchema.parse(parseJsonLenient(content));
+  // The search may only fill in ingredients the recipe already has; a name it made up
+  // or reworded would otherwise be added to the recipe as a new ingredient.
+  const knownKeys = new Set(params.draft.ingredients.map((ingredient) => normalizeIngredientKey(ingredient.name)));
   return {
-    ingredients: normalizeResearchIngredients(parsed.ingredients),
+    ingredients: normalizeResearchIngredients(parsed.ingredients).filter((ingredient) =>
+      knownKeys.has(normalizeIngredientKey(ingredient.name))
+    ),
     citations: parsed.citations ?? [],
     model: WEB_RESEARCH_MODEL,
   };
@@ -1134,6 +1167,7 @@ async function forceFillIngredientMeasurements(draft: RecipeDraft): Promise<Reci
       generateObject({
         model: providerClient(GEMINI_PARSER_MODEL),
         schema: forcedIngredientMeasurementSchema,
+        maxTokens: DETAIL_MAX_TOKENS,
         temperature: 0.2,
         system: "You estimate missing recipe measurements conservatively and return complete JSON only.",
         prompt: buildForcedMeasurementPrompt(nextDraft),
@@ -1141,9 +1175,20 @@ async function forceFillIngredientMeasurements(draft: RecipeDraft): Promise<Reci
       })
     );
 
-    const estimates = object.ingredients.map((ingredient) => ({
+    // An estimate is matched to its ingredient by list number, so a name the model
+    // respelled (common with Arabic) still lands on the right ingredient and is never
+    // added as a new one.
+    const estimates = object.ingredients.flatMap((ingredient) => {
+      const numbered = typeof ingredient.number === "number" ? nextDraft.ingredients[ingredient.number - 1] : undefined;
+      const key = normalizeIngredientKey(ingredient.name);
+      const target =
+        numbered && !isIngredientDetailComplete(numbered)
+          ? numbered
+          : nextDraft.ingredients.find((entry) => normalizeIngredientKey(entry.name) === key);
+      return target ? [{ ...ingredient, name: target.name }] : [];
+    }).map((ingredient) => ({
       name: ingredient.name.trim(),
-      quantity: ingredient.quantity.trim(),
+      quantity: normalizeQuantity(ingredient.quantity) || ingredient.quantity.trim(),
       unit: normalizeUnit(ingredient.unit) || ingredient.unit.trim(),
       preparation: optionalString(ingredient.preparation),
       size: optionalString(ingredient.size),
@@ -1253,12 +1298,15 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
   let object: z.infer<typeof recipeObjectSchema> | null = null;
   let modelUsed: string | null = null;
 
+  const failedModels: Array<{ model: string; error: string }> = [];
+
   for (const candidateModel of EXTRACTION_MODELS) {
     try {
       const result = await withAbortTimeout((abortSignal) =>
         generateObject({
           model: providerClient(candidateModel),
           schema: recipeObjectSchema,
+          maxTokens: RECIPE_MAX_TOKENS,
           temperature: 0.2,
           system:
             "You are a recipe extraction engine. Return accurate recipe objects as JSON and avoid hallucinations.",
@@ -1271,6 +1319,7 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
       break;
     } catch (error) {
       lastError = error;
+      failedModels.push({ model: candidateModel, error: truncateForLog(String(error), 300) });
       console.warn("[import][extract] model failed", { model: candidateModel, error: truncateForLog(String(error)) });
     }
   }
@@ -1279,8 +1328,11 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
     throw new Error(`OPENROUTER_EXTRACTION_FAILED ${truncateForLog(String(lastError))}`);
   }
 
+  // The model reports when the source has no recipe instead of inventing one.
+  if (object.recipe_in_source === false) throw new Error("RECIPE_NOT_IN_SOURCE");
+
   const draft = normalizeRecipeCandidate(object, input);
-  if (!draft) throw new Error("Generated recipe did not pass validation constraints.");
+  if (!draft) throw new Error("RECIPE_NOT_IN_SOURCE Generated recipe did not pass validation constraints.");
 
   const detailCompletion = await enrichMissingIngredientDetails(draft, input);
   const finalDraft = validateRecipeDraft(detailCompletion.draft);
@@ -1292,6 +1344,7 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
       provider: "openrouter",
       model: modelUsed,
       extraction_mode: "schema",
+      extraction_failed_models: failedModels,
       ingredient_review: {
         needs_review: hasIngredientsNeedingReview(finalDraft.ingredients),
         web_research_attempted: detailCompletion.researchAttempted,
@@ -1317,6 +1370,7 @@ export async function estimateNutrition(
       generateObject({
         model,
         schema: nutritionObjectSchema,
+        maxTokens: DETAIL_MAX_TOKENS,
         temperature: 0.2,
         system:
           "You estimate recipe nutrition conservatively. Never claim medical precision and always include a disclaimer.",
@@ -1401,6 +1455,7 @@ async function rewriteLocalizedStepsForServings(
       generateObject({
         model: providerClient(GEMINI_PARSER_MODEL),
         schema: localizedStepRewriteSchema,
+        maxTokens: RECIPE_MAX_TOKENS,
         temperature: 0.2,
         system: "You rewrite recipe steps for serving changes without changing ingredients.",
         prompt: buildStepRewritePrompt(draft, servings),

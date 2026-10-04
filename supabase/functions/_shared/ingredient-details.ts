@@ -125,24 +125,100 @@ const UNIT_NORMALIZATION: Record<string, string> = {
   "gr.": "g",
   "gm": "g",
   "gms": "g",
-  "غرام": "g",
-  "غرامات": "g",
-  "جرام": "g",
-  "جرامات": "g",
-  "كيلو": "kg",
-  "كيلوغرام": "kg",
   "kgs": "kg",
   "lb.": "lb",
   "lbs.": "lbs",
   "ml.": "ml",
   "mls": "ml",
-  "مليلتر": "ml",
   "l.": "l",
-  "لتر": "l",
-  "ملعقه صغيره": "ملعقة صغيرة",
-  "ملعقه كبيرة": "ملعقة كبيرة",
-  "ملعقة كبيره": "ملعقة كبيرة",
 };
+
+// Arabic units as creators write and say them, mapped to the English unit the app
+// stores. The app shows the stored unit in the reader's language, and converts and
+// scales amounts by it, so an Arabic unit left as typed would do neither.
+const ARABIC_UNITS: Record<string, string> = {
+  "جم": "g",
+  "غ": "g",
+  "غم": "g",
+  "جرام": "g",
+  "جرامات": "g",
+  "غرام": "g",
+  "غرامات": "g",
+  "كجم": "kg",
+  "كغ": "kg",
+  "كغم": "kg",
+  "كيلو": "kg",
+  "كيلوجرام": "kg",
+  "كيلوغرام": "kg",
+  "مل": "ml",
+  "ملل": "ml",
+  "مليلتر": "ml",
+  "ملليلتر": "ml",
+  "لتر": "l",
+  "ليتر": "l",
+  "ملعقة صغيرة": "tsp",
+  "معلقة صغيرة": "tsp",
+  "ملاعق صغيرة": "tsp",
+  "معالق صغيرة": "tsp",
+  "ملعقة شاي": "tsp",
+  "معلقة شاي": "tsp",
+  "ملعقة كبيرة": "tbsp",
+  "معلقة كبيرة": "tbsp",
+  "ملاعق كبيرة": "tbsp",
+  "معالق كبيرة": "tbsp",
+  "ملعقة طعام": "tbsp",
+  "ملعقة أكل": "tbsp",
+  "معلقة أكل": "tbsp",
+  "كوب": "cup",
+  "كوباية": "cup",
+  "أكواب": "cup",
+  "كاسة": "cup",
+  "كأس": "cup",
+  "شريحة": "slice",
+  "شرائح": "slice",
+  "قطعة": "piece",
+  "قطع": "piece",
+  "حبة": "whole",
+  "حبات": "whole",
+  "علبة": "can",
+  "علب": "can",
+  "عبوة": "pack",
+  "عبوات": "pack",
+  "كيس": "pack",
+  "باكيت": "pack",
+  "فص": "clove",
+  "فصوص": "clove",
+  "حزمة": "bunch",
+  "حزم": "bunch",
+  "ربطة": "bunch",
+  "رشة": "pinch",
+  "رشات": "pinch",
+  "قطرة": "drop",
+  "قطرات": "drop",
+  "حفنة": "handful",
+  "حفنات": "handful",
+  "عود": "stick",
+  "أعواد": "stick",
+  "رأس": "head",
+  "رؤوس": "head",
+  "غصن": "sprig",
+  "أغصان": "sprig",
+  "ورقة": "leaf",
+  "أوراق": "leaf",
+};
+
+/** Folds the spelling differences Arabic text has for one word: hamza forms, ta marbuta, diacritics. */
+function foldArabic(value: string): string {
+  return value
+    .replace(/[\u064B-\u0652\u0640]/g, "")
+    .replace(/[أإآ]/g, "ا")
+    .replace(/ى/g, "ي")
+    .replace(/ة/g, "ه");
+}
+
+const ARABIC_UNIT_LOOKUP = new Map(
+  Object.entries(ARABIC_UNITS).map(([arabic, unit]) => [foldArabic(arabic), unit])
+);
 
 export function normalizeUnit(value: string | null | undefined): string {
   if (!value) return "";
@@ -151,12 +227,41 @@ export function normalizeUnit(value: string | null | undefined): string {
   if (UNIT_NORMALIZATION[trimmed]) return UNIT_NORMALIZATION[trimmed];
   const stripped = trimmed.replace(/\.$/, "");
   if (UNIT_NORMALIZATION[stripped]) return UNIT_NORMALIZATION[stripped];
+  const arabicUnit = ARABIC_UNIT_LOOKUP.get(foldArabic(stripped));
+  if (arabicUnit) return arabicUnit;
   if (MEASURE_UNITS.has(stripped)) return stripped;
   return trimmed;
 }
 
+const UNICODE_FRACTIONS: Record<string, string> = {
+  "½": "1/2",
+  "⅓": "1/3",
+  "⅔": "2/3",
+  "¼": "1/4",
+  "¾": "3/4",
+  "⅛": "1/8",
+};
+
+/**
+ * Rewrites an amount with Western digits, which is what the app can scale and convert:
+ * Arabic-Indic and Persian digits, the Arabic decimal mark and one-character fractions.
+ */
+export function normalizeQuantity(value: string | null | undefined): string {
+  if (!value) return "";
+  return value
+    .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
+    .replace(/٫/g, ".")
+    .replace(/٬/g, "")
+    .replace(/(\d)?([½⅓⅔¼¾⅛])/g, (_match, whole, fraction) =>
+      whole ? `${whole} ${UNICODE_FRACTIONS[fraction]}` : UNICODE_FRACTIONS[fraction]
+    )
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
 const QUANTITY_WITH_UNIT_PATTERN =
-  /\b[\d٠-٩]+(?:[./][\d٠-٩]+)?\s*(?:g|grams?|جم|غ|جرام(?:ات)?|kg|كجم|كيلو(?:غرام)?|oz|ounces?|lb|lbs|pounds?|ml|مل|مليلتر|l|liters?|litres?|لتر|tsp|teaspoons?|ملعقة صغيرة|tbsp|tablespoons?|ملعقة كبيرة|cups?|كوب|أكواب|slices?|شرائح?|pieces?|قطع(?:ة)?|whole|حبات?|cans?|علب(?:ة)?|packs?|عبوات?|cloves?|فصوص?|bunches?|حزم(?:ة)?|pinches?|رشات?|dashes?|قليل|splashes?|drops?|قطرات?|handfuls?|حفنات?|sticks?|أعواد|heads?|رؤوس|sprigs?|أغصان|leaves|leaf|أوراق|ورقة)\b/iu;
+  /(?<![\p{L}\p{N}])[\d٠-٩]+(?:[./][\d٠-٩]+)?\s*(?:g|grams?|جم|غ|جرام(?:ات)?|kg|كجم|كيلو(?:غرام)?|oz|ounces?|lb|lbs|pounds?|ml|مل|مليلتر|l|liters?|litres?|لتر|tsp|teaspoons?|ملعقة صغيرة|tbsp|tablespoons?|ملعقة كبيرة|cups?|كوب|أكواب|slices?|شرائح?|pieces?|قطع(?:ة)?|whole|حبات?|cans?|علب(?:ة)?|packs?|عبوات?|cloves?|فصوص?|bunches?|حزم(?:ة)?|pinches?|رشات?|dashes?|قليل|splashes?|drops?|قطرات?|handfuls?|حفنات?|sticks?|أعواد|heads?|رؤوس|sprigs?|أغصان|leaves|leaf|أوراق|ورقة)(?![\p{L}\p{N}])/iu;
 
 function hasText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
@@ -246,6 +351,16 @@ function compactIngredient(ingredient: IngredientItem): IngredientItem {
   if (optionalString(ingredient.notes)) result.notes = optionalString(ingredient.notes);
   if (optionalString(ingredient.preparation)) result.preparation = optionalString(ingredient.preparation);
   if (optionalString(ingredient.size)) result.size = optionalString(ingredient.size);
+  // The diet and halal findings ride along with the ingredient; the app's allergy
+  // warnings and halal swaps read them.
+  if (ingredient.dietary_flags?.length) result.dietary_flags = ingredient.dietary_flags;
+  if (ingredient.allergen_hints?.length) result.allergen_hints = ingredient.allergen_hints;
+  if (typeof ingredient.is_halal === "boolean") result.is_halal = ingredient.is_halal;
+  if (optionalString(ingredient.halal_concern)) result.halal_concern = optionalString(ingredient.halal_concern);
+  if (optionalString(ingredient.suggested_alternative)) {
+    result.suggested_alternative = optionalString(ingredient.suggested_alternative);
+  }
+  if (ingredient.use_original === true) result.use_original = true;
   if (ingredient.source) result.source = ingredient.source;
   if (typeof ingredient.confidence === "number") result.confidence = ingredient.confidence;
   if (optionalString(ingredient.evidence_text)) result.evidence_text = optionalString(ingredient.evidence_text);

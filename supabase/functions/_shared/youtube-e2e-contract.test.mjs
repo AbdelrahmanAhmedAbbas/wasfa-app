@@ -13,6 +13,7 @@ import {
 } from "./youtube.ts";
 
 const pipeline = readFileSync(new URL("./pipeline.ts", import.meta.url), "utf8");
+const pipelineErrors = readFileSync(new URL("./pipeline-errors.ts", import.meta.url), "utf8");
 const handler = readFileSync(new URL("./create-handler.ts", import.meta.url), "utf8");
 const ai = readFileSync(new URL("./ai.ts", import.meta.url), "utf8");
 const expected = JSON.parse(
@@ -74,14 +75,14 @@ test("YouTube metadata comes from its own Apify actor and a failed scrape does n
 
 test("a Short over three minutes is rejected before its audio is transcribed", () => {
   const durationCheck = pipeline.indexOf('throw new Error("SHORT_TOO_LONG")');
-  const transcription = pipeline.indexOf("await transcribeWithOpenRouter(media)");
+  const transcription = pipeline.indexOf("await transcribeSourceMedia(metadata, params.budget,");
   assert.notEqual(durationCheck, -1);
   assert.notEqual(transcription, -1);
   assert.ok(durationCheck < transcription, "the duration check must come before the transcription");
 
   assert.match(pipeline, /metadata\.videoDurationSeconds > SHORT_MAX_DURATION_SECONDS/);
   assert.match(pipeline, /typeof metadata\.videoDurationSeconds === "number" &&/);
-  assert.match(pipeline, new RegExp(`code:\\s*"${expected.rejections.too_long.error_code}"`));
+  assert.match(pipelineErrors, new RegExp(`code:\\s*"${expected.rejections.too_long.error_code}"`));
 });
 
 test("a Short's audio is downloaded by its own Apify actor and transcribed like an Instagram reel", () => {

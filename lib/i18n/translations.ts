@@ -304,6 +304,14 @@ const en = {
   importErrorYoutubeNotShort: "Wasfa can only import YouTube Shorts. Open the Short on YouTube and share it from there.",
   importErrorShortTooLong: "This video is longer than 3 minutes, so it is not a Short. Wasfa can only import YouTube Shorts.",
   importErrorTimedOut: "This import took too long. Please try again.",
+  importErrorRecipeNotFound:
+    "We couldn't find a recipe in this video. The ingredients need to be spoken in the video or written in its caption.",
+  importErrorTranscriptUnavailable: "We couldn't listen to this video right now. Please try again in a few minutes.",
+  importErrorPostUnavailable: "We couldn't open this post. It may be private or deleted, or the link may be wrong.",
+  importErrorServiceUnavailable: "Recipe import is temporarily unavailable. Please try again later.",
+  importErrorRateLimited: "You've imported a lot of recipes in the last hour. Please wait a little and try again.",
+  importErrorUnsupportedUrl: "Wasfa imports recipes from Instagram, TikTok and YouTube Shorts links only.",
+  importErrorGeneric: "We couldn't import this recipe. Please try again.",
 
   recipeImportTitle: "Recipe Import",
   readingRecipe: "Reading recipe from the link...",
@@ -1064,6 +1072,13 @@ const ar: Record<TranslationKey, string> = {
   importErrorYoutubeNotShort: "وصفة تستورد يوتيوب شورتس فقط. افتح الشورت على يوتيوب وشاركه من هناك.",
   importErrorShortTooLong: "هذا الفيديو أطول من 3 دقائق، لذا لا يُعتبر شورت. وصفة تستورد يوتيوب شورتس فقط.",
   importErrorTimedOut: "استغرق الاستيراد وقتًا طويلًا. حاول مرة أخرى.",
+  importErrorRecipeNotFound: "لم نجد وصفة في هذا الفيديو. يجب أن تُذكر المكونات بالصوت في الفيديو أو تُكتب في وصفه.",
+  importErrorTranscriptUnavailable: "تعذّر الاستماع إلى هذا الفيديو الآن. حاول مرة أخرى بعد بضع دقائق.",
+  importErrorPostUnavailable: "تعذّر فتح هذا المنشور. قد يكون خاصًا أو محذوفًا، أو أن الرابط غير صحيح.",
+  importErrorServiceUnavailable: "استيراد الوصفات غير متاح مؤقتًا. حاول مرة أخرى لاحقًا.",
+  importErrorRateLimited: "استوردت عددًا كبيرًا من الوصفات خلال الساعة الماضية. انتظر قليلًا ثم حاول مرة أخرى.",
+  importErrorUnsupportedUrl: "وصفة تستورد الوصفات من روابط إنستغرام وتيك توك ويوتيوب شورتس فقط.",
+  importErrorGeneric: "تعذّر استيراد هذه الوصفة. حاول مرة أخرى.",
 
   recipeImportTitle: "استيراد الوصفة",
   readingRecipe: "جارٍ قراءة الوصفة من الرابط...",

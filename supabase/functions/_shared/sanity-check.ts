@@ -9,8 +9,6 @@ export type SanityCheckResult = {
   arabicIssues: string[];
 };
 
-const LATIN_PATTERN = /[A-Za-z]/;
-
 function containsArabic(text: string): boolean {
   return /[\u0600-\u06FF]/.test(text);
 }
@@ -30,12 +28,23 @@ Recipe JSON:
 ${JSON.stringify(draft)}`;
 }
 
+/**
+ * What is wrong with a piece of text that should be Arabic. A Latin word inside Arabic
+ * text is normal in recipes (a brand, "BBQ", "Air Fryer"), so Latin letters only count
+ * against the text when they outnumber the Arabic ones.
+ */
+export function getArabicTextIssues(value: string): string[] {
+  const arabicLetters = (value.match(/[\u0600-\u06FF]/g) ?? []).length;
+  const latinLetters = (value.match(/[A-Za-z]/g) ?? []).length;
+  const issues: string[] = [];
+  if (latinLetters > arabicLetters) issues.push("contains_latin");
+  if (arabicLetters === 0) issues.push("missing_arabic");
+  return issues;
+}
+
 function collectArabicFieldIssues(value: string | undefined, prefix: string): string[] {
   if (!value?.trim()) return [];
-  const issues: string[] = [];
-  if (LATIN_PATTERN.test(value)) issues.push(`${prefix}_contains_latin`);
-  if (!containsArabic(value)) issues.push(`${prefix}_missing_arabic`);
-  return issues;
+  return getArabicTextIssues(value).map((issue) => `${prefix}_${issue}`);
 }
 
 export function getArabicLocalizationIssues(draft: RecipeDraft): string[] {
@@ -112,6 +121,7 @@ export async function runSanityCheck(draft: RecipeDraft): Promise<SanityCheckRes
     const { object } = await generateObject({
       model: openrouter(SANITY_CHECK_MODEL),
       schema,
+      maxTokens: 2000,
       temperature: 0,
       system:
         "You are a recipe extraction QA checker. You only produce telemetry for operators.",

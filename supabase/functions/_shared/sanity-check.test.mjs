@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { getArabicLocalizationIssues, runSanityCheck } from "./sanity-check.ts";
+import { getArabicLocalizationIssues, getArabicTextIssues, runSanityCheck } from "./sanity-check.ts";
 
 const draft = {
   title: "Tomato Pasta",
@@ -70,4 +70,13 @@ test("sanity check flags Arabic localization leakage before confirmation", async
   assert.equal(result.shouldRetryArabic, true);
   assert.ok(result.arabicIssues.includes("localized_ar_title_contains_latin"));
   assert.ok(result.issues.includes("sanity_check_unavailable"));
+});
+
+test("a Latin word inside Arabic text is accepted, text that is mostly Latin is not", () => {
+  assert.deepEqual(getArabicTextIssues("سخني الفرن على 180 درجة"), []);
+  assert.deepEqual(getArabicTextIssues("ضعي الدجاج في القلاية الهوائية Air Fryer لمدة 15 دقيقة"), []);
+  assert.deepEqual(getArabicTextIssues("صوص BBQ"), []);
+  assert.deepEqual(getArabicTextIssues("Cook the tomatoes مع ملح"), ["contains_latin"]);
+  assert.deepEqual(getArabicTextIssues("Tomato Pasta"), ["contains_latin", "missing_arabic"]);
+  assert.deepEqual(getArabicTextIssues("180"), ["missing_arabic"]);
 });

@@ -105,6 +105,7 @@ export async function rewriteStepsForLanguage(
   const { object } = await generateObject({
     model: openrouter(STEP_REWRITER_MODEL),
     schema,
+    maxTokens: 12_000,
     temperature: 0.2,
     system: "You rewrite recipe instructions into concise procedural cooking steps.",
     prompt: buildPrompt(draft, language),

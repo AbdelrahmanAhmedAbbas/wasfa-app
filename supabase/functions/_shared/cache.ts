@@ -27,6 +27,13 @@ export function normalizeSourceUrlForCache(sourceUrl: string): string {
   parsed.hostname = normalizeSocialHost(parsed.hostname);
   parsed.hash = "";
 
+  // An Instagram or TikTok post is named by its path alone. Its query only says who
+  // shared it (Instagram adds a new "stkn" on every share), so keeping it would give
+  // each share of one reel its own cache entry.
+  if (parsed.hostname === "instagram.com" || parsed.hostname === "tiktok.com") {
+    parsed.search = "";
+  }
+
   for (const key of Array.from(parsed.searchParams.keys())) {
     if (shouldStripParam(key)) parsed.searchParams.delete(key);
   }
