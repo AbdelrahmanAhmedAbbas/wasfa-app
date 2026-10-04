@@ -13,10 +13,11 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
+import { PriceEstimate } from "@/components/grocery/PriceEstimate";
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { FoodIconTile, Glyph } from "@/components/wasfa/Glyph";
 import Feather from "@expo/vector-icons/Feather";
-import { checkCarrefourReach } from "@/lib/grocery-prices/carrefour";
+import { isPriceComparisonAvailable } from "@/lib/grocery-prices/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import {
@@ -30,10 +31,6 @@ import { mergeShoppingItems } from "@/lib/shopping/merge";
 import { getFoodGlyph } from "@/lib/theme/glyphs";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { getTabBarClearance, wasfaColors } from "@/lib/theme/wasfa";
-
-const CARREFOUR_CHECK_TERMS = [
-  "أرز مصري", "دجاج", "طماطم", "بصل", "ثوم", "زيت زيتون", "لبن", "بيض", "زبدة", "دقيق",
-];
 
 type GroupedItem = {
   id: string;
@@ -129,6 +126,7 @@ export default function GroceryScreen() {
       ),
     [activeFilter, items, language]
   );
+  const priceComparisonAvailable = isPriceComparisonAvailable();
   const toBuy = groupedItems.filter((group) => !group.checked);
   const inBasket = groupedItems.filter((group) => group.checked);
   const progress = groupedItems.length > 0 ? inBasket.length / groupedItems.length : 0;
@@ -155,19 +153,6 @@ export default function GroceryScreen() {
       setItems(prev);
       setError(t("groceryRemoveError"));
     }
-  };
-
-  // Hidden check, to be removed before public release: long-press the title to see
-  // whether this phone can read Carrefour's search pages, which the site refuses to
-  // server addresses.
-  const checkCarrefour = async () => {
-    setError("Checking Carrefour…");
-    const report = await checkCarrefourReach(CARREFOUR_CHECK_TERMS);
-    setError(null);
-    Alert.alert(
-      `Carrefour: ${report.withProducts} of ${report.searches} in ${report.seconds.toFixed(1)}s`,
-      report.lines.join("\n")
-    );
   };
 
   const confirmRemoveGroup = (group: GroupedItem) => {
@@ -220,9 +205,7 @@ export default function GroceryScreen() {
         ]}
         showsVerticalScrollIndicator={false}
       >
-        <Text style={styles.eyebrow} onLongPress={() => void checkCarrefour()}>
-          {t("groceryTitle")}
-        </Text>
+        <Text style={styles.eyebrow}>{t("groceryTitle")}</Text>
         {items.length > 0 ? (
           <>
             <View style={styles.countRow}>
@@ -245,6 +228,12 @@ export default function GroceryScreen() {
           </View>
         ) : (
           <>
+            {priceComparisonAvailable && toBuy.length > 0 ? (
+              <PriceEstimate
+                lines={toBuy.map((group) => ({ key: group.id, name: group.name, text: group.ingredient_text }))}
+              />
+            ) : null}
+
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}

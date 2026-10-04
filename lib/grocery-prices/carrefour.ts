@@ -134,35 +134,3 @@ export async function searchCarrefour(term: string): Promise<StoreProduct[]> {
     clearTimeout(timer);
   }
 }
-
-export type CarrefourReachReport = {
-  searches: number;
-  withProducts: number;
-  seconds: number;
-  /** One line per search: the first product and its price, or why it failed. */
-  lines: string[];
-};
-
-/** Runs every search, five at a time, and reports how many came back with products. */
-export async function checkCarrefourReach(terms: string[]): Promise<CarrefourReachReport> {
-  const startedAt = Date.now();
-  const lines: string[] = [];
-  let withProducts = 0;
-  for (let index = 0; index < terms.length; index += 5) {
-    const batch = terms.slice(index, index + 5);
-    const results = await Promise.all(
-      batch.map((term) =>
-        searchCarrefour(term).then(
-          (products) => ({ term, products, error: null }),
-          (error: unknown) => ({ term, products: [] as StoreProduct[], error: String(error) })
-        )
-      )
-    );
-    for (const { term, products, error } of results) {
-      if (products.length > 0) withProducts++;
-      const first = products[0];
-      lines.push(`${term}: ${first ? `${first.name} = ${first.price}` : (error ?? "no products")}`);
-    }
-  }
-  return { searches: terms.length, withProducts, seconds: (Date.now() - startedAt) / 1000, lines };
-}
