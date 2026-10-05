@@ -1238,9 +1238,11 @@ async function runPipelineSteps(params: {
       model: extraction.model,
       provider: extraction.provider,
       failed_models: extraction.confidence.extraction_failed_models ?? [],
+      extraction_ms: extraction.confidence.extraction_ms ?? null,
     });
     await params.store.logJobEvent("normalized", {
       stage: "web_measurement_fill",
+      measurement_fill_ms: extraction.confidence.measurement_fill_ms ?? null,
       ingredients_filled:
         typeof extraction.confidence.ingredient_review === "object" &&
         extraction.confidence.ingredient_review !== null &&

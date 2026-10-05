@@ -62,7 +62,9 @@ const ARABIC_CONTENT_MODELS = [
 ];
 const GEMINI_NUTRITION_MODEL = "google/gemini-3-flash-preview";
 const WEB_RESEARCH_MODEL = "google/gemini-2.5-pro";
-const OPENROUTER_TIMEOUT_MS = 60_000;
+// Long enough for the slowest model to write a long recipe; a shorter limit cut it off
+// mid-answer and sent the import down the whole fallback chain.
+const OPENROUTER_TIMEOUT_MS = 90_000;
 // The web search for amounts is the slowest call and the least likely to help, so it
 // gets a short leash; estimated amounts take over when it runs out.
 const WEB_RESEARCH_TIMEOUT_MS = 25_000;
@@ -1302,9 +1304,11 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
   let object: z.infer<typeof recipeObjectSchema> | null = null;
   let modelUsed: string | null = null;
 
-  const failedModels: Array<{ model: string; error: string }> = [];
+  const failedModels: Array<{ model: string; error: string; ms: number }> = [];
+  const startedAt = Date.now();
 
   for (const candidateModel of EXTRACTION_MODELS) {
+    const attemptStartedAt = Date.now();
     try {
       const result = await withAbortTimeout((abortSignal) =>
         generateObject({
@@ -1323,7 +1327,11 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
       break;
     } catch (error) {
       lastError = error;
-      failedModels.push({ model: candidateModel, error: truncateForLog(String(error), 300) });
+      failedModels.push({
+        model: candidateModel,
+        error: truncateForLog(String(error), 300),
+        ms: Date.now() - attemptStartedAt,
+      });
       console.warn("[import][extract] model failed", { model: candidateModel, error: truncateForLog(String(error)) });
     }
   }
@@ -1338,6 +1346,7 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
   const draft = normalizeRecipeCandidate(object, input);
   if (!draft) throw new Error("RECIPE_NOT_IN_SOURCE Generated recipe did not pass validation constraints.");
 
+  const extractedAt = Date.now();
   const detailCompletion = await enrichMissingIngredientDetails(draft, input);
   const finalDraft = validateRecipeDraft(detailCompletion.draft);
   if (!finalDraft) throw new Error("Generated recipe did not pass final validation constraints.");
@@ -1349,6 +1358,9 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
       model: modelUsed,
       extraction_mode: "schema",
       extraction_failed_models: failedModels,
+      // Where the time went, for telling a slow model from a slow amount search.
+      extraction_ms: extractedAt - startedAt,
+      measurement_fill_ms: Date.now() - extractedAt,
       ingredient_review: {
         needs_review: hasIngredientsNeedingReview(finalDraft.ingredients),
         web_research_attempted: detailCompletion.researchAttempted,
