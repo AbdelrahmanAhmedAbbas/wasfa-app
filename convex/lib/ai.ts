@@ -38,12 +38,6 @@ type RecipeInput = {
   sourceText: string;
 };
 
-type IngredientResearchResult = {
-  ingredients: IngredientItem[];
-  citations: string[];
-  model: string;
-};
-
 const EXTRACTION_MODELS = [
   "anthropic/claude-sonnet-4.6",
   "anthropic/claude-haiku-4.5",
@@ -61,13 +55,9 @@ const ARABIC_CONTENT_MODELS = [
   "google/gemini-3-flash-preview",
 ];
 const GEMINI_NUTRITION_MODEL = "google/gemini-3-flash-preview";
-const WEB_RESEARCH_MODEL = "google/gemini-2.5-pro";
 // Long enough for the slowest model to write a long recipe; a shorter limit cut it off
 // mid-answer and sent the import down the whole fallback chain.
 const OPENROUTER_TIMEOUT_MS = 90_000;
-// The web search for amounts is the slowest call and the least likely to help, so it
-// gets a short leash; estimated amounts take over when it runs out.
-const WEB_RESEARCH_TIMEOUT_MS = 25_000;
 // Output caps. Without one a request reserves the model's whole output window, and
 // OpenRouter refuses it when the balance cannot cover that reservation.
 const RECIPE_MAX_TOKENS = 12_000;
@@ -225,23 +215,6 @@ const localizedStepRewriteSchema = z.object({
   ar: z.object({ steps: localizedTextSchema.shape.steps }),
 });
 
-const ingredientResearchSchema = z.object({
-  ingredients: z.array(
-    z.object({
-      name: z.string().min(1),
-      quantity: z.string().nullable().optional(),
-      unit: z.string().nullable().optional(),
-      preparation: z.string().nullable().optional(),
-      size: z.string().nullable().optional(),
-      notes: z.string().nullable().optional(),
-      confidence: z.number().min(0).max(1).nullable().optional(),
-      evidence_text: z.string().nullable().optional(),
-      citation_url: z.string().nullable().optional(),
-    })
-  ),
-  citations: z.array(z.string()).optional(),
-});
-
 const forcedIngredientMeasurementSchema = z.object({
   ingredients: z.array(
     z.object({
@@ -298,73 +271,6 @@ async function withAbortTimeout<T>(
   }
 }
 
-function parseJsonLenient(raw: string): unknown {
-  const normalized = raw.trim().replace(/^\uFEFF/, "").replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
-  try {
-    return JSON.parse(normalized);
-  } catch {
-    const firstObject = normalized.indexOf("{");
-    const firstArray = normalized.indexOf("[");
-    const firstIndex =
-      firstObject === -1
-        ? firstArray
-        : firstArray === -1
-          ? firstObject
-          : Math.min(firstObject, firstArray);
-    if (firstIndex === -1) throw new Error("OPENROUTER_JSON_NOT_FOUND");
-    const lastObject = normalized.lastIndexOf("}");
-    const lastArray = normalized.lastIndexOf("]");
-    const lastIndex = Math.max(lastObject, lastArray);
-    if (lastIndex <= firstIndex) throw new Error("OPENROUTER_JSON_NOT_FOUND");
-    return JSON.parse(normalized.slice(firstIndex, lastIndex + 1));
-  }
-}
-
-async function openRouterChatCompletion(
-  body: Record<string, unknown>,
-  options: { abortSignal?: AbortSignal; timeoutMs?: number } = {}
-): Promise<string> {
-  const apiKey = requiredEnv("OPENROUTER_API_KEY");
-  const response = await withAbortTimeout(
-    (abortSignal) =>
-      fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-          "HTTP-Referer": "https://meal-planner.app",
-          "X-Title": "Meal Planner Import",
-        },
-        body: JSON.stringify(body),
-        signal: abortSignal,
-      }),
-    options.timeoutMs,
-    options.abortSignal
-  );
-
-  const rawBody = await response.text();
-  if (!response.ok) {
-    throw new Error(`OPENROUTER_CHAT_FAILED ${response.status} ${truncateForLog(rawBody)}`);
-  }
-
-  let data: { choices?: Array<{ message?: { content?: string | Array<{ text?: string }> } }> };
-  try {
-    data = JSON.parse(rawBody);
-  } catch {
-    throw new Error(`OPENROUTER_CHAT_INVALID_JSON ${truncateForLog(rawBody)}`);
-  }
-
-  const messageContent = data.choices?.[0]?.message?.content;
-  const content =
-    typeof messageContent === "string"
-      ? messageContent.trim()
-      : Array.isArray(messageContent)
-        ? messageContent.map((entry) => entry.text).filter(Boolean).join("\n").trim()
-        : "";
-  if (!content) throw new Error("OPENROUTER_CHAT_EMPTY");
-  return content;
-}
-
 function buildExtractionPrompt(input: RecipeInput): string {
   return `Extract a cooking recipe from the provided video source context.
 Rules:
@@ -383,7 +289,7 @@ Rules:
 - For each ingredient, include dietary_flags when they apply (pork, alcohol, meat, dairy, egg, gluten).
 - Set is_halal=false for every non-halal ingredient: pork and anything made from it (bacon, ham, lard, prosciutto, pork gelatin), and alcohol in any form (wine, beer, spirits, mirin, cooking wine, liqueur). Give the reason in halal_concern.
 - For every is_halal=false ingredient, set suggested_alternative to the closest halal ingredient that keeps the dish working, as a short ingredient name only (for example "beef bacon" or "grape juice with a splash of vinegar"). Leave suggested_alternative null for halal ingredients.
-- Use source="caption" for caption text, source="transcript" for speech, source="web_research" for cited web fallback text, and source="ai_estimate" only when nothing in the source text supports the amount.
+- Use source="caption" for caption text, source="transcript" for speech, and source="ai_estimate" only when nothing in the source text supports the amount.
 - Include evidence_text when the source text explicitly contains the amount or visible overlay line.
 - Each step must include a short imperative title (3-6 words, e.g. "Sear the chicken") plus a procedural text body. Optionally include duration_minutes, temperature, equipment, ingredients_used (names from the ingredient list), and tips.
 - Use exactly one language per field. Never mix scripts inside a single string.
@@ -513,36 +419,6 @@ ${params.draft.steps.map((step) => `${step.order}. ${step.text}`).join("\n")}
 
 Source context:
 ${params.sourceText}`;
-}
-
-function buildIngredientResearchPrompt(params: {
-  draft: RecipeDraft;
-  sourceUrl: string;
-  sourcePlatform: SourcePlatform;
-  sourceText: string;
-}): string {
-  const missing = params.draft.ingredients
-    .filter((ingredient) => ingredient.needs_review)
-    .map((ingredient) => `- ${ingredient.name}`)
-    .join("\n");
-
-  return `Fill missing recipe ingredient quantities for the same social recipe.
-Rules:
-- Search by recipe title and source context. Prefer the same creator page, the same recipe, or a repost containing the same recipe.
-- Return JSON only using this shape: {"ingredients":[],"citations":[]}.
-- Fill quantity/unit/size only when a matching source explicitly shows the amount.
-- When cited evidence exists, include evidence_text and citation_url.
-- If no cited evidence is found, fall back to standard cooking proportions, include evidence_text="AI estimated from standard recipe proportions", and leave citation_url null.
-- Do not invent new ingredients. Return only ingredients listed under Missing ingredient details.
-
-Source URL: ${params.sourceUrl}
-Source platform: ${params.sourcePlatform}
-Recipe title: ${params.draft.title}
-Missing ingredient details:
-${missing || "(none)"}
-
-Known source context:
-${truncateForPrompt(params.sourceText)}`;
 }
 
 const ALLOWED_UNITS_FOR_PROMPT = [
@@ -708,36 +584,6 @@ function normalizeRecipeCandidate(
   };
 
   return validateRecipeDraft(normalized, { requireMeasurements: false });
-}
-
-function normalizeResearchIngredients(
-  ingredients: z.infer<typeof ingredientResearchSchema>["ingredients"]
-): IngredientItem[] {
-  return ingredients.map((ingredient) => {
-    const citationUrl = optionalString(ingredient.citation_url);
-    const base = {
-      name: ingredient.name.trim(),
-      quantity: normalizeQuantity(ingredient.quantity) || undefined,
-      unit: normalizeUnit(ingredient.unit) || undefined,
-      preparation: optionalString(ingredient.preparation),
-      size: optionalString(ingredient.size),
-      notes: optionalString(ingredient.notes),
-      confidence: optionalPositiveNumber(ingredient.confidence),
-      evidence_text: optionalString(ingredient.evidence_text),
-      citation_url: citationUrl,
-      is_estimated: true,
-    };
-    if (!citationUrl) {
-      return {
-        ...base,
-        source: "ai_estimate",
-      };
-    }
-    return {
-      ...base,
-      source: "web_research",
-    };
-  });
 }
 
 function fallbackStepTitle(order: number, language: "en" | "ar") {
@@ -1120,43 +966,6 @@ export async function fillMissingRecipeDetails(
   }
 }
 
-async function fillMissingMeasurements(params: {
-  draft: RecipeDraft;
-  input: RecipeInput;
-}): Promise<IngredientResearchResult> {
-  const content = await openRouterChatCompletion(
-    {
-      model: WEB_RESEARCH_MODEL,
-      max_tokens: RECIPE_MAX_TOKENS,
-      plugins: [{ id: "web" }],
-      messages: [
-        {
-          role: "user",
-          content: buildIngredientResearchPrompt({
-            draft: params.draft,
-            sourceUrl: params.input.sourceUrl,
-            sourcePlatform: params.input.sourcePlatform,
-            sourceText: params.input.sourceText,
-          }),
-        },
-      ],
-    },
-    { timeoutMs: WEB_RESEARCH_TIMEOUT_MS }
-  );
-
-  const parsed = ingredientResearchSchema.parse(parseJsonLenient(content));
-  // The search may only fill in ingredients the recipe already has; a name it made up
-  // or reworded would otherwise be added to the recipe as a new ingredient.
-  const knownKeys = new Set(params.draft.ingredients.map((ingredient) => normalizeIngredientKey(ingredient.name)));
-  return {
-    ingredients: normalizeResearchIngredients(parsed.ingredients).filter((ingredient) =>
-      knownKeys.has(normalizeIngredientKey(ingredient.name))
-    ),
-    citations: parsed.citations ?? [],
-    model: WEB_RESEARCH_MODEL,
-  };
-}
-
 const FORCE_FILL_MAX_ATTEMPTS = 2;
 
 async function forceFillIngredientMeasurements(draft: RecipeDraft): Promise<RecipeDraft> {
@@ -1242,62 +1051,6 @@ async function forceFillIngredientMeasurements(draft: RecipeDraft): Promise<Reci
   };
 }
 
-async function enrichMissingIngredientDetails(
-  draft: RecipeDraft,
-  input: RecipeInput
-): Promise<{
-  draft: RecipeDraft;
-  researchAttempted: boolean;
-  researchIngredients: number;
-  researchCitations: string[];
-  researchFailed: boolean;
-}> {
-  const reviewedDraft = {
-    ...draft,
-    ingredients: mergeIngredientSources(draft.ingredients),
-  };
-
-  if (!hasIngredientsNeedingReview(reviewedDraft.ingredients)) {
-    return {
-      draft: reviewedDraft,
-      researchAttempted: false,
-      researchIngredients: 0,
-      researchCitations: [],
-      researchFailed: false,
-    };
-  }
-
-  try {
-    const research = await fillMissingMeasurements({
-      draft: reviewedDraft,
-      input,
-    });
-    const mergedIngredients = mergeIngredientSources([
-      ...reviewedDraft.ingredients,
-      ...research.ingredients,
-    ]);
-    const filledDraft = await forceFillIngredientMeasurements({
-      ...reviewedDraft,
-      ingredients: mergedIngredients,
-    });
-    return {
-      draft: filledDraft,
-      researchAttempted: true,
-      researchIngredients: research.ingredients.length,
-      researchCitations: research.citations,
-      researchFailed: false,
-    };
-  } catch {
-    return {
-      draft: await forceFillIngredientMeasurements(reviewedDraft),
-      researchAttempted: true,
-      researchIngredients: 0,
-      researchCitations: [],
-      researchFailed: true,
-    };
-  }
-}
-
 export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> {
   const providerClient = createOpenRouterClient();
   let lastError: unknown;
@@ -1347,8 +1100,10 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
   if (!draft) throw new Error("RECIPE_NOT_IN_SOURCE Generated recipe did not pass validation constraints.");
 
   const extractedAt = Date.now();
-  const detailCompletion = await enrichMissingIngredientDetails(draft, input);
-  const finalDraft = validateRecipeDraft(detailCompletion.draft);
+  // An ingredient the source gives no amount for gets an estimated one, marked as such.
+  const estimatedBefore = draft.ingredients.filter((ingredient) => ingredient.source === "ai_estimate").length;
+  const filledDraft = await forceFillIngredientMeasurements(draft);
+  const finalDraft = validateRecipeDraft(filledDraft);
   if (!finalDraft) throw new Error("Generated recipe did not pass final validation constraints.");
 
   return {
@@ -1363,11 +1118,8 @@ export async function extractRecipe(input: RecipeInput): Promise<ExtractResult> 
       measurement_fill_ms: Date.now() - extractedAt,
       ingredient_review: {
         needs_review: hasIngredientsNeedingReview(finalDraft.ingredients),
-        web_research_attempted: detailCompletion.researchAttempted,
-        web_research_failed: detailCompletion.researchFailed,
-        web_research_ingredients: detailCompletion.researchIngredients,
-        web_research_citations: detailCompletion.researchCitations,
-        web_research_model: detailCompletion.researchAttempted ? WEB_RESEARCH_MODEL : null,
+        estimated_ingredients:
+          finalDraft.ingredients.filter((ingredient) => ingredient.source === "ai_estimate").length - estimatedBefore,
       },
     },
     provider: "openrouter",

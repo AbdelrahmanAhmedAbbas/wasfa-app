@@ -1243,19 +1243,6 @@ async function runPipelineSteps(params: {
     await params.store.logJobEvent("normalized", {
       stage: "web_measurement_fill",
       measurement_fill_ms: extraction.confidence.measurement_fill_ms ?? null,
-      ingredients_filled:
-        typeof extraction.confidence.ingredient_review === "object" &&
-        extraction.confidence.ingredient_review !== null &&
-        "web_research_ingredients" in extraction.confidence.ingredient_review
-          ? extraction.confidence.ingredient_review.web_research_ingredients
-          : 0,
-      citations_count:
-        typeof extraction.confidence.ingredient_review === "object" &&
-        extraction.confidence.ingredient_review !== null &&
-        "web_research_citations" in extraction.confidence.ingredient_review &&
-        Array.isArray(extraction.confidence.ingredient_review.web_research_citations)
-          ? extraction.confidence.ingredient_review.web_research_citations.length
-          : 0,
     });
 
     throwIfOutOfTime(params.budget);

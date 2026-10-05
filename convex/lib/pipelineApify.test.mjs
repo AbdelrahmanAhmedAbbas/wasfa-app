@@ -62,7 +62,6 @@ test("every AI request caps its output so a low balance cannot refuse it outrigh
   const calls = ai.match(/generateObject\(\{[\s\S]*?abortSignal,?\s*\}\)/g) ?? [];
   assert.ok(calls.length >= 6);
   for (const call of calls) assert.match(call, /maxTokens: (RECIPE|DETAIL)_MAX_TOKENS/);
-  assert.match(ai, /max_tokens: RECIPE_MAX_TOKENS/);
 });
 
 test("extraction refuses to invent a recipe the source does not contain", () => {

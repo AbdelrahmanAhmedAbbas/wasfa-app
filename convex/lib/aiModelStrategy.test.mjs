@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
-test("AI extraction uses tiered models and a single web measurement fill path", () => {
+test("AI extraction uses tiered models and estimates missing amounts in one step", () => {
   const ai = readFileSync(new URL("./ai.ts", import.meta.url), "utf8");
   const pipeline = readFileSync(new URL("./pipeline.ts", import.meta.url), "utf8");
 
@@ -11,11 +11,10 @@ test("AI extraction uses tiered models and a single web measurement fill path", 
   assert.match(ai, /anthropic\/claude-haiku-4\.5/);
   assert.match(ai, /google\/gemini-3-flash-preview/);
   assert.match(ai, /for\s*\(const\s+candidateModel\s+of\s+EXTRACTION_MODELS\)/);
-  assert.match(ai, /WEB_RESEARCH_MODEL/);
-  assert.match(ai, /WEB_RESEARCH_MODEL\s*=\s*"google\/gemini-2\.5-pro"/);
-  assert.match(ai, /plugins:\s*\[\{\s*id:\s*"web"\s*\}\]/);
-  assert.doesNotMatch(ai, /WEB_RESEARCH_MODEL\s*=\s*"[^"]*:online"/);
-  assert.match(ai, /fillMissingMeasurements/);
+  // Missing amounts are estimated directly. The web search that used to run first was
+  // dropped: it added up to 25 seconds to an import and found no amounts.
+  assert.doesNotMatch(ai, /WEB_RESEARCH_MODEL|plugins:\s*\[\{\s*id:\s*"web"|fillMissingMeasurements/);
+  assert.match(ai, /const filledDraft = await forceFillIngredientMeasurements\(draft\);/);
   assert.match(ai, /forceFillIngredientMeasurements/);
   assert.match(ai, /forcedIngredientMeasurementSchema/);
   assert.match(ai, /quantity:\s*z\.string\(\)\.min\(1\)/);
