@@ -1,14 +1,6 @@
-import { supabase } from "@/lib/supabase/client";
-
-// The ingredient list comes along so the library can be searched by ingredient.
-const RECIPE_SUMMARY_SELECT =
-  "id,title,description,cuisine,meal_type,localized_json,ingredients_json,servings,prep_minutes,cook_minutes,source_reel_url,source_thumbnail_url,folder_id,created_at";
-const LEGACY_RECIPE_SUMMARY_SELECT =
-  "id,title,description,ingredients_json,servings,prep_minutes,cook_minutes,source_reel_url,source_thumbnail_url,folder_id,created_at";
-const RECIPE_DETAIL_SELECT =
-  "id,title,description,cuisine,meal_type,localized_json,servings,prep_minutes,cook_minutes,created_at,ingredients_json,steps_json,nutrition_json,source_url,source_platform,source_reel_url,source_thumbnail_url,folder_id";
-const LEGACY_RECIPE_DETAIL_SELECT =
-  "id,title,description,servings,prep_minutes,cook_minutes,created_at,ingredients_json,steps_json,nutrition_json,source_url,source_platform,source_reel_url,source_thumbnail_url,folder_id";
+import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
+import { convex } from "@/lib/convex/client";
 
 export type RecipeSummary = {
   id: string;
@@ -102,21 +94,6 @@ export type RecipeDetail = RecipeSummary & {
   source_thumbnail_url: string | null;
   folder_id: string | null;
 };
-
-function isMissingRecipeClassificationColumn(error: unknown) {
-  if (!error || typeof error !== "object") return false;
-  const errObj = error as { message?: unknown; code?: unknown; details?: unknown; hint?: unknown };
-  const haystack = [errObj.message, errObj.details, errObj.hint]
-    .map((part) => (part == null ? "" : String(part)))
-    .join(" ")
-    .toLowerCase();
-  const mentionsColumn = /cuisine|meal_type|localized_json/.test(haystack);
-  if (!mentionsColumn) return false;
-  if (errObj.code === "42703" || errObj.code === "PGRST204") return true;
-  return /column .*(cuisine|meal_type|localized_json).* does not exist|could not find the .*(cuisine|meal_type|localized_json).* column/.test(
-    haystack
-  );
-}
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -223,156 +200,62 @@ export async function listRecipes(params?: {
   limit?: number;
   folderId?: string | null;
 }): Promise<RecipeSummary[]> {
-  const runQuery = async (select: string) => {
-    let query = supabase
-      .from("recipes")
-      .select(select)
-      .order("created_at", { ascending: false });
-
-    if (params?.folderId === null) query = query.is("folder_id", null);
-    if (typeof params?.folderId === "string") query = query.eq("folder_id", params.folderId);
-    if (typeof params?.limit === "number") query = query.limit(params.limit);
-
-    return query;
-  };
-
-  const { data, error } = await runQuery(RECIPE_SUMMARY_SELECT);
-
-  if (error && isMissingRecipeClassificationColumn(error)) {
-    const legacy = await runQuery(LEGACY_RECIPE_SUMMARY_SELECT);
-    if (legacy.error) throw legacy.error;
-    const legacyRecipes = (legacy.data ?? []) as Partial<RecipeSummary>[];
-    return legacyRecipes.map((recipe) => withRecipeClassificationFallback(recipe)) as RecipeSummary[];
-  }
-
-  if (error) throw error;
-  const recipes = (data ?? []) as Partial<RecipeSummary>[];
+  const recipes = await convex.query(api.recipes.list, {
+    folderId: params?.folderId as Id<"recipe_folders"> | null | undefined,
+    limit: params?.limit,
+  });
   return recipes.map((recipe) => withRecipeClassificationFallback(recipe)) as RecipeSummary[];
 }
 
 export async function listRecipeFolders(): Promise<RecipeFolder[]> {
-  const { data, error } = await supabase
-    .from("recipe_folders")
-    .select("id,name,created_at")
-    .order("created_at", { ascending: true });
-
-  if (error) throw error;
-  return (data ?? []) as RecipeFolder[];
+  return await convex.query(api.recipes.listFolders, {});
 }
 
 export async function createRecipeFolder(name: string): Promise<RecipeFolder> {
-  const { data: sessionData } = await supabase.auth.getSession();
-  const userId = sessionData.session?.user?.id;
-  if (!userId) throw new Error("You need to sign in to create folders.");
-
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("Folder name is required.");
-
-  const { data, error } = await supabase
-    .from("recipe_folders")
-    .insert({
-      user_id: userId,
-      name: trimmed,
-    })
-    .select("id,name,created_at")
-    .single();
-
-  if (error || !data) throw error ?? new Error("Failed to create folder.");
-  return data as RecipeFolder;
+  return await convex.mutation(api.recipes.createFolder, { name });
 }
 
 export async function assignRecipeToFolder(
   recipeId: string,
   folderId: string | null
 ): Promise<void> {
-  const { error } = await supabase
-    .from("recipes")
-    .update({
-      folder_id: folderId,
-    })
-    .eq("id", recipeId);
-
-  if (error) throw error;
+  await convex.mutation(api.recipes.assignFolder, {
+    recipeId: recipeId as Id<"recipes">,
+    folderId: folderId as Id<"recipe_folders"> | null,
+  });
 }
 
+/** Deletes a recipe together with its lines on the shopping list. */
 export async function deleteRecipeById(recipeId: string): Promise<void> {
-  const { error } = await supabase.from("recipes").delete().eq("id", recipeId);
-  if (error) throw error;
+  await convex.mutation(api.recipes.remove, { recipeId: recipeId as Id<"recipes"> });
 }
 
 export async function updateRecipeFolder(
   folderId: string,
   name: string
 ): Promise<RecipeFolder> {
-  const trimmed = name.trim();
-  if (!trimmed) throw new Error("Folder name is required.");
-
-  const { data, error } = await supabase
-    .from("recipe_folders")
-    .update({ name: trimmed })
-    .eq("id", folderId)
-    .select("id,name,created_at")
-    .single();
-
-  if (error || !data) throw error ?? new Error("Failed to update folder.");
-  return data as RecipeFolder;
+  return await convex.mutation(api.recipes.renameFolder, {
+    folderId: folderId as Id<"recipe_folders">,
+    name,
+  });
 }
 
+/** Deletes a folder. Its recipes stay in the library, in no folder. */
 export async function deleteRecipeFolder(folderId: string): Promise<void> {
-  // 1. Uncategorize recipes first (set folder_id = null)
-  const { error: updateError } = await supabase
-    .from("recipes")
-    .update({ folder_id: null })
-    .eq("folder_id", folderId);
-
-  if (updateError) throw updateError;
-
-  // 2. Delete the folder
-  const { error: deleteError } = await supabase
-    .from("recipe_folders")
-    .delete()
-    .eq("id", folderId);
-
-  if (deleteError) throw deleteError;
+  await convex.mutation(api.recipes.removeFolder, { folderId: folderId as Id<"recipe_folders"> });
 }
 
 export async function getRecipeById(id: string): Promise<RecipeDetail | null> {
-  const runQuery = (select: string) =>
-    supabase
-      .from("recipes")
-      .select(select)
-      .eq("id", id)
-      .maybeSingle();
-
-  const { data, error } = await runQuery(RECIPE_DETAIL_SELECT);
-
-  if (error && isMissingRecipeClassificationColumn(error)) {
-    const legacy = await runQuery(LEGACY_RECIPE_DETAIL_SELECT);
-    if (legacy.error) throw legacy.error;
-    return legacy.data
-      ? (withRecipeClassificationFallback(legacy.data as Partial<RecipeDetail>) as RecipeDetail)
-      : null;
-  }
-
-  if (error) throw error;
-  return data ? (withRecipeClassificationFallback(data as Partial<RecipeDetail>) as RecipeDetail) : null;
+  const recipe = await convex.query(api.recipes.get, { recipeId: id });
+  return recipe ? (withRecipeClassificationFallback(recipe) as RecipeDetail) : null;
 }
 
 export async function recalculateRecipeServings(
   recipeId: string,
   servings: number
 ): Promise<RecipeDetail> {
-  const { data, error } = await supabase.functions.invoke("recipe-recalculate", {
-    body: {
-      recipe_id: recipeId,
-      servings,
-    },
-  });
-
-  if (error) throw error;
-  const recipe = (data as { recipe?: RecipeDetail } | null)?.recipe;
-  if (!recipe) throw new Error("Recipe recalculation did not return a recipe.");
-  return withRecipeClassificationFallback(recipe);
+  const recipe = await convex.action(api.recipeAi.recalculateServings, { recipeId, servings });
+  return withRecipeClassificationFallback(recipe) as RecipeDetail;
 }
 
 /**
@@ -380,13 +263,8 @@ export async function recalculateRecipeServings(
  * Returns the updated recipe, or null when nothing could be added.
  */
 export async function localizeRecipe(recipeId: string): Promise<RecipeDetail | null> {
-  const { data, error } = await supabase.functions.invoke("recipe-localize", {
-    body: { recipe_id: recipeId },
-  });
-
-  if (error) throw error;
-  const recipe = (data as { recipe?: RecipeDetail | null } | null)?.recipe;
-  return recipe ? withRecipeClassificationFallback(recipe) : null;
+  const recipe = await convex.action(api.recipeAi.localize, { recipeId });
+  return recipe ? (withRecipeClassificationFallback(recipe) as RecipeDetail) : null;
 }
 
 /** Records whether an ingredient keeps its original form instead of its halal swap. */
@@ -395,17 +273,9 @@ export async function setIngredientUseOriginal(
   index: number,
   useOriginal: boolean
 ): Promise<RecipeDetail["ingredients_json"]> {
-  const ingredients = recipe.ingredients_json.map((ingredient, position) => {
-    if (position !== index) return ingredient;
-    const { use_original: _previous, ...rest } = ingredient;
-    return useOriginal ? { ...rest, use_original: true } : rest;
+  return await convex.mutation(api.recipes.setIngredientUseOriginal, {
+    recipeId: recipe.id as Id<"recipes">,
+    index,
+    useOriginal,
   });
-
-  const { error } = await supabase
-    .from("recipes")
-    .update({ ingredients_json: ingredients })
-    .eq("id", recipe.id);
-
-  if (error) throw error;
-  return ingredients;
 }

@@ -51,4 +51,3 @@ yarn-error.*
 /.specify/
 /.opencode/
 /.claude/
-/supabase/

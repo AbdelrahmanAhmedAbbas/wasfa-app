@@ -15,7 +15,7 @@ import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { clearOnboardingAnswers, getOnboardingAnswers } from "@/lib/onboarding/answers";
 import { hasQuestionnaireAnswers, pickChatAnswers } from "@/lib/onboarding/flow";
-import { getOnboardingProfile, saveOnboardingProfile } from "@/lib/onboarding/supabase";
+import { getOnboardingProfile, saveOnboardingProfile } from "@/lib/onboarding/profile";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors } from "@/lib/theme/wasfa";
 

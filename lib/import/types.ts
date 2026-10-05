@@ -98,7 +98,6 @@ export type ImportCreateInput = {
 
 export type ImportCreateResponse = {
   job_id: string;
-  access_token: string;
   status: ImportStatus;
   deduplicated: boolean;
 };

@@ -1,103 +1,116 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { ConvexAuthProvider, useAuthActions } from "@convex-dev/auth/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import * as WebBrowser from "expo-web-browser";
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Platform } from "react-native";
 
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/convex/_generated/api";
+import { convex } from "@/lib/convex/client";
 import { getOnboardingDone, setOnboardingDone } from "@/lib/onboarding/storage";
 
-import { AuthContextValue, AuthState } from "./types";
+import { setCurrentUserId } from "./session";
+import { AuthContextValue, AuthUser } from "./types";
 
 // Enable WebBrowser for OAuth
 WebBrowser.maybeCompleteAuthSession();
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
-const AUTH_CALLBACK_PATH = "auth/callback";
-const APP_SCHEME = "mealplanner";
+// Must match APP_REDIRECT_URL in convex/auth.ts.
+const OAUTH_REDIRECT_URL = "mealplanner://auth/callback";
+const LAST_USER_KEY = "@wasfa/last_user";
 
-function getOAuthRedirectUrl() {
-  if (Platform.OS === "web") {
-    const origin = (globalThis as typeof globalThis & { location?: { origin?: string } }).location?.origin;
-    return origin ? `${origin}/${AUTH_CALLBACK_PATH}` : `${APP_SCHEME}://${AUTH_CALLBACK_PATH}`;
+async function readLastUser(): Promise<AuthUser | null> {
+  try {
+    const stored = await AsyncStorage.getItem(LAST_USER_KEY);
+    return stored ? (JSON.parse(stored) as AuthUser) : null;
+  } catch {
+    return null;
   }
-
-  return `${APP_SCHEME}://${AUTH_CALLBACK_PATH}`;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<AuthState>({
-    user: null,
-    session: null,
-    loading: true,
-    hasCompletedOnboarding: false,
-  });
+  return (
+    <ConvexAuthProvider client={convex} storage={AsyncStorage}>
+      <AuthStateProvider>{children}</AuthStateProvider>
+    </ConvexAuthProvider>
+  );
+}
+
+function AuthStateProvider({ children }: { children: React.ReactNode }) {
+  const { isLoading: sessionLoading, isAuthenticated } = useConvexAuth();
+  const { signIn, signOut: endSession } = useAuthActions();
+  const viewer = useQuery(api.users.viewer, isAuthenticated ? {} : "skip");
+
+  // The user from the last run, shown while the session is still being confirmed, so
+  // the app opens straight into the library and still opens with no connection.
+  const [lastUser, setLastUser] = useState<AuthUser | null>(null);
+  const [lastUserLoaded, setLastUserLoaded] = useState(false);
+  // Whether onboarding is finished, together with the user it was read for, so a user
+  // who has just appeared is never shown as "not onboarded" before their answer loads.
+  const [onboarding, setOnboarding] = useState<{ userId: string; done: boolean } | null>(null);
 
   useEffect(() => {
-    Promise.all([supabase.auth.getSession(), getOnboardingDone()]).then(
-      ([{ data: { session } }, onboardingDone]) => {
-        setState((prev) => ({
-          ...prev,
-          session,
-          user: session?.user ?? null,
-          loading: false,
-          hasCompletedOnboarding: onboardingDone,
-        }));
-      }
-    );
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      const onboardingDone = session ? await getOnboardingDone() : false;
-      setState((prev) => ({
-        ...prev,
-        session,
-        user: session?.user ?? null,
-        hasCompletedOnboarding: onboardingDone,
-      }));
+    void readLastUser().then((stored) => {
+      setLastUser(stored);
+      setLastUserLoaded(true);
     });
-
-    return () => subscription.unsubscribe();
   }, []);
+
+  const confirmedUser = useMemo<AuthUser | null>(
+    () =>
+      viewer
+        ? { id: viewer.id, email: viewer.email, name: viewer.name, avatarUrl: viewer.avatar_url }
+        : null,
+    [viewer]
+  );
+  const sessionPending = sessionLoading || (isAuthenticated && viewer === undefined);
+  const user = sessionPending ? lastUser : confirmedUser;
+  const userId = user?.id ?? null;
+  setCurrentUserId(userId);
+
+  // Once the server has answered, what it says replaces the remembered user.
+  useEffect(() => {
+    if (sessionPending || !lastUserLoaded) return;
+    setLastUser(confirmedUser);
+    if (confirmedUser) {
+      void AsyncStorage.setItem(LAST_USER_KEY, JSON.stringify(confirmedUser));
+    } else {
+      void AsyncStorage.removeItem(LAST_USER_KEY);
+    }
+  }, [sessionPending, lastUserLoaded, confirmedUser]);
+
+  useEffect(() => {
+    let active = true;
+    if (!userId) return;
+    void getOnboardingDone().then((done) => {
+      if (active) setOnboarding({ userId, done });
+    });
+    return () => {
+      active = false;
+    };
+  }, [userId]);
+
+  const onboardingLoaded = !userId || onboarding?.userId === userId;
+  const hasCompletedOnboarding = !!userId && onboarding?.userId === userId && onboarding.done;
 
   const signInWithGoogle = async () => {
     try {
-      const redirectUrl = getOAuthRedirectUrl();
-
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: {
-          redirectTo: redirectUrl,
-          skipBrowserRedirect: Platform.OS !== "web",
-          // Without this Google silently reuses the account already signed in
-          // to the browser, so nobody could switch to a different email.
-          queryParams: { prompt: "select_account" },
-        },
-      });
-
-      if (error) throw error;
-
-      // For native platforms, open the OAuth URL
-      if (Platform.OS !== "web" && data?.url) {
-        const result = await WebBrowser.openAuthSessionAsync(data.url, redirectUrl);
-        console.log("OAuth result type:", result.type);
-
-        if (result.type === "success") {
-          const url = result.url;
-          console.log("OAuth callback URL:", url);
-          const params = new URLSearchParams(url.split("#")[1] || url.split("?")[1]);
-          const accessToken = params.get("access_token");
-          const refreshToken = params.get("refresh_token");
-          console.log("Tokens found:", !!accessToken, !!refreshToken);
-
-          if (accessToken && refreshToken) {
-            await supabase.auth.setSession({
-              access_token: accessToken,
-              refresh_token: refreshToken,
-            });
-            console.log("Session set successfully");
-          }
-        }
+      if (Platform.OS === "web") {
+        await signIn("google");
+        return;
       }
+
+      const { redirect } = await signIn("google", { redirectTo: OAUTH_REDIRECT_URL });
+      if (!redirect) throw new Error("Google sign-in did not return a sign-in page.");
+
+      const result = await WebBrowser.openAuthSessionAsync(redirect.toString(), OAUTH_REDIRECT_URL);
+      if (result.type !== "success") return;
+
+      const query = result.url.split("?")[1]?.split("#")[0] ?? "";
+      const code = new URLSearchParams(query).get("code");
+      if (!code) throw new Error("Google sign-in did not return a code.");
+      await signIn("google", { code });
     } catch (error) {
       console.error("Error signing in with Google:", error);
       throw error;
@@ -106,16 +119,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
-      // The session stays on the device when the request fails (e.g. offline),
-      // so a failure must not be shown as a successful sign-out.
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      setState((prev) => ({
-        ...prev,
-        user: null,
-        session: null,
-        hasCompletedOnboarding: prev.hasCompletedOnboarding,
-      }));
+      await endSession();
+      setLastUser(null);
+      await AsyncStorage.removeItem(LAST_USER_KEY);
     } catch (error) {
       console.error("Error signing out:", error);
       throw error;
@@ -126,26 +132,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     console.log("Apple Sign-In not yet configured");
   };
 
-  // Email accounts are created from the Supabase dashboard (App Review and
-  // beta testers), so the app only signs in and never signs up.
+  // Email accounts are created for App Review and beta testers (see
+  // createPasswordAccount in convex/users.ts), so the app only signs in and never signs up.
   const signInWithEmail = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-    if (error) throw error;
+    await signIn("password", { email: email.trim(), password, flow: "signIn" });
   };
 
   const completeOnboarding = async () => {
     await setOnboardingDone(true);
-    setState((prev) => ({
-      ...prev,
-      hasCompletedOnboarding: true,
-    }));
+    if (userId) setOnboarding({ userId, done: true });
   };
 
   const value: AuthContextValue = {
-    ...state,
+    user,
+    loading: !lastUserLoaded || !onboardingLoaded || (sessionPending && !lastUser),
+    hasCompletedOnboarding,
     signInWithGoogle,
     signInWithApple,
     signInWithEmail,

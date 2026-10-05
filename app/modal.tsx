@@ -34,7 +34,6 @@ export default function ImportModalScreen() {
         pathname: "/import/[jobId]",
         params: {
           jobId: created.job_id,
-          token: created.access_token,
         },
       });
     } catch (error) {

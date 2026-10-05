@@ -20,7 +20,7 @@ import {
   canonicalYouTubeShortUrl,
   parseDurationSeconds,
   parseYouTubeShortId,
-} from "../supabase/functions/_shared/youtube.ts";
+} from "../convex/lib/youtube.ts";
 
 const APIFY_TIMEOUT_MS = 90_000;
 

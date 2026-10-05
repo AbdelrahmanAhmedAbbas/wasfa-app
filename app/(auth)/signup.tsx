@@ -21,6 +21,7 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import { MascotBadge } from "@/components/onboarding/MascotBadge";
 import { headingStyle } from "@/components/onboarding/text-styles";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { isConvexConfigured } from "@/lib/convex/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { getOnboardingAnswers, type OnboardingAnswers } from "@/lib/onboarding/answers";
@@ -94,15 +95,7 @@ export default function SignupAuthScreen() {
   }, []);
 
   const handleGoogleAuth = async () => {
-    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || "";
-    const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || "";
-    const hasPlaceholderCredentials =
-      !supabaseUrl ||
-      !supabaseAnonKey ||
-      supabaseUrl.includes("placeholder") ||
-      supabaseAnonKey.includes("placeholder");
-
-    if (hasPlaceholderCredentials) {
+    if (!isConvexConfigured) {
       Alert.alert(t("authConfigTitle"), t("authConfigMessage"));
       return;
     }

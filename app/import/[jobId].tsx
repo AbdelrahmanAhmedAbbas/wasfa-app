@@ -87,12 +87,8 @@ function getChecklistStepIndex(stage: string | null): number {
 export default function ImportJobScreen() {
   const { isRTL, language, t } = useLanguage();
   const insets = useSafeAreaInsets();
-  const params = useLocalSearchParams<{ jobId?: string; token?: string }>();
+  const params = useLocalSearchParams<{ jobId?: string }>();
   const jobId = useMemo(() => (typeof params.jobId === "string" ? params.jobId : ""), [params.jobId]);
-  const accessToken = useMemo(
-    () => (typeof params.token === "string" ? params.token : undefined),
-    [params.token]
-  );
 
   const [status, setStatus] = useState<string>("queued");
   const [currentStage, setCurrentStage] = useState<string | null>(null);
@@ -105,7 +101,7 @@ export default function ImportJobScreen() {
   const pollOnce = useCallback(async () => {
     if (!jobId) return;
     try {
-      const response = await getImportJob(jobId, accessToken);
+      const response = await getImportJob(jobId);
       setStatus(response.job.status);
       setCurrentStage(response.job.current_stage);
       const stepIndex = getChecklistStepIndex(response.job.current_stage);
@@ -117,7 +113,7 @@ export default function ImportJobScreen() {
     } catch {
       // Swallow polling errors and let the next tick retry.
     }
-  }, [accessToken, jobId, t]);
+  }, [jobId, t]);
 
   useEffect(() => {
     void pollOnce();

@@ -74,7 +74,6 @@ export default function ShareImportEntryScreen() {
           pathname: "/import/[jobId]",
           params: {
             jobId: created.job_id,
-            token: created.access_token,
           },
         });
       } catch (e) {
@@ -108,7 +107,6 @@ export default function ShareImportEntryScreen() {
         pathname: "/import/[jobId]",
         params: {
           jobId: created.job_id,
-          token: created.access_token,
         },
       });
     } catch (e) {

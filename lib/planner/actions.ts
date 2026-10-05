@@ -1,3 +1,4 @@
+import { getCurrentUserId } from "@/lib/auth/session";
 import { getRecipeById } from "@/lib/recipes/client";
 import { loadRecipePreferences } from "@/lib/recipes/preferences";
 import { refreshShoppingBadge } from "@/lib/shopping/badge";
@@ -5,7 +6,6 @@ import {
   addRecipeIngredientsToShoppingList,
   removeRecipeFromShoppingList,
 } from "@/lib/shopping/client";
-import { supabase } from "@/lib/supabase/client";
 
 import { addRecipeToPlan, isRecipeInPlan, removeRecipeFromPlan, type MealPlan } from "./plan";
 
@@ -32,8 +32,7 @@ export async function planRecipe(
   try {
     const recipe = await getRecipeById(recipeId);
     if (recipe) {
-      const { data } = await supabase.auth.getSession();
-      const preferences = await loadRecipePreferences(data.session?.user?.id);
+      const preferences = await loadRecipePreferences(getCurrentUserId());
       await addRecipeIngredientsToShoppingList(recipe, preferences);
       void refreshShoppingBadge();
     }

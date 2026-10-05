@@ -15,7 +15,8 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { Glyph } from "@/components/wasfa/Glyph";
 
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/convex/_generated/api";
+import { convex, getServerError } from "@/lib/convex/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { GlyphName } from "@/lib/theme/glyphs";
@@ -195,12 +196,7 @@ export default function ProfileScreen() {
           onPress: async () => {
             try {
               setIsLoading(true);
-              const { error } = await supabase.rpc("delete_user_account");
-              if (error) {
-                console.error("Failed to delete account from Supabase:", error);
-                Alert.alert(t("profileDeleteFailedTitle"), error.message);
-                return;
-              }
+              await convex.mutation(api.users.deleteAccount, {});
               // The device starts over: the next launch runs the full onboarding.
               await setOnboardingDone(false);
               await clearOnboardingStep();
@@ -213,7 +209,7 @@ export default function ProfileScreen() {
               await signOut();
             } catch (error: any) {
               console.error("Failed to delete account:", error);
-              Alert.alert(t("profileDeleteFailedTitle"), error.message);
+              Alert.alert(t("profileDeleteFailedTitle"), getServerError(error)?.message ?? error.message);
             } finally {
               setIsLoading(false);
             }
@@ -223,8 +219,8 @@ export default function ProfileScreen() {
     );
   };
 
-  const avatarUrl = user?.user_metadata?.avatar_url;
-  const displayName = user?.user_metadata?.full_name || t("profileUserInfo");
+  const avatarUrl = user?.avatarUrl;
+  const displayName = user?.name || t("profileUserInfo");
   const chipLabelStyle = [styles.rowLabel, { textAlign, writingDirection } as const];
 
   return (

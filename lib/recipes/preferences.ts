@@ -5,7 +5,7 @@ import {
   saveOnboardingAnswers,
   type OnboardingAnswers,
 } from "@/lib/onboarding/answers";
-import { getOnboardingProfile, saveOnboardingProfile } from "@/lib/onboarding/supabase";
+import { getOnboardingProfile, saveOnboardingProfile } from "@/lib/onboarding/profile";
 
 // Everything the user can change from settings.
 export type RecipePreferences = Pick<

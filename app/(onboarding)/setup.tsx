@@ -8,7 +8,7 @@ import { SetupChecklist } from "@/components/onboarding/SetupChecklist";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { onboardingColors } from "@/lib/theme/onboarding";
 import { getOnboardingAnswers, clearOnboardingAnswers } from "@/lib/onboarding/answers";
-import { saveOnboardingProfile } from "@/lib/onboarding/supabase";
+import { saveOnboardingProfile } from "@/lib/onboarding/profile";
 import { useAuth } from "@/lib/auth/AuthProvider";
 
 type SetupStep = {

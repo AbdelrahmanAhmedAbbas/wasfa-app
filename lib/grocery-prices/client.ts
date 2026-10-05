@@ -1,6 +1,7 @@
 import * as Localization from "expo-localization";
 
-import { supabase } from "@/lib/supabase/client";
+import { api } from "@/convex/_generated/api";
+import { convex } from "@/lib/convex/client";
 
 import { searchCarrefour, type StoreProduct } from "./carrefour";
 import type { PricedItem } from "./estimate";
@@ -41,9 +42,5 @@ export async function estimateGroceryPrices(lines: GroceryLine[]): Promise<Price
     );
   }
 
-  const { data, error } = await supabase.functions.invoke("grocery-estimate", { body: { items, carrefour } });
-  if (error) throw error;
-  const priced = (data as { items?: PricedItem[] } | null)?.items;
-  if (!priced) throw new Error("Price estimate did not return items.");
-  return priced;
+  return await convex.action(api.grocery.estimate, { items, carrefour });
 }

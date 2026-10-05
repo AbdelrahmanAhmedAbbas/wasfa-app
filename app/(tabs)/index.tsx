@@ -144,7 +144,7 @@ export default function HomeScreen() {
   }, [loadHomeData]);
 
   const displayName = getDisplayName(
-    typeof user?.user_metadata?.full_name === "string" ? user.user_metadata.full_name : null,
+    user?.name ?? null,
     user?.email ?? null
   ) || t("homeDefaultName");
   const displayNameLabel = useMemo(() => wrapLtrInlineText(displayName), [displayName]);

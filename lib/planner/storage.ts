@@ -1,7 +1,7 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useCallback, useEffect, useState } from "react";
 
-import { supabase } from "@/lib/supabase/client";
+import { getCurrentUserId } from "@/lib/auth/session";
 
 import { EMPTY_MEAL_PLAN, normalizeMealPlan, type MealPlan } from "./plan";
 
@@ -13,8 +13,7 @@ const MEAL_PLAN_KEY = "@wasfa/meal_plan";
 const listeners = new Set<(plan: MealPlan) => void>();
 
 async function getMealPlanKey(): Promise<string | null> {
-  const { data } = await supabase.auth.getSession();
-  const userId = data.session?.user?.id;
+  const userId = getCurrentUserId();
   return userId ? `${MEAL_PLAN_KEY}/${userId}` : null;
 }
 
