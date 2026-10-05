@@ -82,9 +82,9 @@ export default function IntroQuestionnaireScreen() {
   };
 
   // Replaces the questionnaire so no intro is left under the signed-in app;
-  // the sign-up screen shows its own back button for this entry.
+  // the login screen links back here for people without an account.
   const openSignIn = () => {
-    router.replace({ pathname: "/(auth)/signup", params: { from: "intro" } });
+    router.replace("/(auth)/login");
   };
 
   const handleCta = () => {

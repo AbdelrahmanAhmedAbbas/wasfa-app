@@ -17,6 +17,7 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import { MascotBadge } from "@/components/onboarding/MascotBadge";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 import { Glyph } from "@/components/wasfa/Glyph";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import {
@@ -92,6 +93,7 @@ function toggle<T>(list: T[], item: T): T[] {
 
 export default function ChatQuestionnaireScreen() {
   const { isRTL, t } = useLanguage();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { restart } = useLocalSearchParams<{ restart?: string }>();
   const [question, setQuestion] = useState(0);
@@ -183,6 +185,9 @@ export default function ChatQuestionnaireScreen() {
       router.replace("/(questionnaire)/intro");
     }
   };
+  // Someone who signed in first starts here: there is nothing behind the chat
+  // to go back to, and the intro's "I already have an account" is not for them.
+  const showBack = !user || router.canGoBack();
 
   // What the user "said" for each answered question.
   const answerTexts = [
@@ -328,19 +333,21 @@ export default function ChatQuestionnaireScreen() {
 
       <View style={[styles.header, { paddingTop: insets.top + 6 }]}>
         <View style={styles.headerRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("back")}
-            hitSlop={8}
-            style={styles.backButton}
-            onPress={goBack}
-          >
-            <Feather
-              name={isRTL ? "chevron-right" : "chevron-left"}
-              size={18}
-              color={wasfaColors.ink}
-            />
-          </Pressable>
+          {showBack ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("back")}
+              hitSlop={8}
+              style={styles.backButton}
+              onPress={goBack}
+            >
+              <Feather
+                name={isRTL ? "chevron-right" : "chevron-left"}
+                size={18}
+                color={wasfaColors.ink}
+              />
+            </Pressable>
+          ) : null}
           <MascotBadge size={36} imageHeight={40} offset={11} />
           <View style={styles.headerCopy}>
             <Text style={styles.botName}>{t("obBotName")}</Text>

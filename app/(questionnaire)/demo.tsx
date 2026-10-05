@@ -13,6 +13,7 @@ import {
 import { OnboardingFooter } from "@/components/onboarding/OnboardingFooter";
 import { headingStyle } from "@/components/onboarding/text-styles";
 import { CtaButton } from "@/components/wasfa/CtaButton";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { getOnboardingAnswers, type HouseholdSize } from "@/lib/onboarding/answers";
 import { getHouseholdOption, getStepIndex } from "@/lib/onboarding/flow";
@@ -24,6 +25,7 @@ const COMPACT_SCREEN_HEIGHT = 760;
 
 export default function DemoQuestionnaireScreen() {
   const { isRTL, t } = useLanguage();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
   const clock = useImportExplainerClock();
@@ -47,7 +49,8 @@ export default function DemoQuestionnaireScreen() {
     try {
       await setQuestionnaireComplete(true);
       await setQuestionnaireStep(getStepIndex("ready"));
-      router.replace("/(auth)/signup");
+      // Someone who signed in before the questions already has an account.
+      router.replace(user ? "/(paywall)/offer" : "/(auth)/signup");
     } finally {
       setIsFinishing(false);
     }

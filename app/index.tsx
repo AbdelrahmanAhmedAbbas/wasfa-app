@@ -1,11 +1,13 @@
-import { Redirect, type Href } from "expo-router";
+import { Redirect, useFocusEffect, type Href } from "expo-router";
 import { StatusBar } from "expo-status-bar";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Pressable, StyleSheet, View } from "react-native";
 
 import { SPLASH_BACKGROUND, SplashGather } from "@/components/splash/SplashGather";
 import { useAuth } from "@/lib/auth/AuthProvider";
+import { getResumeRoute } from "@/lib/onboarding/flow";
 import {
+  getOnboardingDone,
   getPaywallSeen,
   getQuestionnaireComplete,
   getQuestionnaireStep,
@@ -22,6 +24,7 @@ export default function IndexScreen() {
     questionnaireDone: false,
     questionnaireStep: 0,
     paywallSeen: false,
+    onboardingDone: false,
   });
   const [splashDone, setSplashDone] = useState(false);
   const [ready, setReady] = useState(false);
@@ -31,27 +34,40 @@ export default function IndexScreen() {
     splashPlayed = true;
   }, []);
 
-  useEffect(() => {
-    let isMounted = true;
+  // Read again every time this screen comes back into view, not only on
+  // launch: signing out returns here with the progress made since then.
+  useFocusEffect(
+    useCallback(() => {
+      let isMounted = true;
+      setFlowState((current) => ({ ...current, loading: true }));
 
-    async function loadFlowState() {
-      const [questionnaireDone, questionnaireStep, paywallSeen] = await Promise.all([
-        getQuestionnaireComplete(),
-        getQuestionnaireStep(),
-        getPaywallSeen(),
-      ]);
+      async function loadFlowState() {
+        const [questionnaireDone, questionnaireStep, paywallSeen, onboardingDone] =
+          await Promise.all([
+            getQuestionnaireComplete(),
+            getQuestionnaireStep(),
+            getPaywallSeen(),
+            getOnboardingDone(),
+          ]);
 
-      if (isMounted) {
-        setFlowState({ loading: false, questionnaireDone, questionnaireStep, paywallSeen });
+        if (isMounted) {
+          setFlowState({
+            loading: false,
+            questionnaireDone,
+            questionnaireStep,
+            paywallSeen,
+            onboardingDone,
+          });
+        }
       }
-    }
 
-    void loadFlowState();
+      void loadFlowState();
 
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+      return () => {
+        isMounted = false;
+      };
+    }, [])
+  );
 
   useEffect(() => {
     if (!loading && !flowState.loading) setReady(true);
@@ -72,15 +88,30 @@ export default function IndexScreen() {
     );
   }
 
+  // Never pick a destination from progress that is still being read.
+  if (loading || flowState.loading) {
+    return <View style={styles.screen} />;
+  }
+
   let destination: Href = "/(questionnaire)/ready";
   if (user && hasCompletedOnboarding) {
     destination = "/(tabs)";
   } else if (!user && !flowState.questionnaireDone) {
     destination = "/(questionnaire)/language";
+  } else if (!user && flowState.onboardingDone) {
+    // Someone has finished setting up on this device before, so they are
+    // coming back (signed out, or an expired session), not signing up.
+    destination = "/(auth)/login";
   } else if (!user && flowState.questionnaireDone) {
     destination = "/(auth)/signup";
   } else if (user && !flowState.questionnaireDone) {
-    destination = "/(questionnaire)/ready";
+    // A new account that signed in on the login screen answers the questions
+    // afterwards, so it carries on from the one it stopped at.
+    const resume = getResumeRoute(flowState.questionnaireStep);
+    if (resume === "chat") destination = "/(questionnaire)/chat";
+    else if (resume === "kitchen") destination = "/(questionnaire)/kitchen";
+    else if (resume === "demo") destination = "/(questionnaire)/demo";
+    else destination = "/(questionnaire)/ready";
   } else if (user && !flowState.paywallSeen) {
     destination = "/(paywall)/offer";
   }

@@ -24,6 +24,10 @@ import { dietImages, onboardingImages } from "@/lib/theme/onboarding";
 import { getTabBarClearance, wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
 import {
   clearOnboardingStep,
+  getOnboardingDone,
+  getPaywallSeen,
+  getQuestionnaireComplete,
+  getQuestionnaireStep,
   setOnboardingDone,
   setPaywallSeen,
   setQuestionnaireComplete,
@@ -194,20 +198,39 @@ export default function ProfileScreen() {
           text: t("profileDeleteConfirmAction"),
           style: "destructive",
           onPress: async () => {
+            // The device starts over at the first onboarding screen. Deleting the
+            // account ends the session on its own and the app leaves the tabs
+            // straight away, so the flags that pick the next screen are reset
+            // first, and put back if the deletion fails.
+            const [onboardingDone, questionnaireDone, questionnaireStep, paywallSeen] =
+              await Promise.all([
+                getOnboardingDone(),
+                getQuestionnaireComplete(),
+                getQuestionnaireStep(),
+                getPaywallSeen(),
+              ]);
+            let deleted = false;
+
             try {
               setIsLoading(true);
-              await convex.mutation(api.users.deleteAccount, {});
-              // The device starts over: the next launch runs the full onboarding.
               await setOnboardingDone(false);
-              await clearOnboardingStep();
-              await clearOnboardingAnswers();
-              await clearCachedProfile();
               await setQuestionnaireComplete(false);
               await setQuestionnaireStep(0);
               await setPaywallSeen(false);
+              await convex.mutation(api.users.deleteAccount, {});
+              deleted = true;
+              await clearOnboardingStep();
+              await clearOnboardingAnswers();
+              await clearCachedProfile();
               await clearMealPlan();
               await signOut();
             } catch (error: any) {
+              if (!deleted) {
+                await setOnboardingDone(onboardingDone);
+                await setQuestionnaireComplete(questionnaireDone);
+                await setQuestionnaireStep(questionnaireStep);
+                await setPaywallSeen(paywallSeen);
+              }
               console.error("Failed to delete account:", error);
               Alert.alert(t("profileDeleteFailedTitle"), getServerError(error)?.message ?? error.message);
             } finally {

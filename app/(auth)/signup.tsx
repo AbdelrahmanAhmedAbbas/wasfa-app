@@ -1,11 +1,11 @@
 import Feather from "@expo/vector-icons/Feather";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
-import { router, useLocalSearchParams } from "expo-router";
+import Ionicons from "@expo/vector-icons/Ionicons";
+import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -20,8 +20,9 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { MascotBadge } from "@/components/onboarding/MascotBadge";
 import { headingStyle } from "@/components/onboarding/text-styles";
+import { CtaButton } from "@/components/wasfa/CtaButton";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { isConvexConfigured } from "@/lib/convex/client";
+import { useSignInActions } from "@/lib/auth/useSignInActions";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { getOnboardingAnswers, type OnboardingAnswers } from "@/lib/onboarding/answers";
@@ -63,14 +64,11 @@ const REVIEWS: Review[] = [
 ];
 
 export default function SignupAuthScreen() {
-  const { signInWithGoogle, signInWithApple, signInWithEmail, user, loading } = useAuth();
+  const { user, loading } = useAuth();
   const { isRTL, t } = useLanguage();
   const insets = useSafeAreaInsets();
-  // "I already have an account" on the intro replaces the questionnaire with
-  // this screen, so that entry gets a way back.
-  const { from } = useLocalSearchParams<{ from?: string }>();
-  const cameFromIntro = from === "intro";
-  const [isLoading, setIsLoading] = useState(false);
+  const { pending, withApple, withGoogle, withEmail } = useSignInActions();
+  const isLoading = pending !== null;
   const [answers, setAnswers] = useState<OnboardingAnswers | null>(null);
   const [emailOpen, setEmailOpen] = useState(false);
   const [email, setEmail] = useState("");
@@ -94,49 +92,10 @@ export default function SignupAuthScreen() {
     };
   }, []);
 
-  const handleGoogleAuth = async () => {
-    if (!isConvexConfigured) {
-      Alert.alert(t("authConfigTitle"), t("authConfigMessage"));
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      await signInWithGoogle();
-    } catch (error) {
-      console.error("Failed to sign in with Google:", error);
-      Alert.alert(t("authErrorTitle"), t("authErrorMessage"));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleAppleAuth = async () => {
-    try {
-      setIsLoading(true);
-      await signInWithApple();
-    } catch (error) {
-      console.error("Failed to sign in with Apple:", error);
-      Alert.alert(t("authErrorTitle"), t("authErrorMessage"));
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   const canSubmitEmail = email.trim().length > 0 && password.length > 0 && !isLoading;
 
-  const handleEmailAuth = async () => {
-    if (!canSubmitEmail) return;
-
-    try {
-      setIsLoading(true);
-      await signInWithEmail(email, password);
-    } catch (error) {
-      console.error("Failed to sign in with email:", error);
-      Alert.alert(t("authErrorTitle"), t("obSignupEmailError"));
-    } finally {
-      setIsLoading(false);
-    }
+  const handleEmailAuth = () => {
+    if (canSubmitEmail) void withEmail(email, password);
   };
 
   // The kitchen card strip only makes sense once the chat has been answered.
@@ -154,21 +113,6 @@ export default function SignupAuthScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
     >
       <StatusBar style="dark" />
-      {cameFromIntro ? (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("back")}
-          hitSlop={8}
-          style={[styles.backButton, { top: insets.top + 8 }]}
-          onPress={() => router.replace("/(questionnaire)/intro")}
-        >
-          <Feather
-            name={isRTL ? "chevron-right" : "chevron-left"}
-            size={18}
-            color={wasfaColors.ink}
-          />
-        </Pressable>
-      ) : null}
       <ScrollView
         contentContainerStyle={[
           styles.content,
@@ -229,20 +173,26 @@ export default function SignupAuthScreen() {
         <Pressable
           accessibilityRole="button"
           style={[styles.button, styles.appleButton]}
-          onPress={handleAppleAuth}
+          onPress={() => void withApple()}
           disabled={isLoading}
         >
-          <FontAwesome name="apple" size={20} color="#FFFFFF" />
-          <Text style={styles.appleText}>{t("obSignupApple")}</Text>
+          {pending === "apple" ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <>
+              <Ionicons name="logo-apple" size={21} color="#FFFFFF" style={styles.appleMark} />
+              <Text style={styles.appleText}>{t("obSignupApple")}</Text>
+            </>
+          )}
         </Pressable>
 
         <Pressable
           accessibilityRole="button"
           style={[styles.button, styles.googleButton]}
-          onPress={handleGoogleAuth}
+          onPress={() => void withGoogle()}
           disabled={isLoading}
         >
-          {isLoading ? (
+          {pending === "google" ? (
             <ActivityIndicator color={wasfaColors.primaryDark} />
           ) : (
             <>
@@ -280,19 +230,15 @@ export default function SignupAuthScreen() {
               textContentType="password"
               secureTextEntry
               returnKeyType="go"
-              onSubmitEditing={() => void handleEmailAuth()}
+              onSubmitEditing={handleEmailAuth}
               editable={!isLoading}
             />
-            <Pressable
-              accessibilityRole="button"
-              style={[styles.button, styles.emailSubmit, !canSubmitEmail && styles.emailSubmitDisabled]}
-              onPress={() => void handleEmailAuth()}
-              disabled={!canSubmitEmail}
-            >
-              <Text style={[styles.emailSubmitText, !canSubmitEmail && styles.emailSubmitTextDisabled]}>
-                {t("obSignupEmailSubmit")}
-              </Text>
-            </Pressable>
+            <CtaButton
+              label={t("obSignupEmailSubmit")}
+              onPress={handleEmailAuth}
+              disabled={!canSubmitEmail && pending !== "email"}
+              loading={pending === "email"}
+            />
           </View>
         ) : (
           <Pressable
@@ -321,19 +267,6 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     paddingHorizontal: 20,
     gap: 14,
-  },
-  backButton: {
-    position: "absolute",
-    start: 16,
-    zIndex: 2,
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: wasfaColors.line,
-    backgroundColor: wasfaColors.surface,
-    alignItems: "center",
-    justifyContent: "center",
   },
   kitchenStrip: {
     flexDirection: "row",
@@ -446,6 +379,10 @@ const styles = StyleSheet.create({
   appleButton: {
     backgroundColor: "#111111",
   },
+  // The Apple mark sits low in its glyph box; nudged up to centre on the label.
+  appleMark: {
+    marginTop: -3,
+  },
   appleText: {
     fontSize: 16,
     fontWeight: "700",
@@ -486,20 +423,6 @@ const styles = StyleSheet.create({
     backgroundColor: wasfaColors.surface,
     fontSize: 16,
     color: wasfaColors.ink,
-  },
-  emailSubmit: {
-    backgroundColor: wasfaColors.primary,
-  },
-  emailSubmitDisabled: {
-    backgroundColor: wasfaColors.disabled,
-  },
-  emailSubmitText: {
-    fontSize: 16,
-    fontWeight: "700",
-    color: "#FFFFFF",
-  },
-  emailSubmitTextDisabled: {
-    color: wasfaColors.disabledText,
   },
   terms: {
     fontSize: 11,
