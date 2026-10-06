@@ -1,12 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ConvexAuthProvider, useAuthActions } from "@convex-dev/auth/react";
 import { useConvexAuth, useQuery } from "convex/react";
+import * as AppleAuthentication from "expo-apple-authentication";
+import * as Crypto from "expo-crypto";
 import * as WebBrowser from "expo-web-browser";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { Platform } from "react-native";
 
 import { api } from "@/convex/_generated/api";
+import { forgetUser, identifyUser } from "@/lib/analytics/posthog";
 import { convex } from "@/lib/convex/client";
+import { stopNotifications } from "@/lib/notifications/sync";
 import { getOnboardingDone, setOnboardingDone } from "@/lib/onboarding/storage";
 
 import { setCurrentUserId } from "./session";
@@ -75,6 +79,7 @@ function AuthStateProvider({ children }: { children: React.ReactNode }) {
     setLastUser(confirmedUser);
     if (confirmedUser) {
       void AsyncStorage.setItem(LAST_USER_KEY, JSON.stringify(confirmedUser));
+      identifyUser(confirmedUser);
     } else {
       void AsyncStorage.removeItem(LAST_USER_KEY);
     }
@@ -119,7 +124,10 @@ function AuthStateProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = async () => {
     try {
+      // While still signed in: the server only takes a phone off its owner's account.
+      await stopNotifications();
       await endSession();
+      forgetUser();
       setLastUser(null);
       await AsyncStorage.removeItem(LAST_USER_KEY);
     } catch (error) {
@@ -129,7 +137,32 @@ function AuthStateProvider({ children }: { children: React.ReactNode }) {
   };
 
   const signInWithApple = async () => {
-    console.log("Apple Sign-In not yet configured");
+    try {
+      // Apple signs the hash into its token; the server checks it against this nonce.
+      const nonce = Crypto.randomUUID();
+      const credential = await AppleAuthentication.signInAsync({
+        requestedScopes: [
+          AppleAuthentication.AppleAuthenticationScope.FULL_NAME,
+          AppleAuthentication.AppleAuthenticationScope.EMAIL,
+        ],
+        nonce: await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, nonce),
+      });
+      if (!credential.identityToken) throw new Error("Apple sign-in did not return a token.");
+
+      const name = [credential.fullName?.givenName, credential.fullName?.familyName]
+        .filter(Boolean)
+        .join(" ");
+      await signIn("apple", {
+        identityToken: credential.identityToken,
+        nonce,
+        ...(name ? { name } : null),
+      });
+    } catch (error) {
+      // Closing Apple's sheet is not a failure.
+      if ((error as { code?: string }).code === "ERR_REQUEST_CANCELED") return;
+      console.error("Error signing in with Apple:", error);
+      throw error;
+    }
   };
 
   // Email accounts are created for App Review and beta testers (see

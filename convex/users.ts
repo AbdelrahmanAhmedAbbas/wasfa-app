@@ -3,8 +3,10 @@ import { v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { internalAction, internalMutation, mutation, query, type MutationCtx } from "./_generated/server";
+import { internalAction, internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireUserId } from "./authz";
+import { DEFAULT_PLAN, type PlanName } from "./lib/plans";
+import { planName } from "./schema";
 
 const PURGE_BATCH = 200;
 
@@ -22,6 +24,42 @@ export const viewer = query({
       name: user.name ?? null,
       avatar_url: user.image ?? null,
     };
+  },
+});
+
+/** The plan an account is on. An account that was never given one is on the free plan. */
+export async function getUserPlan(ctx: QueryCtx, userId: Id<"users">): Promise<PlanName> {
+  const stored = await ctx.db
+    .query("user_plans")
+    .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+    .unique();
+  return stored?.plan ?? DEFAULT_PLAN;
+}
+
+/**
+ * Puts an account on a plan. Run it from the command line:
+ * `npx convex run users:setPlan '{"email":"...","plan":"premium"}'`.
+ */
+export const setPlan = internalMutation({
+  args: { email: v.string(), plan: planName },
+  handler: async (ctx, { email, plan }) => {
+    const normalizedEmail = email.trim().toLowerCase();
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", normalizedEmail))
+      .first();
+    if (!user) throw new Error(`No account with the email ${normalizedEmail}.`);
+
+    const stored = await ctx.db
+      .query("user_plans")
+      .withIndex("by_user_id", (q) => q.eq("user_id", user._id))
+      .unique();
+    if (stored) {
+      await ctx.db.patch("user_plans", stored._id, { plan });
+    } else {
+      await ctx.db.insert("user_plans", { user_id: user._id, plan });
+    }
+    return { user_id: user._id, email: normalizedEmail, plan };
   },
 });
 
@@ -126,11 +164,23 @@ export const purgeUserData = internalMutation({
       return await again();
     }
 
+    const devices = await ctx.db
+      .query("push_devices")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(PURGE_BATCH);
+    for (const device of devices) await ctx.db.delete("push_devices", device._id);
+
     const profiles = await ctx.db
       .query("onboarding_profiles")
       .withIndex("by_user_id", (q) => q.eq("user_id", userId))
       .take(PURGE_BATCH);
     for (const profile of profiles) await ctx.db.delete("onboarding_profiles", profile._id);
+
+    const plans = await ctx.db
+      .query("user_plans")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(PURGE_BATCH);
+    for (const plan of plans) await ctx.db.delete("user_plans", plan._id);
 
     if (await ctx.db.get("users", userId)) await ctx.db.delete("users", userId);
     return null;

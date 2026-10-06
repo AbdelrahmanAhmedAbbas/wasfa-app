@@ -1,3 +1,4 @@
+import { useFocusEffect } from "expo-router";
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
 
 import {
@@ -26,6 +27,18 @@ export function ImportSheetProvider({ children }: { children: ReactNode }) {
     setSelectedPlatform(null);
     setSheetState("platforms");
   }, []);
+
+  // The sheet belongs to the tabs. When another screen covers them (a recipe shared
+  // from Instagram while the guide is open, say) it closes instead of staying on top.
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        setSelectedPlatform(null);
+        setSheetState("closed");
+      },
+      []
+    )
+  );
 
   const value = useMemo(() => ({ open }), [open]);
 

@@ -1,5 +1,4 @@
-import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -22,11 +21,10 @@ import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import {
   deleteShoppingListItem,
-  listShoppingListItems,
   toggleShoppingListItemChecked,
+  useShoppingList,
   type ShoppingListItem,
 } from "@/lib/shopping/client";
-import { publishShoppingItems } from "@/lib/shopping/badge";
 import { mergeShoppingItems } from "@/lib/shopping/merge";
 import { getFoodGlyph } from "@/lib/theme/glyphs";
 import { onboardingImages } from "@/lib/theme/onboarding";
@@ -45,6 +43,8 @@ type GroupedItem = {
 function getShoppingRecipeTitle(item: ShoppingListItem, language: "en" | "ar") {
   return item.recipe?.localized?.[language]?.title || item.recipe?.title || "Recipe";
 }
+
+const NO_ITEMS: ShoppingListItem[] = [];
 
 function groupItems(items: ShoppingListItem[], language: "en" | "ar"): GroupedItem[] {
   return mergeShoppingItems(items).map((group) => {
@@ -68,37 +68,14 @@ function groupItems(items: ShoppingListItem[], language: "en" | "ar"): GroupedIt
 export default function GroceryScreen() {
   const insets = useSafeAreaInsets();
   const { t, language } = useLanguage();
-  const [items, setItems] = useState<ShoppingListItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // The list is live: a recipe planned a moment ago shows up as soon as its
+  // lines are saved, without leaving and reopening this screen.
+  const { items: liveItems, failed: loadFailed } = useShoppingList();
+  const items = liveItems ?? NO_ITEMS;
+  const loading = liveItems === undefined && !loadFailed;
+  const [actionError, setActionError] = useState<string | null>(null);
   const [recipeFilter, setRecipeFilter] = useState<string | null>(null);
-  const hasLoadedOnce = useRef(false);
-
-  const load = useCallback(async () => {
-    try {
-      const data = await listShoppingListItems();
-      setItems(data);
-      setError(null);
-    } catch {
-      setError(t("groceryLoadError"));
-    } finally {
-      hasLoadedOnce.current = true;
-      setLoading(false);
-    }
-  }, [t]);
-
-  // The list changes whenever a recipe is planned elsewhere, so refresh on focus.
-  useFocusEffect(
-    useCallback(() => {
-      if (!hasLoadedOnce.current) setLoading(true);
-      void load();
-    }, [load])
-  );
-
-  // Checking items off or removing them here changes the count on the tab icon.
-  useEffect(() => {
-    if (hasLoadedOnce.current) publishShoppingItems(items);
-  }, [items]);
+  const error = loadFailed ? t("groceryLoadError") : actionError;
 
   const localizeDigits = (value: string) => (language === "ar" ? toArabicIndicDigits(value) : value);
   // Ingredient text stays in the recipe's own language, so only Arabic text gets Arabic digits.
@@ -133,25 +110,20 @@ export default function GroceryScreen() {
 
   const toggleGroup = async (group: GroupedItem) => {
     const next = !group.checked;
-    setItems((prev) => prev.map((entry) =>
-      group.relatedItems.some((r) => r.id === entry.id) ? { ...entry, checked: next } : entry
-    ));
+    setActionError(null);
     try {
       await Promise.all(group.relatedItems.map((item) => toggleShoppingListItemChecked(item.id, next)));
     } catch {
-      void load(); // revert
-      setError(t("groceryUpdateError"));
+      setActionError(t("groceryUpdateError"));
     }
   };
 
   const removeGroup = async (group: GroupedItem) => {
-    const prev = items;
-    setItems((current) => current.filter((entry) => !group.relatedItems.some((r) => r.id === entry.id)));
+    setActionError(null);
     try {
       await Promise.all(group.relatedItems.map((item) => deleteShoppingListItem(item.id)));
     } catch {
-      setItems(prev);
-      setError(t("groceryRemoveError"));
+      setActionError(t("groceryRemoveError"));
     }
   };
 
@@ -221,11 +193,14 @@ export default function GroceryScreen() {
         {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
         {items.length === 0 ? (
-          <View style={styles.emptyCard}>
-            <Image source={onboardingImages.mascotReading} style={styles.emptyImage} resizeMode="contain" />
-            <Text style={styles.emptyTitle}>{t("groceryEmptyTitle")}</Text>
-            <Text style={styles.emptyBody}>{t("groceryEmptyBody")}</Text>
-          </View>
+          // A list that could not be read is not an empty one.
+          loadFailed ? null : (
+            <View style={styles.emptyCard}>
+              <Image source={onboardingImages.mascotReading} style={styles.emptyImage} resizeMode="contain" />
+              <Text style={styles.emptyTitle}>{t("groceryEmptyTitle")}</Text>
+              <Text style={styles.emptyBody}>{t("groceryEmptyBody")}</Text>
+            </View>
+          )
         ) : (
           <>
             {priceComparisonAvailable && toBuy.length > 0 ? (

@@ -91,6 +91,14 @@ export function isRecipePlanned(plan: MealPlan, recipeId: string, dayKeys: strin
   return [ANY_DAY, ...dayKeys].some((dayKey) => getPlanDay(plan, dayKey).includes(recipeId));
 }
 
+/**
+ * The recipes on the calendar the planner shows: the unscheduled bucket plus
+ * `dayKeys` (the current week). The grocery list holds exactly their ingredients.
+ */
+export function getPlannedRecipeIds(plan: MealPlan, dayKeys: string[]): string[] {
+  return Array.from(new Set([ANY_DAY, ...dayKeys].flatMap((dayKey) => getPlanDay(plan, dayKey))));
+}
+
 /** True when the recipe appears in any bucket of the plan, past weeks included. */
 export function isRecipeInPlan(plan: MealPlan, recipeId: string): boolean {
   return plan.any.includes(recipeId) || Object.values(plan.days).some((ids) => ids.includes(recipeId));

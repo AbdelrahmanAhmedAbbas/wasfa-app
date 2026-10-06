@@ -1,13 +1,19 @@
 import { getCurrentUserId } from "@/lib/auth/session";
 import { getRecipeById } from "@/lib/recipes/client";
 import { loadRecipePreferences } from "@/lib/recipes/preferences";
-import { refreshShoppingBadge } from "@/lib/shopping/badge";
 import {
   addRecipeIngredientsToShoppingList,
   removeRecipeFromShoppingList,
 } from "@/lib/shopping/client";
 
-import { addRecipeToPlan, isRecipeInPlan, removeRecipeFromPlan, type MealPlan } from "./plan";
+import {
+  addRecipeToPlan,
+  getWeekDates,
+  isRecipePlanned,
+  removeRecipeFromPlan,
+  toDateKey,
+  type MealPlan,
+} from "./plan";
 
 type UpdatePlan = (update: (current: MealPlan) => MealPlan) => Promise<MealPlan>;
 
@@ -34,7 +40,6 @@ export async function planRecipe(
     if (recipe) {
       const preferences = await loadRecipePreferences(getCurrentUserId());
       await addRecipeIngredientsToShoppingList(recipe, preferences);
-      void refreshShoppingBadge();
     }
     return { plan, grocerySynced: true };
   } catch {
@@ -44,7 +49,8 @@ export async function planRecipe(
 
 /**
  * Removes a recipe from a day. Its ingredients leave the grocery list only
- * once the recipe is no longer planned on any day.
+ * once the recipe is no longer on the calendar: not on any day of this week
+ * and not in "Any day".
  */
 export async function unplanRecipe(
   updatePlan: UpdatePlan,
@@ -52,11 +58,11 @@ export async function unplanRecipe(
   recipeId: string
 ): Promise<PlanChangeResult> {
   const plan = await updatePlan((current) => removeRecipeFromPlan(current, dayKey, recipeId));
-  if (isRecipeInPlan(plan, recipeId)) return { plan, grocerySynced: true };
+  const weekKeys = getWeekDates(new Date()).map(toDateKey);
+  if (isRecipePlanned(plan, recipeId, weekKeys)) return { plan, grocerySynced: true };
 
   try {
     await removeRecipeFromShoppingList(recipeId);
-    void refreshShoppingBadge();
     return { plan, grocerySynced: true };
   } catch {
     return { plan, grocerySynced: false };

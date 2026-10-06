@@ -2,13 +2,24 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import Feather from "@expo/vector-icons/Feather";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import FontAwesome5 from "@expo/vector-icons/FontAwesome5";
+import { useQuery } from "convex/react";
 import { router } from "expo-router";
-import { useState } from "react";
-import { Image, Pressable, StyleSheet, TextInput, View, type ImageSourcePropType } from "react-native";
+import { useEffect, useState } from "react";
+import {
+  Image,
+  Keyboard,
+  Pressable,
+  StyleSheet,
+  TextInput,
+  View,
+  type ImageSourcePropType,
+} from "react-native";
 
 import { BottomDrawer } from "@/components/ui/BottomDrawer";
 import { CtaButton } from "@/components/wasfa/CtaButton";
+import { api } from "@/convex/_generated/api";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { fillImportLimitMessage } from "@/lib/import/errors";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
@@ -108,18 +119,44 @@ export function SocialImportDrawers({
   onSelectPlatform,
   onCloseGuide,
 }: SocialImportDrawersProps) {
-  const { isRTL } = useLanguage();
+  const { isRTL, language } = useLanguage();
   const textAlign = "left";
   const writingDirection = isRTL ? "rtl" : "ltr";
   const [link, setLink] = useState("");
   const trimmedLink = link.trim();
 
+  // What is left of the day's imports, counted from the moment the sheet opens. It is
+  // only a note: the server decides when a link is sent, so nothing here blocks one.
+  const [countedFrom, setCountedFrom] = useState<number | null>(null);
+  useEffect(() => {
+    setCountedFrom(isPrimaryVisible ? Date.now() : null);
+  }, [isPrimaryVisible]);
+  const allowance = useQuery(api.imports.allowance, countedFrom ? { now: countedFrom } : "skip");
+  const noneLeft = allowance?.remaining === 0;
+  const allowanceNote =
+    !allowance || allowance.limit === null || allowance.remaining === null
+      ? null
+      : noneLeft
+        ? fillImportLimitMessage(
+            t("importSheetNoneLeft"),
+            { limit: allowance.limit, resetsAt: allowance.resets_at },
+            language
+          )
+        : fillImportLimitMessage(
+            t("importSheetLeftToday"),
+            { count: allowance.remaining, limit: allowance.limit },
+            language
+          );
+
   const handleImportLink = () => {
     if (!trimmedLink) return;
     setLink("");
+    Keyboard.dismiss();
     onClosePrimary();
     // Same entry a share intent uses: /import creates the job and opens its progress screen.
-    router.replace({ pathname: "/import", params: { url: trimmedLink } });
+    // It goes on top of the tabs: replacing them tore this sheet down while it was still
+    // on screen with the keyboard up, and the rebuilt tab bar could stop taking taps.
+    router.push({ pathname: "/import", params: { url: trimmedLink } });
   };
 
   return (
@@ -154,6 +191,14 @@ export function SocialImportDrawers({
             <Feather name="x" size={18} color={wasfaColors.ink} />
           </Pressable>
         </View>
+
+        {allowanceNote ? (
+          <Text
+            style={[styles.allowanceNote, noneLeft && styles.allowanceNoteNoneLeft, { textAlign, writingDirection }]}
+          >
+            {allowanceNote}
+          </Text>
+        ) : null}
 
         <View style={styles.platformList}>
           {PLATFORMS.map((platform) => {
@@ -322,6 +367,15 @@ const styles = StyleSheet.create({
     backgroundColor: wasfaColors.soft,
     alignItems: "center",
     justifyContent: "center",
+  },
+  allowanceNote: {
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: "700",
+    color: wasfaColors.primary,
+  },
+  allowanceNoteNoneLeft: {
+    color: wasfaColors.danger,
   },
   platformList: {
     gap: 10,

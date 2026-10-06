@@ -13,6 +13,7 @@ import { countPlannedMeals, getWeekDates, toDateKey } from "@/lib/planner/plan";
 import { useMealPlan } from "@/lib/planner/storage";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import { useShoppingBadgeCount } from "@/lib/shopping/badge";
+import { useGroceryListFollowsPlan } from "@/lib/shopping/sync";
 import {
   TAB_BAR_BOTTOM_GAP,
   TAB_BAR_HEIGHT,
@@ -185,6 +186,7 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
 
 export default function TabLayout() {
   const { t } = useLanguage();
+  useGroceryListFollowsPlan();
 
   return (
     <ImportSheetProvider>

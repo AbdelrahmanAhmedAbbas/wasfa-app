@@ -65,7 +65,6 @@ import {
   type MeasurementSystem,
 } from "@/lib/recipes/units";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
-import { refreshShoppingBadge } from "@/lib/shopping/badge";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaRadius, wasfaShadow } from "@/lib/theme/wasfa";
 
@@ -316,8 +315,7 @@ export default function RecipeDetailsScreen() {
               await deleteRecipeById(recipe.id);
               // Its meals and grocery lines go with it, so the tab badges drop too.
               await updatePlan((current) => removeRecipeFromWholePlan(current, recipe.id));
-              void refreshShoppingBadge();
-              router.replace("/(tabs)");
+              router.dismissTo("/(tabs)");
             } catch (e) {
               setError(e instanceof Error ? e.message : t("recipeNotFound"));
             } finally {

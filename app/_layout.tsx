@@ -2,14 +2,16 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, LocaleDirContext, ThemeProvider } from '@react-navigation/native';
 import * as ExpoFont from 'expo-font';
 import { useFonts } from 'expo-font';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useNavigationContainerRef, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { useEffect, useRef, useState } from 'react';
 import { View } from 'react-native';
 import 'react-native-reanimated';
 
+import { AppNotifications } from '@/components/notifications/AppNotifications';
 import { useColorScheme } from '@/components/useColorScheme';
+import { AnalyticsProvider } from '@/lib/analytics/AnalyticsProvider';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { LanguageProvider, useLanguage } from '@/lib/i18n/LanguageProvider';
 import { getShareIntentKey, shouldRedirectShareIntent } from '@/lib/import/navigation';
@@ -75,9 +77,11 @@ export default function RootLayout() {
   return (
     <ShareIntentProvider options={{ scheme: 'mealplanner' }}>
       <LanguageProvider>
-        <AuthProvider>
-          <RootLayoutNav />
-        </AuthProvider>
+        <AnalyticsProvider>
+          <AuthProvider>
+            <RootLayoutNav />
+          </AuthProvider>
+        </AnalyticsProvider>
       </LanguageProvider>
     </ShareIntentProvider>
   );
@@ -88,6 +92,7 @@ function RootLayoutNav() {
   const { isRTL } = useLanguage();
   const direction = isRTL ? "rtl" : "ltr";
   const router = useRouter();
+  const navigationRef = useNavigationContainerRef();
   const { user, loading: authLoading } = useAuth();
   const isSignedIn = !!user;
   const { isReady, hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
@@ -114,13 +119,24 @@ function RootLayoutNav() {
     if (mediaUri) params.media_uri = mediaUri;
     if (mediaMime) params.media_mime = mediaMime;
     resetShareIntent(true);
-    router.replace({ pathname: "/import", params });
-  }, [isReady, authLoading, isSignedIn, hasShareIntent, shareIntent, resetShareIntent, router]);
+    // With the tabs open the import goes on top of them, so the same tabs are
+    // there to come back to. Rebuilding them after every import left a second
+    // copy stacked on the first.
+    const tabsAreOpen =
+      navigationRef.isReady() &&
+      navigationRef.getRootState().routes.some((route) => route.name === "(tabs)");
+    if (tabsAreOpen) {
+      router.push({ pathname: "/import", params });
+    } else {
+      router.replace({ pathname: "/import", params });
+    }
+  }, [isReady, authLoading, isSignedIn, hasShareIntent, shareIntent, resetShareIntent, router, navigationRef]);
 
   return (
     <View style={{ flex: 1, direction }}>
       <LocaleDirContext.Provider value={direction}>
         <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+          <AppNotifications />
           <Stack>
             <Stack.Screen name="index" options={{ headerShown: false }} />
             <Stack.Screen name="(auth)" options={{ headerShown: false }} />
@@ -131,8 +147,10 @@ function RootLayoutNav() {
                 exist, so signing out (or an expired session) returns to index. */}
             <Stack.Protected guard={isSignedIn}>
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-              <Stack.Screen name="import/index" options={{ headerShown: false }} />
-              <Stack.Screen name="import/[jobId]" options={{ headerShown: false }} />
+              {/* An import sits on top of the tabs and returns to them by itself,
+                  so it cannot be swiped away half-way. */}
+              <Stack.Screen name="import/index" options={{ headerShown: false, gestureEnabled: false }} />
+              <Stack.Screen name="import/[jobId]" options={{ headerShown: false, gestureEnabled: false }} />
               <Stack.Screen name="recipe/[id]" options={{ headerShown: false }} />
               <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
             </Stack.Protected>

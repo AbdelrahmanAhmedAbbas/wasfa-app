@@ -67,7 +67,7 @@ export default function SignupAuthScreen() {
   const { user, loading } = useAuth();
   const { isRTL, t } = useLanguage();
   const insets = useSafeAreaInsets();
-  const { pending, withApple, withGoogle, withEmail } = useSignInActions();
+  const { pending, appleAvailable, withApple, withGoogle, withEmail } = useSignInActions();
   const isLoading = pending !== null;
   const [answers, setAnswers] = useState<OnboardingAnswers | null>(null);
   const [emailOpen, setEmailOpen] = useState(false);
@@ -170,21 +170,23 @@ export default function SignupAuthScreen() {
 
         <View style={styles.spacer} />
 
-        <Pressable
-          accessibilityRole="button"
-          style={[styles.button, styles.appleButton]}
-          onPress={() => void withApple()}
-          disabled={isLoading}
-        >
-          {pending === "apple" ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <>
-              <Ionicons name="logo-apple" size={21} color="#FFFFFF" style={styles.appleMark} />
-              <Text style={styles.appleText}>{t("obSignupApple")}</Text>
-            </>
-          )}
-        </Pressable>
+        {appleAvailable ? (
+          <Pressable
+            accessibilityRole="button"
+            style={[styles.button, styles.appleButton]}
+            onPress={() => void withApple()}
+            disabled={isLoading}
+          >
+            {pending === "apple" ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <>
+                <Ionicons name="logo-apple" size={21} color="#FFFFFF" style={styles.appleMark} />
+                <Text style={styles.appleText}>{t("obSignupApple")}</Text>
+              </>
+            )}
+          </Pressable>
+        ) : null}
 
         <Pressable
           accessibilityRole="button"

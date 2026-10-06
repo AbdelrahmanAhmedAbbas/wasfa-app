@@ -2,8 +2,9 @@ import { ConvexError, v } from "convex/values";
 
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { action, internalMutation, internalQuery, query } from "./_generated/server";
+import { action, internalMutation, internalQuery, query, type QueryCtx } from "./_generated/server";
 import { requireUserId } from "./authz";
+import { DAY_MS, importAllowance } from "./lib/plans";
 import type { RecipeDraft } from "./lib/types";
 import {
   detectSourcePlatform,
@@ -15,6 +16,7 @@ import {
 } from "./lib/validation";
 import { canonicalYouTubeShortUrl, isYouTubeUrl, parseYouTubeShortId } from "./lib/youtube";
 import { importEntrypoint, importStatus, sourcePlatform } from "./schema";
+import { getUserPlan } from "./users";
 
 const MAX_SHARED_TEXT_LENGTH = 10_000;
 const IMPORTS_PER_HOUR = 20;
@@ -25,8 +27,27 @@ const DEDUPE_WINDOW_MS = 30 * 60 * 1000;
 const UNSUPPORTED_URL_MESSAGE = "Unsupported source URL. Only Instagram, TikTok and YouTube Shorts are allowed.";
 
 /** A rejection the app shows in its own language, by code. */
-function rejection(code: string, message: string) {
-  return new ConvexError({ code, message });
+function rejection(code: string, message: string, details: Record<string, number> = {}) {
+  return new ConvexError({ code, message, ...details });
+}
+
+type StartResult =
+  | { refused: "hourly" }
+  | { refused: "daily"; limit: number; resetsAt: number }
+  | { refused: null; jobId: Id<"import_jobs">; status: string; deduplicated: boolean };
+
+/** How much of the plan's daily imports the user has used, as of `now`. */
+async function getImportAllowance(ctx: QueryCtx, userId: Id<"users">, now: number) {
+  // The hourly limit caps how many imports a day can hold, so this reads all of them.
+  const lastDay = await ctx.db
+    .query("import_jobs")
+    .withIndex("by_user_id", (q) => q.eq("user_id", userId).gt("_creationTime", now - DAY_MS))
+    .take(IMPORTS_PER_HOUR * 24);
+  return importAllowance(
+    await getUserPlan(ctx, userId),
+    lastDay.map((job) => ({ createdAt: job._creationTime, status: job.status })),
+    now
+  );
 }
 
 /**
@@ -71,25 +92,30 @@ export const create = action({
       throw rejection("UNSUPPORTED_URL", UNSUPPORTED_URL_MESSAGE);
     }
 
-    const started: { rateLimited: true } | { rateLimited: false; jobId: Id<"import_jobs">; status: string; deduplicated: boolean } =
-      await ctx.runMutation(internal.imports.start, {
-        userId,
-        sourceUrl: resolution.url,
-        sourcePlatform: platform,
-        entrypoint: args.entrypoint ?? "paste_url",
-        sharedText: args.sharedText?.slice(0, MAX_SHARED_TEXT_LENGTH),
-        submittedUrl,
-        urlResolved: resolution.resolved,
-      });
+    const started: StartResult = await ctx.runMutation(internal.imports.start, {
+      userId,
+      sourceUrl: resolution.url,
+      sourcePlatform: platform,
+      entrypoint: args.entrypoint ?? "paste_url",
+      sharedText: args.sharedText?.slice(0, MAX_SHARED_TEXT_LENGTH),
+      submittedUrl,
+      urlResolved: resolution.resolved,
+    });
 
-    if (started.rateLimited) {
+    if (started.refused === "hourly") {
       throw rejection("RATE_LIMITED", "Rate limit reached. Please wait before creating more import jobs.");
+    }
+    if (started.refused === "daily") {
+      throw rejection("DAILY_IMPORT_LIMIT", `Your plan allows ${started.limit} recipe imports a day.`, {
+        limit: started.limit,
+        resets_at: started.resetsAt,
+      });
     }
     return { job_id: started.jobId, status: started.status, deduplicated: started.deduplicated };
   },
 });
 
-/** Records the import job and hands it to the pipeline, unless the user is over the hourly limit. */
+/** Records the import job and hands it to the pipeline, unless the user is over the hourly or daily limit. */
 export const start = internalMutation({
   args: {
     userId: v.id("users"),
@@ -100,14 +126,14 @@ export const start = internalMutation({
     submittedUrl: v.string(),
     urlResolved: v.boolean(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<StartResult> => {
     const now = Date.now();
 
     const lastHour = await ctx.db
       .query("import_jobs")
       .withIndex("by_user_id", (q) => q.eq("user_id", args.userId).gt("_creationTime", now - HOUR_MS))
       .take(IMPORTS_PER_HOUR);
-    if (lastHour.length >= IMPORTS_PER_HOUR) return { rateLimited: true as const };
+    if (lastHour.length >= IMPORTS_PER_HOUR) return { refused: "hourly" };
 
     const sameLink = await ctx.db
       .query("import_jobs")
@@ -118,7 +144,12 @@ export const start = internalMutation({
       .take(5);
     const running = sameLink.find((job) => job.status !== "confirmed" && job.status !== "failed");
     if (running) {
-      return { rateLimited: false as const, jobId: running._id, status: running.status, deduplicated: true };
+      return { refused: null, jobId: running._id, status: running.status, deduplicated: true };
+    }
+
+    const allowance = await getImportAllowance(ctx, args.userId, now);
+    if (allowance.limit !== null && allowance.resetsAt !== null) {
+      return { refused: "daily", limit: allowance.limit, resetsAt: allowance.resetsAt };
     }
 
     const jobId = await ctx.db.insert("import_jobs", {
@@ -148,7 +179,20 @@ export const start = internalMutation({
     }
 
     await ctx.scheduler.runAfter(0, internal.importPipeline.run, { jobId, sharedText: args.sharedText });
-    return { rateLimited: false as const, jobId, status: "queued", deduplicated: false };
+    return { refused: null, jobId, status: "queued", deduplicated: false };
+  },
+});
+
+/**
+ * How many imports the signed-in user has left today. The app passes the time, because
+ * a query is not run again just because time has passed.
+ */
+export const allowance = query({
+  args: { now: v.number() },
+  handler: async (ctx, { now }) => {
+    const userId = await requireUserId(ctx);
+    const { plan, limit, used, remaining, resetsAt } = await getImportAllowance(ctx, userId, now);
+    return { plan, limit, used, remaining, resets_at: resetsAt };
   },
 });
 
@@ -205,12 +249,18 @@ export const setJobStatus = internalMutation({
     errorMessage: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
+    const job = await ctx.db.get("import_jobs", args.jobId);
     await ctx.db.patch("import_jobs", args.jobId, {
       status: args.status,
       error_code: args.errorCode ?? undefined,
       error_message: args.errorMessage ?? undefined,
       updated_at: Date.now(),
     });
+    // The owner may have left the app while this ran, so their phones are told how it ended.
+    const finished = args.status === "confirmed" || args.status === "failed";
+    if (finished && job?.status !== args.status) {
+      await ctx.scheduler.runAfter(0, internal.notifications.sendImportFinished, { jobId: args.jobId });
+    }
     return null;
   },
 });
@@ -230,6 +280,7 @@ export const failJobIfProcessing = internalMutation({
       error_message: args.errorMessage,
       updated_at: Date.now(),
     });
+    await ctx.scheduler.runAfter(0, internal.notifications.sendImportFinished, { jobId: args.jobId });
     return true;
   },
 });

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "383387811943",
+    "project_id": "wasfa-a82b6",
+    "storage_bucket": "wasfa-a82b6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:383387811943:android:f04da4a1b80ed5ca69d4c2",
+        "android_client_info": {
+          "package_name": "com.abdelrahmanahmed.mealplanner"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBfBAQMkouAWvXZj9tp4K4rlErM3_2wUKs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

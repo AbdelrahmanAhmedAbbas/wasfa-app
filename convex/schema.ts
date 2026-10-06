@@ -23,6 +23,10 @@ export const importEntrypoint = v.union(
   v.literal("manual_retry")
 );
 
+export const appLanguage = v.union(v.literal("en"), v.literal("ar"));
+
+export const devicePlatform = v.union(v.literal("ios"), v.literal("android"));
+
 const stepTemperature = v.object({
   value: v.number(),
   unit: v.union(v.literal("C"), v.literal("F")),
@@ -99,6 +103,9 @@ export const nutrition = v.object({
   estimated: v.optional(v.boolean()),
 });
 
+// The plans are described in lib/plans.ts.
+export const planName = v.union(v.literal("free"), v.literal("premium"));
+
 /** The profile answers a user can save; every field is optional so one can be saved alone. */
 export const profileFields = {
   goal: v.optional(v.union(v.string(), v.null())),
@@ -116,6 +123,12 @@ export const profileFields = {
 
 export default defineSchema({
   ...authTables,
+
+  // The plan of each account that is not on the free one.
+  user_plans: defineTable({
+    user_id: v.id("users"),
+    plan: planName,
+  }).index("by_user_id", ["user_id"]),
 
   onboarding_profiles: defineTable({
     user_id: v.id("users"),
@@ -177,6 +190,16 @@ export default defineSchema({
   })
     .index("by_user_id", ["user_id"])
     .index("by_user_id_and_source_url", ["user_id", "source_url"]),
+
+  // A phone that receives its user's notifications, and the language to write them in.
+  push_devices: defineTable({
+    user_id: v.id("users"),
+    token: v.string(),
+    platform: devicePlatform,
+    language: appLanguage,
+  })
+    .index("by_user_id", ["user_id"])
+    .index("by_token", ["token"]),
 
   // One row per pipeline step, kept for diagnosing imports.
   job_events: defineTable({

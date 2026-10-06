@@ -10,6 +10,16 @@ import { EMPTY_MEAL_PLAN, normalizeMealPlan, type MealPlan } from "./plan";
 // prunes) someone else's.
 const MEAL_PLAN_KEY = "@wasfa/meal_plan";
 
+type PlanState = {
+  plan: MealPlan;
+  loaded: boolean;
+  /**
+   * True once a plan has been read from or saved to this device. False on a
+   * fresh install, where an empty plan means "not known", not "nothing planned".
+   */
+  stored: boolean;
+};
+
 const listeners = new Set<(plan: MealPlan) => void>();
 
 async function getMealPlanKey(): Promise<string | null> {
@@ -17,10 +27,14 @@ async function getMealPlanKey(): Promise<string | null> {
   return userId ? `${MEAL_PLAN_KEY}/${userId}` : null;
 }
 
-export async function getMealPlan(): Promise<MealPlan> {
+/**
+ * The plan saved on this device, or null when there is none to read: nobody is
+ * signed in, this account has never saved a plan here, or the read failed.
+ */
+async function readStoredMealPlan(): Promise<MealPlan | null> {
   try {
     const key = await getMealPlanKey();
-    if (!key) return EMPTY_MEAL_PLAN;
+    if (!key) return null;
 
     const value = await AsyncStorage.getItem(key);
     if (value) return normalizeMealPlan(JSON.parse(value));
@@ -28,13 +42,17 @@ export async function getMealPlan(): Promise<MealPlan> {
     // A plan saved before plans were per-account moves to the first account
     // that opens it.
     const legacy = await AsyncStorage.getItem(MEAL_PLAN_KEY);
-    if (!legacy) return EMPTY_MEAL_PLAN;
+    if (!legacy) return null;
     await AsyncStorage.setItem(key, legacy);
     await AsyncStorage.removeItem(MEAL_PLAN_KEY);
     return normalizeMealPlan(JSON.parse(legacy));
   } catch {
-    return EMPTY_MEAL_PLAN;
+    return null;
   }
+}
+
+export async function getMealPlan(): Promise<MealPlan> {
+  return (await readStoredMealPlan()) ?? EMPTY_MEAL_PLAN;
 }
 
 export async function saveMealPlan(plan: MealPlan): Promise<void> {
@@ -55,22 +73,30 @@ export async function clearMealPlan(): Promise<void> {
  * made by any other (e.g. "Add to plan" on a recipe updates the planner tab).
  */
 export function useMealPlan() {
-  const [plan, setPlan] = useState<MealPlan>(EMPTY_MEAL_PLAN);
-  const [loaded, setLoaded] = useState(false);
+  const [state, setState] = useState<PlanState>({
+    plan: EMPTY_MEAL_PLAN,
+    loaded: false,
+    stored: false,
+  });
 
   useEffect(() => {
     let isMounted = true;
-    listeners.add(setPlan);
+    // A save always wins over the first read, whichever finishes last.
+    let saved = false;
+    const onSaved = (plan: MealPlan) => {
+      saved = true;
+      setState({ plan, loaded: true, stored: true });
+    };
+    listeners.add(onSaved);
 
-    void getMealPlan().then((stored) => {
-      if (!isMounted) return;
-      setPlan(stored);
-      setLoaded(true);
+    void readStoredMealPlan().then((stored) => {
+      if (!isMounted || saved) return;
+      setState({ plan: stored ?? EMPTY_MEAL_PLAN, loaded: true, stored: stored !== null });
     });
 
     return () => {
       isMounted = false;
-      listeners.delete(setPlan);
+      listeners.delete(onSaved);
     };
   }, []);
 
@@ -80,5 +106,5 @@ export function useMealPlan() {
     return next;
   }, []);
 
-  return { plan, loaded, updatePlan };
+  return { ...state, updatePlan };
 }

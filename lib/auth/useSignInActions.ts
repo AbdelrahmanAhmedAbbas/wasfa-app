@@ -1,5 +1,6 @@
-import { useState } from "react";
-import { Alert } from "react-native";
+import * as AppleAuthentication from "expo-apple-authentication";
+import { useEffect, useState } from "react";
+import { Alert, Platform } from "react-native";
 
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isConvexConfigured } from "@/lib/convex/client";
@@ -13,6 +14,13 @@ export function useSignInActions() {
   const { t } = useLanguage();
   // The method in flight, so each button can show its own spinner.
   const [pending, setPending] = useState<SignInMethod | null>(null);
+  // Apple sign-in exists only on iPhone, and only in builds that include it: an older
+  // build that receives this code over the air does not, so it hides the button.
+  const [appleAvailable, setAppleAvailable] = useState(Platform.OS === "ios");
+
+  useEffect(() => {
+    void AppleAuthentication.isAvailableAsync().then(setAppleAvailable);
+  }, []);
 
   const run = async (method: SignInMethod, errorMessage: string, action: () => Promise<void>) => {
     try {
@@ -26,7 +34,7 @@ export function useSignInActions() {
     }
   };
 
-  const withApple = () => run("apple", t("authErrorMessage"), signInWithApple);
+  const withApple = () => run("apple", t("authAppleErrorMessage"), signInWithApple);
 
   const withGoogle = async () => {
     if (!isConvexConfigured) {
@@ -40,5 +48,5 @@ export function useSignInActions() {
   const withEmail = (email: string, password: string) =>
     run("email", t("obSignupEmailError"), () => signInWithEmail(email, password));
 
-  return { pending, withApple, withGoogle, withEmail };
+  return { pending, appleAvailable, withApple, withGoogle, withEmail };
 }

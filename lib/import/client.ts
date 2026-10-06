@@ -1,7 +1,8 @@
 import { api } from "@/convex/_generated/api";
+import { track } from "@/lib/analytics/posthog";
 import { convex, getServerError } from "@/lib/convex/client";
 
-import { ImportRequestError } from "./errors";
+import { DAILY_IMPORT_LIMIT, ImportRequestError } from "./errors";
 import type { ImportCreateInput, ImportCreateResponse, ImportStatusResponse } from "./types";
 
 /** Starts an import and turns a server rejection into an error that carries its code. */
@@ -12,11 +13,18 @@ async function startImport(input: ImportCreateInput): Promise<ImportCreateRespon
       sharedText: input.shared_text,
       entrypoint: input.entrypoint,
     });
+    track("import_started", { entrypoint: input.entrypoint ?? null, already_running: created.deduplicated });
     return created as ImportCreateResponse;
   } catch (error) {
     const rejected = getServerError(error);
-    if (rejected) throw new ImportRequestError(rejected.message, rejected.code);
-    throw error;
+    if (!rejected) throw error;
+    // Hitting the daily limit is its own event: it is the moment a paid plan would be offered.
+    if (rejected.code === DAILY_IMPORT_LIMIT) {
+      track("import_limit_reached", { limit: typeof rejected.details.limit === "number" ? rejected.details.limit : null });
+    } else {
+      track("import_rejected", { code: rejected.code });
+    }
+    throw new ImportRequestError(rejected.message, rejected.code, rejected.details);
   }
 }
 

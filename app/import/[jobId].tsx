@@ -1,17 +1,26 @@
 import { LocalizedText as Text } from "@/components/LocalizedText";
+import Feather from "@expo/vector-icons/Feather";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Animated, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Animated, Linking, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { ImportLoader } from "@/components/import/ImportLoader";
 import { CheckBox } from "@/components/wasfa/CheckBox";
+import { track } from "@/lib/analytics/posthog";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { getImportJob } from "@/lib/import/client";
 import { getJobFailureTranslationKey } from "@/lib/import/errors";
 import { shouldRedirectImportHome } from "@/lib/import/navigation";
-import { wasfaColors } from "@/lib/theme/wasfa";
+import { setWatchedImportJob } from "@/lib/notifications/importEvents";
+import {
+  getNotificationPermission,
+  requestNotificationPermission,
+  type NotificationPermission,
+} from "@/lib/notifications/native";
+import { syncNotifications } from "@/lib/notifications/sync";
+import { wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
 
 const POLL_INTERVAL_MS = 2500;
 
@@ -96,7 +105,30 @@ export default function ImportJobScreen() {
   // order and unknown stages map to nothing, so the checklist never steps backwards.
   const [reachedStep, setReachedStep] = useState(0);
   const failureNotifiedRef = useRef(false);
+  const outcomeRecordedRef = useRef(false);
   const progress = useRef(new Animated.Value(0)).current;
+  const [notifications, setNotifications] = useState<NotificationPermission | null>(null);
+
+  // While this screen shows the import, its result needs no notification.
+  useEffect(() => {
+    setWatchedImportJob(jobId || null);
+    return () => setWatchedImportJob(null);
+  }, [jobId]);
+
+  // The first import is where the app asks to notify: the reason is on the screen.
+  useEffect(() => {
+    let active = true;
+    async function prepareNotifications() {
+      let permission = await getNotificationPermission();
+      if (permission === "undetermined") permission = await requestNotificationPermission();
+      if (active) setNotifications(permission);
+      if (permission === "granted") void syncNotifications(language);
+    }
+    void prepareNotifications();
+    return () => {
+      active = false;
+    };
+  }, [language]);
 
   const pollOnce = useCallback(async () => {
     if (!jobId) return;
@@ -106,6 +138,21 @@ export default function ImportJobScreen() {
       setCurrentStage(response.job.current_stage);
       const stepIndex = getChecklistStepIndex(response.job.current_stage);
       setReachedStep((prev) => Math.max(prev, stepIndex));
+      if (shouldRedirectImportHome(response.job.status) && !outcomeRecordedRef.current) {
+        outcomeRecordedRef.current = true;
+        const seconds = Math.round(
+          (Date.parse(response.job.updated_at) - Date.parse(response.job.created_at)) / 1000
+        );
+        if (response.job.status === "failed") {
+          track("import_failed", {
+            platform: response.job.source_platform,
+            code: response.job.error_code,
+            seconds,
+          });
+        } else {
+          track("import_completed", { platform: response.job.source_platform, seconds });
+        }
+      }
       if (response.job.status === "failed" && !failureNotifiedRef.current) {
         failureNotifiedRef.current = true;
         Alert.alert(t("importFailedTitle"), t(getJobFailureTranslationKey(response.job.error_code)));
@@ -125,7 +172,9 @@ export default function ImportJobScreen() {
 
   useEffect(() => {
     if (shouldRedirectImportHome(status)) {
-      router.replace("/(tabs)");
+      // Back to the tabs that are already open; they are only created here when
+      // the app was launched by the share itself.
+      router.dismissTo("/(tabs)");
     }
   }, [status]);
 
@@ -192,6 +241,32 @@ export default function ImportJobScreen() {
           );
         })}
       </View>
+
+      {notifications === "granted" || notifications === "denied" ? (
+        <View style={styles.notifyCard}>
+          <View style={styles.notifyRow}>
+            <Feather name="bell" size={18} color={wasfaColors.primary} />
+            <Text style={[styles.notifyText, { writingDirection }]}>
+              {t(notifications === "granted" ? "importNotifyLeave" : "importNotifyOff")}
+            </Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.notifyButton, pressed && styles.pressed]}
+            onPress={() => {
+              if (notifications === "granted") {
+                router.dismissTo("/(tabs)");
+              } else {
+                void Linking.openSettings();
+              }
+            }}
+          >
+            <Text style={styles.notifyButtonText}>
+              {t(notifications === "granted" ? "importNotifyKeepBrowsing" : "importNotifyOpenSettings")}
+            </Text>
+          </Pressable>
+        </View>
+      ) : null}
     </ScrollView>
   );
 }
@@ -257,5 +332,45 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     color: wasfaColors.ink,
     textAlign: "left",
+  },
+  notifyCard: {
+    alignSelf: "stretch",
+    marginTop: 8,
+    padding: 14,
+    gap: 12,
+    borderRadius: 16,
+    backgroundColor: wasfaColors.primarySoft,
+    borderWidth: 1,
+    borderColor: wasfaColors.primarySoftBorder,
+  },
+  notifyRow: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: 10,
+  },
+  notifyText: {
+    flex: 1,
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: "600",
+    color: wasfaColors.ink,
+    textAlign: "left",
+  },
+  notifyButton: {
+    height: 44,
+    borderRadius: wasfaRadius.pill,
+    backgroundColor: wasfaColors.surface,
+    borderWidth: 1.5,
+    borderColor: wasfaColors.primarySoftBorder,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  notifyButtonText: {
+    fontSize: 15,
+    fontWeight: "800",
+    color: wasfaColors.primaryDark,
+  },
+  pressed: {
+    opacity: 0.7,
   },
 });

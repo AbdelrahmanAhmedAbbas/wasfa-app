@@ -16,13 +16,19 @@ export const convex = new ConvexReactClient(convexUrl || "https://not-configured
   unsavedChangesWarning: false,
 });
 
-/** The code and message of an error a server function raised on purpose, or null for any other failure. */
-export function getServerError(error: unknown): { code: string | null; message: string } | null {
+/**
+ * The code and message of an error a server function raised on purpose, with anything
+ * else it sent along, or null for any other failure.
+ */
+export function getServerError(
+  error: unknown
+): { code: string | null; message: string; details: Record<string, unknown> } | null {
   if (!(error instanceof ConvexError)) return null;
-  const data = error.data as { code?: unknown; message?: unknown } | string | null;
-  if (typeof data === "string") return { code: null, message: data };
+  const data = error.data as Record<string, unknown> | string | null;
+  if (typeof data === "string") return { code: null, message: data, details: {} };
   return {
     code: typeof data?.code === "string" ? data.code : null,
     message: typeof data?.message === "string" ? data.message : "Request failed.",
+    details: data ?? {},
   };
 }

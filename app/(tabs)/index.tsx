@@ -3,8 +3,8 @@ import { useImportSheet } from "@/components/import/ImportSheetContext";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { PhotoScrim } from "@/components/wasfa/PhotoScrim";
 import Feather from "@expo/vector-icons/Feather";
-import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -38,6 +38,7 @@ import {
   type RecipeFilters,
 } from "@/lib/home/recipe-filters";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { subscribeToFinishedImports } from "@/lib/notifications/importEvents";
 import {
   assignRecipeToFolder,
   createRecipeFolder,
@@ -135,9 +136,20 @@ export default function HomeScreen() {
     }
   }, [selectedFolderId, t]);
 
-  useEffect(() => {
-    void loadHomeData({ showSpinner: true });
-  }, [loadHomeData]);
+  // The tabs stay open under an import or a recipe, so the library reloads each
+  // time this screen comes back into view; only a first load or a folder change
+  // shows the spinner.
+  const loadedFolderRef = useRef<string | null | undefined>(undefined);
+  useFocusEffect(
+    useCallback(() => {
+      const showSpinner = loadedFolderRef.current !== selectedFolderId;
+      loadedFolderRef.current = selectedFolderId;
+      void loadHomeData({ showSpinner });
+    }, [loadHomeData, selectedFolderId])
+  );
+
+  // An import the user left running adds its recipe while this screen is already in view.
+  useEffect(() => subscribeToFinishedImports(() => void loadHomeData()), [loadHomeData]);
 
   const handleRefreshHome = useCallback(() => {
     void loadHomeData({ showRefresh: true });

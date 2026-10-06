@@ -7,13 +7,18 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 
 import { createShareImport } from "@/lib/import/client";
-import { getImportErrorCode, getImportErrorTranslationKey } from "@/lib/import/errors";
+import {
+  fillImportLimitMessage,
+  getDailyImportLimit,
+  getImportErrorCode,
+  getImportErrorTranslationKey,
+} from "@/lib/import/errors";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
 
 export default function ShareImportEntryScreen() {
-  const { isRTL, t } = useLanguage();
+  const { isRTL, language, t } = useLanguage();
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     url?: string;
@@ -28,6 +33,8 @@ export default function ShareImportEntryScreen() {
   const [submittingManual, setSubmittingManual] = useState(false);
 
   function describeImportError(error: unknown, fallback: string): string {
+    const dailyLimit = getDailyImportLimit(error);
+    if (dailyLimit) return fillImportLimitMessage(t("importErrorDailyLimit"), dailyLimit, language);
     const localizedKey = getImportErrorTranslationKey(getImportErrorCode(error));
     if (localizedKey) return t(localizedKey);
     return error instanceof Error ? error.message : fallback;
@@ -183,7 +190,7 @@ export default function ShareImportEntryScreen() {
       <Pressable
         accessibilityRole="button"
         style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
-        onPress={() => router.replace("/(tabs)")}
+        onPress={() => router.dismissTo("/(tabs)")}
       >
         <Text style={styles.secondaryButtonText}>{t("backToHome")}</Text>
       </Pressable>

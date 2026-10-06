@@ -73,7 +73,7 @@ export default function LoginScreen() {
   const { user, loading } = useAuth();
   const { language, isRTL, setLanguage, t } = useLanguage();
   const insets = useSafeAreaInsets();
-  const { pending, withApple, withGoogle, withEmail } = useSignInActions();
+  const { pending, appleAvailable, withApple, withGoogle, withEmail } = useSignInActions();
   const [emailOpen, setEmailOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -260,16 +260,18 @@ export default function LoginScreen() {
           </Animated.View>
         ) : (
           <View key="providers" style={styles.actions}>
-            <Animated.View entering={FadeInDown.delay(200).duration(420)}>
-              <AuthButton
-                tone="dark"
-                label={t("obSignupApple")}
-                icon={<Ionicons name="logo-apple" size={21} color="#FFFFFF" style={styles.appleMark} />}
-                loading={pending === "apple"}
-                disabled={busy}
-                onPress={() => void withApple()}
-              />
-            </Animated.View>
+            {appleAvailable ? (
+              <Animated.View entering={FadeInDown.delay(200).duration(420)}>
+                <AuthButton
+                  tone="dark"
+                  label={t("obSignupApple")}
+                  icon={<Ionicons name="logo-apple" size={21} color="#FFFFFF" style={styles.appleMark} />}
+                  loading={pending === "apple"}
+                  disabled={busy}
+                  onPress={() => void withApple()}
+                />
+              </Animated.View>
+            ) : null}
             <Animated.View entering={FadeInDown.delay(270).duration(420)}>
               <AuthButton
                 tone="light"

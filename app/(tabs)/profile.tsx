@@ -4,9 +4,11 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   TextInput,
   View,
 } from "react-native";
@@ -19,6 +21,13 @@ import { api } from "@/convex/_generated/api";
 import { convex, getServerError } from "@/lib/convex/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import {
+  Notifications,
+  getNotificationPermission,
+  requestNotificationPermission,
+} from "@/lib/notifications/native";
+import { getDailyReminderEnabled, setDailyReminderEnabled } from "@/lib/notifications/reminders";
+import { syncNotifications } from "@/lib/notifications/sync";
 import type { GlyphName } from "@/lib/theme/glyphs";
 import { dietImages, onboardingImages } from "@/lib/theme/onboarding";
 import { getTabBarClearance, wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
@@ -75,6 +84,8 @@ export default function ProfileScreen() {
   const [preferences, setPreferences] = useState<RecipePreferences>(EMPTY_RECIPE_PREFERENCES);
   const [pendingSaves, setPendingSaves] = useState(0);
   const [dislikeDraft, setDislikeDraft] = useState("");
+  // On only when the user wants the reminder and the phone allows the app to show it.
+  const [dailyReminder, setDailyReminder] = useState(false);
   // Quick taps each build on the latest choice, and saves run one at a time.
   const latestPreferences = useRef(preferences);
   const saveQueue = useRef<Promise<void>>(Promise.resolve());
@@ -97,6 +108,33 @@ export default function ProfileScreen() {
       isMounted = false;
     };
   }, [user?.id]);
+
+  useEffect(() => {
+    let isMounted = true;
+    void Promise.all([getDailyReminderEnabled(), getNotificationPermission()]).then(([enabled, permission]) => {
+      if (isMounted) setDailyReminder(enabled && permission === "granted");
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const toggleDailyReminder = async (enabled: boolean) => {
+    if (enabled) {
+      let permission = await getNotificationPermission();
+      if (permission === "undetermined") permission = await requestNotificationPermission();
+      if (permission !== "granted") {
+        Alert.alert(t("notificationsOffTitle"), t("notificationsOffMessage"), [
+          { text: t("cancel"), style: "cancel" },
+          { text: t("importNotifyOpenSettings"), onPress: () => void Linking.openSettings() },
+        ]);
+        return;
+      }
+    }
+    setDailyReminder(enabled);
+    await setDailyReminderEnabled(enabled);
+    await syncNotifications(language);
+  };
 
   const updatePreferences = (partial: Partial<RecipePreferences>) => {
     const userId = user?.id;
@@ -311,6 +349,19 @@ export default function ProfileScreen() {
               ]}
             />
           </SettingRow>
+          {Notifications ? (
+            <>
+              <View style={styles.hairline} />
+              <SettingRow icon="alarm-clock" label={t("profileDailyReminder")} isRTL={isRTL}>
+                <Switch
+                  value={dailyReminder}
+                  onValueChange={(next) => void toggleDailyReminder(next)}
+                  trackColor={{ true: wasfaColors.primary, false: wasfaColors.line }}
+                  ios_backgroundColor={wasfaColors.line}
+                />
+              </SettingRow>
+            </>
+          ) : null}
         </View>
 
         {/* Onboarding answers */}
