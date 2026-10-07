@@ -196,6 +196,9 @@ export default function TabLayout() {
     <ImportSheetProvider>
       <Tabs
         tabBar={(props) => <CustomTabBar {...props} />}
+        // Tabs stay attached while they fade: detaching the faded-out one
+        // sometimes left the tab coming back blank until it was left and reopened.
+        detachInactiveScreens={false}
         screenOptions={{
           headerShown: false,
           animation: "fade",

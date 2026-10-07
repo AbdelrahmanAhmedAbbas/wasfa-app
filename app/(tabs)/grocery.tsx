@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import {
-  ActivityIndicator,
   Alert,
   Image,
   Pressable,
@@ -14,6 +13,7 @@ import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { PriceEstimate } from "@/components/grocery/PriceEstimate";
+import { ImportLoader } from "@/components/import/ImportLoader";
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { FoodIconTile, Glyph } from "@/components/wasfa/Glyph";
 import Feather from "@expo/vector-icons/Feather";
@@ -141,7 +141,7 @@ export default function GroceryScreen() {
     return (
       <ScreenTransition>
         <View style={styles.centerContainer}>
-          <ActivityIndicator color={wasfaColors.primary} />
+          <ImportLoader />
           <Text style={styles.loadingText}>{t("loadingShoppingList")}</Text>
         </View>
       </ScreenTransition>
@@ -293,11 +293,14 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: wasfaColors.surface,
-    gap: 10,
+    paddingHorizontal: 32,
+    gap: 18,
   },
   loadingText: {
-    color: wasfaColors.muted,
-    fontSize: 14,
+    color: wasfaColors.ink,
+    fontSize: 17,
+    fontWeight: "800",
+    textAlign: "center",
   },
   eyebrow: {
     fontSize: 15,

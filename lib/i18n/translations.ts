@@ -236,7 +236,7 @@ const en = {
 
   shoppingListTitle: "Shopping list",
   shoppingListSubtitle: "Ingredients are grouped together by units. Tap them to check them off!",
-  loadingShoppingList: "Loading shopping list...",
+  loadingShoppingList: "Putting your grocery list together…",
   noItemsYet: "No items yet",
   noItemsHint: "Open a recipe and tap \"Add To Shopping List\".",
 
@@ -1056,7 +1056,7 @@ const ar: Record<TranslationKey, string> = {
 
   shoppingListTitle: "قائمة المشتريات",
   shoppingListSubtitle: "المكونات مجمعة حسب الوحدات. اضغط عليها لتحديدها!",
-  loadingShoppingList: "جارٍ تحميل قائمة المشتريات...",
+  loadingShoppingList: "نجهّز قائمة مشترياتك…",
   noItemsYet: "لا توجد عناصر بعد",
   noItemsHint: "افتح وصفة واضغط \"أضف إلى قائمة المشتريات\".",
 
