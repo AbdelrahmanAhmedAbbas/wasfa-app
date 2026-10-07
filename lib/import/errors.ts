@@ -69,6 +69,30 @@ export function fillImportLimitMessage(
     .replace("{time}", values.resetsAt ? formatTimeOfDay(values.resetsAt, language) : "");
 }
 
+/**
+ * The line that says how many of today's imports are left, or when the next one opens
+ * up once they are used. Null on a plan with no limit, and while the count is unknown.
+ */
+export function getImportAllowanceNote(
+  allowance: { limit: number | null; remaining: number | null; resets_at: number | null } | null | undefined,
+  t: (key: TranslationKey) => string,
+  language: AppLanguage
+): string | null {
+  if (!allowance || allowance.limit === null || allowance.remaining === null) return null;
+  if (allowance.remaining === 0) {
+    return fillImportLimitMessage(
+      t("importSheetNoneLeft"),
+      { limit: allowance.limit, resetsAt: allowance.resets_at },
+      language
+    );
+  }
+  return fillImportLimitMessage(
+    t("importSheetLeftToday"),
+    { count: allowance.remaining, limit: allowance.limit },
+    language
+  );
+}
+
 export function getImportErrorTranslationKey(code: string | null | undefined): TranslationKey | null {
   if (!code) return null;
   return Object.hasOwn(LOCALIZED_IMPORT_ERRORS, code) ? LOCALIZED_IMPORT_ERRORS[code] : null;

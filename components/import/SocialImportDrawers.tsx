@@ -2,9 +2,8 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import Feather from "@expo/vector-icons/Feather";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import FontAwesome5 from "@expo/vector-icons/FontAwesome5";
-import { useQuery } from "convex/react";
 import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Image,
   Keyboard,
@@ -17,9 +16,9 @@ import {
 
 import { BottomDrawer } from "@/components/ui/BottomDrawer";
 import { CtaButton } from "@/components/wasfa/CtaButton";
-import { api } from "@/convex/_generated/api";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
-import { fillImportLimitMessage } from "@/lib/import/errors";
+import { getImportAllowanceNote } from "@/lib/import/errors";
+import { useImportAllowance } from "@/lib/import/useImportAllowance";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
@@ -125,28 +124,9 @@ export function SocialImportDrawers({
   const [link, setLink] = useState("");
   const trimmedLink = link.trim();
 
-  // What is left of the day's imports, counted from the moment the sheet opens. It is
-  // only a note: the server decides when a link is sent, so nothing here blocks one.
-  const [countedFrom, setCountedFrom] = useState<number | null>(null);
-  useEffect(() => {
-    setCountedFrom(isPrimaryVisible ? Date.now() : null);
-  }, [isPrimaryVisible]);
-  const allowance = useQuery(api.imports.allowance, countedFrom ? { now: countedFrom } : "skip");
+  const allowance = useImportAllowance(isPrimaryVisible);
   const noneLeft = allowance?.remaining === 0;
-  const allowanceNote =
-    !allowance || allowance.limit === null || allowance.remaining === null
-      ? null
-      : noneLeft
-        ? fillImportLimitMessage(
-            t("importSheetNoneLeft"),
-            { limit: allowance.limit, resetsAt: allowance.resets_at },
-            language
-          )
-        : fillImportLimitMessage(
-            t("importSheetLeftToday"),
-            { count: allowance.remaining, limit: allowance.limit },
-            language
-          );
+  const allowanceNote = getImportAllowanceNote(allowance, t, language);
 
   const handleImportLink = () => {
     if (!trimmedLink) return;

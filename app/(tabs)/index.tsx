@@ -39,6 +39,7 @@ import {
   type RecipeFilters,
 } from "@/lib/home/recipe-filters";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { useImportAllowance } from "@/lib/import/useImportAllowance";
 import { subscribeToFinishedImports } from "@/lib/notifications/importEvents";
 import {
   assignRecipeToFolder,
@@ -54,6 +55,10 @@ import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { getTabBarClearance, wasfaColors } from "@/lib/theme/wasfa";
 import { FolderNameDrawer } from "@/components/folders/FolderNameDrawer";
+import {
+  IMPORT_ALLOWANCE_CARD_OVERLAP,
+  ImportAllowanceCard,
+} from "@/components/home/ImportAllowanceCard";
 import { FolderContextMenu } from "@/components/folders/FolderContextMenu";
 import { AddToFolderSheet } from "@/components/recipes/AddToFolderSheet";
 import {
@@ -148,6 +153,17 @@ export default function HomeScreen() {
       void loadHomeData({ showSpinner });
     }, [loadHomeData, selectedFolderId])
   );
+
+  const [homeFocused, setHomeFocused] = useState(false);
+  useFocusEffect(
+    useCallback(() => {
+      setHomeFocused(true);
+      return () => setHomeFocused(false);
+    }, [])
+  );
+  const importAllowance = useImportAllowance(homeFocused);
+  // A plan with no limit has nothing to count.
+  const showImportAllowance = importAllowance != null && importAllowance.limit !== null;
 
   // An import the user left running adds its recipe while this screen is already in view.
   useEffect(() => subscribeToFinishedImports(() => void loadHomeData()), [loadHomeData]);
@@ -475,7 +491,13 @@ export default function HomeScreen() {
             />
           }
         >
-          <View style={[styles.hero, { paddingTop: insets.top + 18 }]}>
+          <View
+            style={[
+              styles.hero,
+              showImportAllowance && styles.heroWithImportAllowance,
+              { paddingTop: insets.top + 18 },
+            ]}
+          >
             <Image
               source={onboardingImages.mascot}
               resizeMode="contain"
@@ -547,6 +569,10 @@ export default function HomeScreen() {
               </Pressable>
             </View>
           </View>
+
+          {showImportAllowance ? (
+            <ImportAllowanceCard allowance={importAllowance} onPress={importSheet.open} />
+          ) : null}
 
           {error ? (
             <Pressable style={styles.errorCard} onPress={() => void loadHomeData({ showSpinner: true })}>
@@ -754,6 +780,10 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
+  },
+  // Room for the imports card, which sits across the hero's bottom edge.
+  heroWithImportAllowance: {
+    paddingBottom: 24 + IMPORT_ALLOWANCE_CARD_OVERLAP,
   },
   searchRow: {
     flex: 1,
