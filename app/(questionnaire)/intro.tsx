@@ -18,6 +18,7 @@ import { headingStyle } from "@/components/onboarding/text-styles";
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 import { Glyph } from "@/components/wasfa/Glyph";
+import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { demoReel } from "@/lib/onboarding/demo-data";
@@ -64,6 +65,7 @@ const COPY_AND_FOOTER_HEIGHT = 360;
 
 export default function IntroQuestionnaireScreen() {
   const { isRTL, t } = useLanguage();
+  const { user } = useAuth();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const [page, setPage] = useState(0);
@@ -244,7 +246,7 @@ export default function IntroQuestionnaireScreen() {
           ))}
         </View>
         <CtaButton label={isLastPage ? t("obStart") : t("onNext")} onPress={handleCta} />
-        {isLastPage ? (
+        {isLastPage && !user ? (
           <Pressable
             accessibilityRole="button"
             style={styles.secondary}

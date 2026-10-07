@@ -1,6 +1,7 @@
 import Feather from "@expo/vector-icons/Feather";
 import FontAwesome from "@expo/vector-icons/FontAwesome";
 import Ionicons from "@expo/vector-icons/Ionicons";
+import { useIsFocused } from "@react-navigation/native";
 import { router } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useState } from "react";
@@ -27,6 +28,7 @@ import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
 import { getOnboardingAnswers, type OnboardingAnswers } from "@/lib/onboarding/answers";
 import { DIET_OPTIONS, getHouseholdOption } from "@/lib/onboarding/flow";
+import { getSignedUpStart } from "@/lib/onboarding/sign-in-start";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors } from "@/lib/theme/wasfa";
 
@@ -64,21 +66,41 @@ const REVIEWS: Review[] = [
 ];
 
 export default function SignupAuthScreen() {
-  const { user, loading } = useAuth();
+  const { user, loading, completeOnboarding } = useAuth();
   const { isRTL, t } = useLanguage();
   const insets = useSafeAreaInsets();
+  const isFocused = useIsFocused();
   const { pending, appleAvailable, withApple, withGoogle, withEmail } = useSignInActions();
-  const isLoading = pending !== null;
+  // With the login screen open on top, that screen handles the sign-in.
+  const signedInId = isFocused && !loading && user ? user.id : null;
+  const isLoading = pending !== null || signedInId !== null;
   const [answers, setAnswers] = useState<OnboardingAnswers | null>(null);
   const [emailOpen, setEmailOpen] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
+  // A new account carries on to the offer; one that already has a profile is
+  // coming back and goes straight into the app. If the account cannot be
+  // checked (no connection) it carries on, and setup leaves a profile it
+  // finds alone.
   useEffect(() => {
-    if (!loading && user) {
-      router.replace("/(paywall)/offer");
-    }
-  }, [loading, user]);
+    if (!signedInId) return;
+    let active = true;
+
+    void getSignedUpStart(signedInId)
+      .catch((error) => {
+        console.error("Failed to check the account after sign-up:", error);
+        return { returning: false, start: "/(paywall)/offer" as const };
+      })
+      .then(async ({ returning, start }) => {
+        if (returning) await completeOnboarding();
+        if (active) router.replace(start);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [signedInId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -254,6 +276,17 @@ export default function SignupAuthScreen() {
           </Pressable>
         )}
 
+        <Pressable
+          accessibilityRole="button"
+          hitSlop={8}
+          style={styles.loginRow}
+          disabled={isLoading}
+          onPress={() => router.push({ pathname: "/(auth)/login", params: { from: "signup" } })}
+        >
+          <Text style={styles.loginText}>{t("signupHaveAccount")}</Text>
+          <Text style={styles.loginLink}>{t("signupLogin")}</Text>
+        </Pressable>
+
         <Text style={styles.terms}>{t("obTerms")}</Text>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -415,6 +448,22 @@ const styles = StyleSheet.create({
   },
   emailForm: {
     gap: 10,
+  },
+  loginRow: {
+    flexDirection: "row",
+    alignSelf: "center",
+    alignItems: "center",
+    gap: 5,
+    minHeight: 24,
+  },
+  loginText: {
+    fontSize: 14,
+    color: wasfaColors.muted,
+  },
+  loginLink: {
+    fontSize: 14,
+    fontWeight: "800",
+    color: wasfaColors.cta,
   },
   input: {
     height: 52,

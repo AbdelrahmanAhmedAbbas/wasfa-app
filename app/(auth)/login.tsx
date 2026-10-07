@@ -1,7 +1,7 @@
 import Feather from "@expo/vector-icons/Feather";
 import Ionicons from "@expo/vector-icons/Ionicons";
 import * as ExpoFont from "expo-font";
-import { router } from "expo-router";
+import { router, useLocalSearchParams } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
@@ -28,7 +28,11 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { useSignInActions } from "@/lib/auth/useSignInActions";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { t as translate, type AppLanguage } from "@/lib/i18n/translations";
-import { getSignedInStart } from "@/lib/onboarding/sign-in-start";
+import {
+  getSignedInStart,
+  getSignedUpStart,
+  restartOnboarding,
+} from "@/lib/onboarding/sign-in-start";
 import { brandFontFamily } from "@/lib/theme/fonts";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaShadow } from "@/lib/theme/wasfa";
@@ -70,8 +74,12 @@ function AuthButton({ label, icon, tone, loading, disabled, onPress }: AuthButto
 }
 
 export default function LoginScreen() {
-  const { user, loading } = useAuth();
+  const { user, loading, completeOnboarding } = useAuth();
   const { language, isRTL, setLanguage, t } = useLanguage();
+  // Opened from the sign-up screen, at the end of an onboarding run on this
+  // device: signing in here counts as signing up there.
+  const { from } = useLocalSearchParams<{ from?: string }>();
+  const afterOnboarding = from === "signup";
   const insets = useSafeAreaInsets();
   const { pending, appleAvailable, withApple, withGoogle, withEmail } = useSignInActions();
   const [emailOpen, setEmailOpen] = useState(false);
@@ -91,7 +99,14 @@ export default function LoginScreen() {
     if (!signedInId) return;
     let active = true;
 
-    void getSignedInStart(signedInId)
+    const check = afterOnboarding
+      ? getSignedUpStart(signedInId).then(async (signedUp) => {
+          if (signedUp.returning) await completeOnboarding();
+          return signedUp.start;
+        })
+      : getSignedInStart(signedInId);
+
+    void check
       .catch((error): "/" => {
         console.error("Failed to check the account after sign-in:", error);
         return "/";
@@ -120,6 +135,17 @@ export default function LoginScreen() {
 
   const submitEmail = () => {
     if (canSubmitEmail) void withEmail(email, password);
+  };
+
+  // Back to the sign-up screen this was opened from. Otherwise a fresh run:
+  // whatever an earlier one left on this device belongs to someone else.
+  const createAccount = async () => {
+    if (afterOnboarding) {
+      router.back();
+      return;
+    }
+    await restartOnboarding();
+    router.replace("/(questionnaire)/language");
   };
 
   // The switch is labelled in the language it switches to, in that language's font.
@@ -316,7 +342,7 @@ export default function LoginScreen() {
               hitSlop={8}
               style={styles.footerRow}
               disabled={busy}
-              onPress={() => router.replace("/(questionnaire)/intro")}
+              onPress={() => void createAccount()}
             >
               <Text style={styles.footerText}>{t("loginNew")}</Text>
               <Text style={[styles.footerLink, styles.footerLinkCta]}>{t("loginCreate")}</Text>

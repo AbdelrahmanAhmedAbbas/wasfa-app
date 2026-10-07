@@ -31,6 +31,40 @@ export function getResumeRoute(step: number): QuestionnaireRoute | null {
   return STEP_ROUTES[step];
 }
 
+export type LaunchState = {
+  signedIn: boolean;
+  /** Setup has been finished on this device. */
+  onboardingDone: boolean;
+  questionnaireDone: boolean;
+  questionnaireStep: number;
+  paywallSeen: boolean;
+};
+
+export type LaunchRoute = QuestionnaireRoute | "login" | "paywall" | "app";
+
+/**
+ * The screen the app opens on, from what is saved on the device. Sign up is
+ * never one of them: it is only reached by walking on from the demo.
+ */
+export function getLaunchRoute(state: LaunchState): LaunchRoute {
+  const resume = getResumeRoute(state.questionnaireStep);
+
+  if (state.signedIn) {
+    if (state.onboardingDone) return "app";
+    // A new account that signed in on the login screen answers the questions
+    // afterwards, so it carries on from the screen it stopped at.
+    if (!state.questionnaireDone) return resume ?? "language";
+    return state.paywallSeen ? "ready" : "paywall";
+  }
+
+  // Someone has finished setting up on this device before, so they are
+  // coming back (signed out, or an expired session), not signing up.
+  if (state.onboardingDone) return "login";
+  if (state.questionnaireDone) return "demo";
+  // Setup needs an account, so without one it is never resumed.
+  return resume === null || resume === "ready" ? "language" : resume;
+}
+
 type ChatOption<Id extends string> = {
   id: Id;
   labelKey: TranslationKey;

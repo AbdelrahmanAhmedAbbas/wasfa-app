@@ -44,9 +44,10 @@ export default function ReadyQuestionnaireScreen() {
   useEffect(() => {
     if (loading || hasStarted.current) return;
 
-    // Setup syncs to the account, so a signed-out visitor is sent to sign up first.
+    // Setup syncs to the account, so without one the opening screen picks
+    // where to go instead.
     if (!user) {
-      router.replace("/(auth)/signup");
+      router.replace("/");
       return;
     }
 
@@ -62,14 +63,14 @@ export default function ReadyQuestionnaireScreen() {
       const answers = await getOnboardingAnswers();
 
       await wait(STEP_DELAY);
-      if (hasQuestionnaireAnswers(answers)) {
-        // Only the chat answers are written, so settings chosen earlier
-        // (units, nutrition) survive a repeat of the onboarding.
-        await saveOnboardingProfile(userId, pickChatAnswers(answers));
-      } else if ((await getOnboardingProfile(userId)) === null) {
-        // Someone who skipped the chat to sign in has no answers on this
-        // device: an existing profile is kept, a new account gets an empty one.
-        await saveOnboardingProfile(userId, {});
+      // An account that already has a profile is coming back and keeps it,
+      // whatever was answered on this device. A new account gets the chat
+      // answers, or an empty profile when the chat was skipped.
+      if ((await getOnboardingProfile(userId)) === null) {
+        await saveOnboardingProfile(
+          userId,
+          hasQuestionnaireAnswers(answers) ? pickChatAnswers(answers) : {}
+        );
       }
       if (isMounted.current) setDoneCount(1);
 

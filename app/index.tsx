@@ -5,13 +5,25 @@ import { Pressable, StyleSheet, View } from "react-native";
 
 import { SPLASH_BACKGROUND, SplashGather } from "@/components/splash/SplashGather";
 import { useAuth } from "@/lib/auth/AuthProvider";
-import { getResumeRoute } from "@/lib/onboarding/flow";
+import { getLaunchRoute, type LaunchRoute } from "@/lib/onboarding/flow";
 import {
   getOnboardingDone,
   getPaywallSeen,
   getQuestionnaireComplete,
   getQuestionnaireStep,
 } from "@/lib/onboarding/storage";
+
+const LAUNCH_HREFS: Record<LaunchRoute, Href> = {
+  app: "/(tabs)",
+  login: "/(auth)/login",
+  paywall: "/(paywall)/offer",
+  language: "/(questionnaire)/language",
+  intro: "/(questionnaire)/intro",
+  chat: "/(questionnaire)/chat",
+  kitchen: "/(questionnaire)/kitchen",
+  demo: "/(questionnaire)/demo",
+  ready: "/(questionnaire)/ready",
+};
 
 // The opening video is shown once per app launch; coming back to this screen
 // later (signing out, an expired session) skips it.
@@ -93,28 +105,16 @@ export default function IndexScreen() {
     return <View style={styles.screen} />;
   }
 
-  let destination: Href = "/(questionnaire)/ready";
-  if (user && hasCompletedOnboarding) {
-    destination = "/(tabs)";
-  } else if (!user && !flowState.questionnaireDone) {
-    destination = "/(questionnaire)/language";
-  } else if (!user && flowState.onboardingDone) {
-    // Someone has finished setting up on this device before, so they are
-    // coming back (signed out, or an expired session), not signing up.
-    destination = "/(auth)/login";
-  } else if (!user && flowState.questionnaireDone) {
-    destination = "/(auth)/signup";
-  } else if (user && !flowState.questionnaireDone) {
-    // A new account that signed in on the login screen answers the questions
-    // afterwards, so it carries on from the one it stopped at.
-    const resume = getResumeRoute(flowState.questionnaireStep);
-    if (resume === "chat") destination = "/(questionnaire)/chat";
-    else if (resume === "kitchen") destination = "/(questionnaire)/kitchen";
-    else if (resume === "demo") destination = "/(questionnaire)/demo";
-    else destination = "/(questionnaire)/ready";
-  } else if (user && !flowState.paywallSeen) {
-    destination = "/(paywall)/offer";
-  }
+  const destination =
+    LAUNCH_HREFS[
+      getLaunchRoute({
+        signedIn: !!user,
+        onboardingDone: user ? hasCompletedOnboarding : flowState.onboardingDone,
+        questionnaireDone: flowState.questionnaireDone,
+        questionnaireStep: flowState.questionnaireStep,
+        paywallSeen: flowState.paywallSeen,
+      })
+    ];
 
   // Keep the splash colour behind the redirect so the hand-off never flashes.
   return (
