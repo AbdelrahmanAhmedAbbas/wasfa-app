@@ -111,127 +111,20 @@ export function SocialImportDrawers({
   };
 
   return (
-    <>
-      <BottomDrawer
-        visible={isPrimaryVisible}
-        onClose={onClosePrimary}
-        dockToBottom
-        avoidKeyboard
-        showHandle={false}
-        sideInset={0}
-        sheetStyle={styles.sheet}
-        contentStyle={styles.sheetContent}
-      >
-        <View style={styles.handle} />
-        <View style={styles.headerRow}>
-          <View style={styles.headerTextWrap}>
-            <Text style={[styles.sheetTitle, { textAlign, writingDirection }]}>
-              {t("importRecipe")}
-            </Text>
-            <Text style={[styles.sheetSubtitle, { textAlign, writingDirection }]}>
-              {t("importSheetSubtitle")}
-            </Text>
-          </View>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("importSheetClose")}
-            onPress={onClosePrimary}
-            hitSlop={8}
-            style={styles.roundButton}
-          >
-            <Feather name="x" size={18} color={wasfaColors.ink} />
-          </Pressable>
-        </View>
-
-        {allowanceNote ? (
-          <Text
-            style={[styles.allowanceNote, noneLeft && styles.allowanceNoteNoneLeft, { textAlign, writingDirection }]}
-          >
-            {allowanceNote}
-          </Text>
-        ) : null}
-
-        <View style={styles.platformList}>
-          {PLATFORMS.map((platform) => {
-            const config = PLATFORM_CONFIG[platform];
-
-            return (
-              <Pressable
-                key={platform}
-                accessibilityRole="button"
-                style={({ pressed }) => [styles.platformRow, pressed && styles.pressed]}
-                onPress={() => onSelectPlatform(platform)}
-              >
-                <View
-                  style={[
-                    styles.platformIconWrap,
-                    { backgroundColor: config.iconBackground },
-                  ]}
-                >
-                  <PlatformIcon platform={platform} />
-                </View>
-
-                <View style={styles.platformTextWrap}>
-                  <Text style={[styles.platformTitle, { textAlign, writingDirection }]}>
-                    {t(config.titleKey)}
-                  </Text>
-                  <Text style={[styles.platformSubtitle, { textAlign, writingDirection }]}>
-                    {t(config.subtitleKey)}
-                  </Text>
-                </View>
-
-                <Feather
-                  name={isRTL ? "chevron-left" : "chevron-right"}
-                  size={20}
-                  color={wasfaColors.muted}
-                />
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.dividerRow}>
-          <View style={styles.dividerLine} />
-          <Text style={styles.dividerText}>{t("importSheetOrPaste")}</Text>
-          <View style={styles.dividerLine} />
-        </View>
-
-        <View style={styles.linkRow}>
-          <View style={styles.linkField}>
-            <Feather name="link" size={18} color={wasfaColors.muted} />
-            <TextInput
-              value={link}
-              onChangeText={setLink}
-              placeholder={t("importSheetLinkPlaceholder")}
-              placeholderTextColor={wasfaColors.muted}
-              style={styles.linkInput}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="url"
-              returnKeyType="go"
-              onSubmitEditing={handleImportLink}
-            />
-          </View>
-          <CtaButton
-            label={t("importSheetImport")}
-            onPress={handleImportLink}
-            disabled={!trimmedLink}
-            style={styles.linkButton}
-          />
-        </View>
-      </BottomDrawer>
-
+    // One sheet for both the list and a platform's guide: an iPhone will not put a
+    // second sheet over one that is already open, so the guide replaces the list in place.
+    <BottomDrawer
+      visible={isPrimaryVisible}
+      onClose={onClosePrimary}
+      dockToBottom
+      avoidKeyboard
+      showHandle={false}
+      sideInset={0}
+      sheetStyle={styles.sheet}
+      contentStyle={styles.sheetContent}
+    >
       {selectedPlatform ? (
-        <BottomDrawer
-          visible
-          onClose={onCloseGuide}
-          dockToBottom
-          showHandle={false}
-          sideInset={0}
-          backdropOpacity={0}
-          sheetStyle={styles.sheet}
-          contentStyle={styles.sheetContent}
-        >
+        <>
           <View style={styles.handle} />
           <View style={styles.headerRow}>
             <Pressable
@@ -246,6 +139,15 @@ export function SocialImportDrawers({
             <Text style={[styles.guideTitle, { textAlign, writingDirection }]}>
               {`${t("importGuideTitle")} · ${t(PLATFORM_CONFIG[selectedPlatform].titleKey)}`}
             </Text>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("importSheetClose")}
+              onPress={onClosePrimary}
+              hitSlop={8}
+              style={styles.roundButton}
+            >
+              <Feather name="x" size={18} color={wasfaColors.ink} />
+            </Pressable>
           </View>
 
           <ImportGuideSlides
@@ -254,9 +156,109 @@ export function SocialImportDrawers({
             platformName={t(PLATFORM_CONFIG[selectedPlatform].titleKey)}
             onPasteInstead={onCloseGuide}
           />
-        </BottomDrawer>
-      ) : null}
-    </>
+        </>
+      ) : (
+        <>
+          <View style={styles.handle} />
+          <View style={styles.headerRow}>
+            <View style={styles.headerTextWrap}>
+              <Text style={[styles.sheetTitle, { textAlign, writingDirection }]}>
+                {t("importRecipe")}
+              </Text>
+              <Text style={[styles.sheetSubtitle, { textAlign, writingDirection }]}>
+                {t("importSheetSubtitle")}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("importSheetClose")}
+              onPress={onClosePrimary}
+              hitSlop={8}
+              style={styles.roundButton}
+            >
+              <Feather name="x" size={18} color={wasfaColors.ink} />
+            </Pressable>
+          </View>
+
+          {allowanceNote ? (
+            <Text
+              style={[styles.allowanceNote, noneLeft && styles.allowanceNoteNoneLeft, { textAlign, writingDirection }]}
+            >
+              {allowanceNote}
+            </Text>
+          ) : null}
+
+          <View style={styles.platformList}>
+            {PLATFORMS.map((platform) => {
+              const config = PLATFORM_CONFIG[platform];
+
+              return (
+                <Pressable
+                  key={platform}
+                  accessibilityRole="button"
+                  style={({ pressed }) => [styles.platformRow, pressed && styles.pressed]}
+                  onPress={() => onSelectPlatform(platform)}
+                >
+                  <View
+                    style={[
+                      styles.platformIconWrap,
+                      { backgroundColor: config.iconBackground },
+                    ]}
+                  >
+                    <PlatformIcon platform={platform} />
+                  </View>
+
+                  <View style={styles.platformTextWrap}>
+                    <Text style={[styles.platformTitle, { textAlign, writingDirection }]}>
+                      {t(config.titleKey)}
+                    </Text>
+                    <Text style={[styles.platformSubtitle, { textAlign, writingDirection }]}>
+                      {t(config.subtitleKey)}
+                    </Text>
+                  </View>
+
+                  <Feather
+                    name={isRTL ? "chevron-left" : "chevron-right"}
+                    size={20}
+                    color={wasfaColors.muted}
+                  />
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>{t("importSheetOrPaste")}</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <View style={styles.linkRow}>
+            <View style={styles.linkField}>
+              <Feather name="link" size={18} color={wasfaColors.muted} />
+              <TextInput
+                value={link}
+                onChangeText={setLink}
+                placeholder={t("importSheetLinkPlaceholder")}
+                placeholderTextColor={wasfaColors.muted}
+                style={styles.linkInput}
+                autoCapitalize="none"
+                autoCorrect={false}
+                keyboardType="url"
+                returnKeyType="go"
+                onSubmitEditing={handleImportLink}
+              />
+            </View>
+            <CtaButton
+              label={t("importSheetImport")}
+              onPress={handleImportLink}
+              disabled={!trimmedLink}
+              style={styles.linkButton}
+            />
+          </View>
+      </>
+      )}
+    </BottomDrawer>
   );
 }
 
