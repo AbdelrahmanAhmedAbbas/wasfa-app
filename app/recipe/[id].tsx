@@ -2,7 +2,7 @@ import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import Feather from "@expo/vector-icons/Feather";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
-import { router, useLocalSearchParams } from "expo-router";
+import { Stack, router, useLocalSearchParams } from "expo-router";
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -17,6 +17,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { CookModeScreen } from "@/components/recipes/CookModeScreen";
 import { CheckBox } from "@/components/wasfa/CheckBox";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 import { FoodIconTile } from "@/components/wasfa/Glyph";
@@ -83,8 +84,6 @@ const colors = {
   ...wasfaColors,
   dangerSoft: "#FDECEC",
   dangerBorder: "#F6CFCF",
-  onDeepLine: "rgba(255,255,255,0.28)",
-  onDeepFill: "rgba(255,255,255,0.12)",
 };
 
 function formatDuration(recipe: RecipeDetail, t: (key: any) => string) {
@@ -200,6 +199,8 @@ export default function RecipeDetailsScreen() {
   // Root layout sets `direction`, so "left" is the logical start in both languages.
   const writingDirection = isRTL ? "rtl" : "ltr";
   const weekDayKeys = useMemo(() => getWeekDates(new Date()).map(toDateKey), []);
+
+  const closeCookMode = useCallback(() => setActiveView("ingredients"), []);
 
   const load = useCallback(async () => {
     if (!recipeId) {
@@ -515,13 +516,12 @@ export default function RecipeDetailsScreen() {
   const canDecreaseServings = Number.isFinite(servingCount) && servingCount > 1;
   const activeStepIndex = Math.min(cookStep, Math.max(localizedSteps.length - 1, 0));
   const activeStep = localizedSteps[activeStepIndex];
-  const formatStepOf = (index: number) =>
-    t("recipeStepOf")
-      .replace("{current}", String(index + 1))
-      .replace("{total}", String(localizedSteps.length));
+  const cookModeOpen = activeView === "cook" && Boolean(activeStep);
 
   return (
     <View style={styles.container}>
+      {/* A swipe from the screen's edge would otherwise leave the recipe mid-step. */}
+      <Stack.Screen options={{ gestureEnabled: !cookModeOpen }} />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 32 + insets.bottom }]}
@@ -643,7 +643,8 @@ export default function RecipeDetailsScreen() {
             />
           </View>
 
-          {activeView === "ingredients" ? (
+          {/* Cook mode covers the screen, so the recipe stays as it was underneath. */}
+          {activeView === "ingredients" || activeStep ? (
             <>
               {translating ? (
                 <View style={styles.translatingRow}>
@@ -760,56 +761,28 @@ export default function RecipeDetailsScreen() {
                 </View>
               </View>
             </>
-          ) : activeStep ? (
-            <>
-              <CookModeCard
-                item={activeStep}
-                index={activeStepIndex}
-                total={localizedSteps.length}
-                expanded={expandedTipSteps.has(activeStepIndex)}
-                isRTL={isRTL}
-                measurementSystem={preferences.measurementSystem}
-                eyebrow={formatStepOf(activeStepIndex)}
-                stepFallbackLabel={t("stepN").replace("{order}", String(activeStep.order || activeStepIndex + 1))}
-                durationLabel={
-                  typeof activeStep.duration_minutes === "number" && Number.isFinite(activeStep.duration_minutes)
-                    ? t("durationMinutes").replace("{count}", String(Math.round(activeStep.duration_minutes)))
-                    : null
-                }
-                tipLabel={t("tipLabel")}
-                minuteLabel={t("homeMinuteShort")}
-                backLabel={t("back")}
-                nextLabel={t("recipeNextStep")}
-                doneLabel={t("recipeDoneCooking")}
-                onToggleTips={() => toggleStepTips(activeStepIndex)}
-                onBack={() => setCookStep(activeStepIndex - 1)}
-                onNext={() => setCookStep(activeStepIndex + 1)}
-                onDone={() => {
-                  track("cooking_finished", { steps: localizedSteps.length });
-                  setCookStep(0);
-                  setActiveView("ingredients");
-                }}
-              />
-              <View style={styles.cookDots}>
-                {localizedSteps.map((_, index) => (
-                  <Pressable
-                    key={`dot-${index}`}
-                    accessibilityRole="button"
-                    accessibilityLabel={formatStepOf(index)}
-                    accessibilityState={{ selected: index === activeStepIndex }}
-                    hitSlop={8}
-                    onPress={() => setCookStep(index)}
-                    style={[styles.cookDot, index === activeStepIndex && styles.cookDotActive]}
-                  />
-                ))}
-              </View>
-            </>
           ) : (
             <Text style={[styles.emptyStepsText, { writingDirection }]}>{t("recipeNoSteps")}</Text>
           )}
         </View>
       </ScrollView>
 
+      {cookModeOpen ? (
+        <CookModeScreen
+          steps={localizedSteps}
+          index={activeStepIndex}
+          measurementSystem={preferences.measurementSystem}
+          tipsExpanded={expandedTipSteps.has(activeStepIndex)}
+          onToggleTips={() => toggleStepTips(activeStepIndex)}
+          onChangeIndex={setCookStep}
+          onClose={closeCookMode}
+          onDone={() => {
+            track("cooking_finished", { steps: localizedSteps.length });
+            setCookStep(0);
+            closeCookMode();
+          }}
+        />
+      ) : null}
     </View>
   );
 }
@@ -1065,123 +1038,6 @@ function StepInstructionCard({
             ) : null}
           </View>
         ) : null}
-      </View>
-    </View>
-  );
-}
-
-function CookModeCard({
-  item,
-  index,
-  total,
-  expanded,
-  isRTL,
-  measurementSystem,
-  eyebrow,
-  stepFallbackLabel,
-  durationLabel,
-  tipLabel,
-  minuteLabel,
-  backLabel,
-  nextLabel,
-  doneLabel,
-  onToggleTips,
-  onBack,
-  onNext,
-  onDone,
-}: {
-  item: RecipeStep;
-  index: number;
-  total: number;
-  expanded: boolean;
-  isRTL: boolean;
-  measurementSystem: MeasurementSystem | null;
-  eyebrow: string;
-  stepFallbackLabel: string;
-  durationLabel: string | null;
-  tipLabel: string;
-  minuteLabel: string;
-  backLabel: string;
-  nextLabel: string;
-  doneLabel: string;
-  onToggleTips: () => void;
-  onBack: () => void;
-  onNext: () => void;
-  onDone: () => void;
-}) {
-  const writingDirection = isRTL ? "rtl" : "ltr";
-  const isLast = index >= total - 1;
-  // The duration gets its own timer pill, so leave it out of the plain meta pills.
-  const metaItems = formatStepMetaItems({ ...item, duration_minutes: undefined }, measurementSystem, minuteLabel);
-  const tips = item.tips?.filter((tip) => tip.trim()) ?? [];
-
-  return (
-    <View style={styles.cookCard}>
-      <Text style={[styles.cookEyebrow, !isRTL && styles.latinCaps, { writingDirection }]}>{eyebrow}</Text>
-      <View style={styles.cookProgressTrack}>
-        <View style={[styles.cookProgressFill, { width: `${((index + 1) / total) * 100}%` }]} />
-      </View>
-      <Text style={[styles.cookTitle, { writingDirection }]}>
-        {getSafeStepTitle(item, index, stepFallbackLabel)}
-      </Text>
-      <Text style={[styles.cookText, { writingDirection }]}>{item.text}</Text>
-
-      {durationLabel || metaItems.length ? (
-        <View style={styles.stepMetaWrap}>
-          {durationLabel ? (
-            <View style={styles.cookTimerPill}>
-              <MaterialCommunityIcons name="timer-outline" size={17} color={colors.gold} />
-              <Text style={styles.cookTimerText}>{durationLabel}</Text>
-            </View>
-          ) : null}
-          {metaItems.map((meta) => (
-            <View key={meta} style={styles.cookMetaPill}>
-              <Text style={[styles.cookMetaPillText, { writingDirection }]}>{meta}</Text>
-            </View>
-          ))}
-        </View>
-      ) : null}
-
-      {tips.length ? (
-        <View style={styles.stepTipSection}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ expanded }}
-            onPress={onToggleTips}
-            style={styles.cookTipToggle}
-          >
-            <Feather name="zap" size={13} color={colors.gold} />
-            <Text style={styles.cookTipToggleText}>{tipLabel}</Text>
-            <Feather name={expanded ? "chevron-up" : "chevron-down"} size={15} color={colors.gold} />
-          </Pressable>
-          {expanded ? (
-            <View style={styles.cookTipBlock}>
-              {tips.map((tip, tipIndex) => (
-                <Text key={`${tip}-${tipIndex}`} style={[styles.cookTipText, { writingDirection }]}>
-                  {tip}
-                </Text>
-              ))}
-            </View>
-          ) : null}
-        </View>
-      ) : null}
-
-      <View style={styles.cookActions}>
-        {index > 0 ? (
-          <Pressable accessibilityRole="button" onPress={onBack} style={styles.cookBackButton}>
-            <Text style={styles.cookBackText}>{backLabel}</Text>
-          </Pressable>
-        ) : null}
-        <Pressable accessibilityRole="button" onPress={isLast ? onDone : onNext} style={styles.cookNextButton}>
-          <Text style={styles.cookNextText} numberOfLines={1}>
-            {isLast ? doneLabel : nextLabel}
-          </Text>
-          <Feather
-            name={isLast ? "check" : isRTL ? "arrow-left" : "arrow-right"}
-            size={18}
-            color={colors.deep}
-          />
-        </Pressable>
       </View>
     </View>
   );
@@ -1799,158 +1655,6 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     textAlign: "left",
-  },
-  cookCard: {
-    minHeight: 290,
-    borderRadius: wasfaRadius.xl,
-    backgroundColor: colors.deep,
-    padding: 24,
-    gap: 14,
-  },
-  cookEyebrow: {
-    color: colors.onDeepSoft,
-    fontSize: 12,
-    fontWeight: "800",
-    textAlign: "left",
-  },
-  cookProgressTrack: {
-    height: 6,
-    borderRadius: 3,
-    overflow: "hidden",
-    flexDirection: "row",
-    backgroundColor: colors.onDeepFill,
-  },
-  cookProgressFill: {
-    height: "100%",
-    borderRadius: 3,
-    backgroundColor: colors.gold,
-  },
-  cookTitle: {
-    color: colors.onDeep,
-    fontSize: 26,
-    lineHeight: 33,
-    fontWeight: "800",
-    textAlign: "left",
-  },
-  cookText: {
-    color: colors.onDeepSoft,
-    fontSize: 18,
-    lineHeight: 28,
-    textAlign: "left",
-  },
-  cookTimerPill: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: wasfaRadius.pill,
-    backgroundColor: colors.onDeepFill,
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-  },
-  cookTimerText: {
-    color: colors.onDeep,
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  cookMetaPill: {
-    alignSelf: "flex-start",
-    justifyContent: "center",
-    borderRadius: wasfaRadius.pill,
-    borderWidth: 1,
-    borderColor: colors.onDeepLine,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-  },
-  cookMetaPillText: {
-    color: colors.onDeepSoft,
-    fontSize: 13,
-    lineHeight: 18,
-    fontWeight: "700",
-  },
-  cookTipToggle: {
-    alignSelf: "flex-start",
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    borderRadius: wasfaRadius.pill,
-    backgroundColor: colors.onDeepFill,
-    paddingHorizontal: 11,
-    paddingVertical: 6,
-  },
-  cookTipToggleText: {
-    color: colors.gold,
-    fontSize: 12,
-    fontWeight: "800",
-  },
-  cookTipBlock: {
-    borderRadius: wasfaRadius.sm,
-    backgroundColor: colors.onDeepFill,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    gap: 6,
-  },
-  cookTipText: {
-    color: colors.onDeep,
-    fontSize: 15,
-    lineHeight: 22,
-    textAlign: "left",
-  },
-  cookActions: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    marginTop: "auto",
-    paddingTop: 6,
-  },
-  cookBackButton: {
-    height: 52,
-    alignItems: "center",
-    justifyContent: "center",
-    borderRadius: wasfaRadius.pill,
-    borderWidth: 1.5,
-    borderColor: colors.onDeepLine,
-    paddingHorizontal: 22,
-  },
-  cookBackText: {
-    color: colors.onDeep,
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  cookNextButton: {
-    flex: 1,
-    height: 52,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    borderRadius: wasfaRadius.pill,
-    backgroundColor: colors.gold,
-    paddingHorizontal: 18,
-  },
-  cookNextText: {
-    flexShrink: 1,
-    color: colors.deep,
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  cookDots: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginTop: -4,
-  },
-  cookDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: colors.line,
-  },
-  cookDotActive: {
-    width: 24,
-    backgroundColor: colors.primary,
   },
   emptyStepsText: {
     color: colors.muted,

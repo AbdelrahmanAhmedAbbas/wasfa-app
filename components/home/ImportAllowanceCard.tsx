@@ -48,7 +48,7 @@ export function ImportAllowanceCard({ allowance, onPress }: ImportAllowanceCardP
           </Text>
           <View style={styles.nextRow}>
             <Feather name="clock" size={13} color={wasfaColors.cta} />
-            <Text style={[styles.nextText, text]} numberOfLines={1} adjustsFontSizeToFit>
+            <Text style={[styles.nextText, text]} numberOfLines={2}>
               {fill(t("homeImportsNextAt"))}
             </Text>
           </View>

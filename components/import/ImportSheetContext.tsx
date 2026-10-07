@@ -1,15 +1,19 @@
 import { useFocusEffect } from "expo-router";
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 import {
   SocialImportDrawers,
   type ImportPlatform,
 } from "@/components/import/SocialImportDrawers";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { getImportHintSeen, setImportHintSeen } from "@/lib/import/hint-storage";
 
 type ImportSheetContextValue = {
   /** Opens the import bottom sheet on its platform list. */
   open: () => void;
+  /** True until the reader has opened the sheet once or closed the hint about it. */
+  hintVisible: boolean;
+  dismissHint: () => void;
 };
 
 const ImportSheetContext = createContext<ImportSheetContextValue | null>(null);
@@ -23,10 +27,30 @@ export function ImportSheetProvider({ children }: { children: ReactNode }) {
   const [sheetState, setSheetState] = useState<"closed" | "platforms" | "guide">("closed");
   const [selectedPlatform, setSelectedPlatform] = useState<ImportPlatform | null>(null);
 
+  // Hidden until storage answers, so the hint never flashes for someone who has seen it.
+  const [hintVisible, setHintVisible] = useState(false);
+  useEffect(() => {
+    let mounted = true;
+    void getImportHintSeen()
+      .then((seen) => {
+        if (mounted && !seen) setHintVisible(true);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const dismissHint = useCallback(() => {
+    setHintVisible(false);
+    void setImportHintSeen().catch(() => {});
+  }, []);
+
   const open = useCallback(() => {
+    dismissHint();
     setSelectedPlatform(null);
     setSheetState("platforms");
-  }, []);
+  }, [dismissHint]);
 
   // The sheet belongs to the tabs. When another screen covers them (a recipe shared
   // from Instagram while the guide is open, say) it closes instead of staying on top.
@@ -40,7 +64,7 @@ export function ImportSheetProvider({ children }: { children: ReactNode }) {
     )
   );
 
-  const value = useMemo(() => ({ open }), [open]);
+  const value = useMemo(() => ({ open, hintVisible, dismissHint }), [open, hintVisible, dismissHint]);
 
   return (
     <ImportSheetContext.Provider value={value}>

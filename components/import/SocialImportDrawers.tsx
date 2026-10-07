@@ -4,32 +4,19 @@ import FontAwesome from "@expo/vector-icons/FontAwesome";
 import FontAwesome5 from "@expo/vector-icons/FontAwesome5";
 import { router } from "expo-router";
 import { useState } from "react";
-import {
-  Image,
-  Keyboard,
-  Pressable,
-  StyleSheet,
-  TextInput,
-  View,
-  type ImageSourcePropType,
-} from "react-native";
+import { Keyboard, Pressable, StyleSheet, TextInput, View } from "react-native";
 
+import { ImportGuideSlides } from "@/components/import/ImportGuideSlides";
 import { BottomDrawer } from "@/components/ui/BottomDrawer";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { getImportAllowanceNote } from "@/lib/import/errors";
+import type { ImportGuidePlatform } from "@/lib/import/guide";
 import { useImportAllowance } from "@/lib/import/useImportAllowance";
 import type { TranslationKey } from "@/lib/i18n/translations";
-import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
 
-export type ImportPlatform = "tiktok" | "instagram" | "youtube";
-
-type ImportGuideStep = {
-  titleKey: TranslationKey;
-  image: ImageSourcePropType;
-  highlight?: boolean;
-};
+export type ImportPlatform = ImportGuidePlatform;
 
 type ImportPlatformConfig = {
   iconKind: "fontawesome" | "fontawesome5-brand";
@@ -38,7 +25,6 @@ type ImportPlatformConfig = {
   iconBackground: string;
   titleKey: TranslationKey;
   subtitleKey: TranslationKey;
-  steps: ImportGuideStep[];
 };
 
 type SocialImportDrawersProps = {
@@ -60,11 +46,6 @@ const PLATFORM_CONFIG: Record<ImportPlatform, ImportPlatformConfig> = {
     iconBackground: "#111111",
     titleKey: "sourceTikTok",
     subtitleKey: "importDrawerTiktokSubtitle",
-    steps: [
-      { titleKey: "importGuideTiktokStep1", image: onboardingImages.mascotTyping },
-      { titleKey: "importGuideTiktokStep2", image: onboardingImages.mascotReading },
-      { titleKey: "importGuideTiktokStep3", image: onboardingImages.mascot, highlight: true },
-    ],
   },
   instagram: {
     iconKind: "fontawesome",
@@ -73,11 +54,6 @@ const PLATFORM_CONFIG: Record<ImportPlatform, ImportPlatformConfig> = {
     iconBackground: "#E84D6E",
     titleKey: "sourceInstagram",
     subtitleKey: "importDrawerInstagramSubtitle",
-    steps: [
-      { titleKey: "importGuideInstagramStep1", image: onboardingImages.demoKabsaSocial },
-      { titleKey: "importGuideInstagramStep2", image: onboardingImages.mascotReading },
-      { titleKey: "importGuideInstagramStep3", image: onboardingImages.mascot, highlight: true },
-    ],
   },
   youtube: {
     iconKind: "fontawesome",
@@ -86,11 +62,6 @@ const PLATFORM_CONFIG: Record<ImportPlatform, ImportPlatformConfig> = {
     iconBackground: "#FF2A1A",
     titleKey: "sourceYoutube",
     subtitleKey: "importDrawerYoutubeSubtitle",
-    steps: [
-      { titleKey: "importGuideYoutubeStep1", image: onboardingImages.demoKabsaSocial },
-      { titleKey: "importGuideYoutubeStep2", image: onboardingImages.mascotTyping },
-      { titleKey: "importGuideYoutubeStep3", image: onboardingImages.mascot, highlight: true },
-    ],
   },
 };
 
@@ -277,25 +248,12 @@ export function SocialImportDrawers({
             </Text>
           </View>
 
-          {PLATFORM_CONFIG[selectedPlatform].steps.map((step, index) => (
-            <View
-              key={`${selectedPlatform}-${index}`}
-              style={[styles.stepCard, step.highlight && styles.stepCardHighlight]}
-            >
-              <View style={styles.stepTopRow}>
-                <View style={styles.stepBadge}>
-                  <Text style={styles.stepBadgeText}>{index + 1}</Text>
-                </View>
-                <Text style={[styles.stepText, { textAlign, writingDirection }]}>{t(step.titleKey)}</Text>
-              </View>
-
-              <Image
-                source={step.image}
-                style={styles.stepImage}
-                resizeMode={selectedPlatform === "instagram" ? "cover" : "contain"}
-              />
-            </View>
-          ))}
+          <ImportGuideSlides
+            key={selectedPlatform}
+            platform={selectedPlatform}
+            platformName={t(PLATFORM_CONFIG[selectedPlatform].titleKey)}
+            onPasteInstead={onCloseGuide}
+          />
         </BottomDrawer>
       ) : null}
     </>
@@ -448,48 +406,5 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: "800",
     color: wasfaColors.ink,
-  },
-  stepCard: {
-    borderWidth: 1,
-    borderColor: wasfaColors.line,
-    borderRadius: 20,
-    backgroundColor: wasfaColors.surface,
-    padding: 14,
-    gap: 12,
-  },
-  stepCardHighlight: {
-    backgroundColor: wasfaColors.primarySoft,
-    borderColor: wasfaColors.primarySoftBorder,
-  },
-  stepTopRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-  },
-  stepBadge: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: wasfaColors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  stepBadgeText: {
-    color: "#FFFFFF",
-    fontSize: 14,
-    fontWeight: "800",
-  },
-  stepText: {
-    flex: 1,
-    fontSize: 15,
-    lineHeight: 21,
-    fontWeight: "700",
-    color: wasfaColors.ink,
-  },
-  stepImage: {
-    width: "100%",
-    height: 84,
-    borderRadius: 14,
-    backgroundColor: wasfaColors.soft,
   },
 });

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, LinearTransition } from "react-native-reanimated";
 
 import { LocalizedText as Text } from "@/components/LocalizedText";
+import { ImportHintBubble } from "@/components/import/ImportHintBubble";
 import { ImportSheetProvider, useImportSheet } from "@/components/import/ImportSheetContext";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { countPlannedMeals, getWeekDates, toDateKey } from "@/lib/planner/plan";
@@ -118,67 +119,70 @@ function CustomTabBar({ state, descriptors, navigation }: BottomTabBarProps) {
   const bottomOffset = Math.max(insets.bottom, TAB_BAR_BOTTOM_GAP);
 
   return (
-    <View
-      pointerEvents="box-none"
-      style={[styles.outerFrame, { height: TAB_BAR_HEIGHT + bottomOffset }]}
-    >
-      {/* A plain row: the root direction mirrors the tab order and add button in Arabic. */}
-      <View style={styles.row}>
-        <Animated.View layout={TAB_LAYOUT_TRANSITION} style={styles.dock}>
-          {visibleRoutes.map((route) => {
-            const config = TAB_CONFIG[route.name];
-            const descriptor = descriptors[route.key];
-            const isFocused = activeRouteName === route.name;
-            const label =
-              typeof descriptor.options.title === "string"
-                ? descriptor.options.title
-                : config.fallbackLabel;
+    <View pointerEvents="box-none" style={[styles.outerFrame, { paddingBottom: bottomOffset }]}>
+      {/* The hint is laid out above the row, inside the frame, so it can be tapped too. */}
+      <View pointerEvents="box-none" style={styles.column}>
+        {importSheet.hintVisible ? (
+          <ImportHintBubble onOpen={importSheet.open} onDismiss={importSheet.dismissHint} />
+        ) : null}
+        {/* A plain row: the root direction mirrors the tab order and add button in Arabic. */}
+        <View style={styles.row}>
+          <Animated.View layout={TAB_LAYOUT_TRANSITION} style={styles.dock}>
+            {visibleRoutes.map((route) => {
+              const config = TAB_CONFIG[route.name];
+              const descriptor = descriptors[route.key];
+              const isFocused = activeRouteName === route.name;
+              const label =
+                typeof descriptor.options.title === "string"
+                  ? descriptor.options.title
+                  : config.fallbackLabel;
 
-            const onPress = () => {
-              const event = navigation.emit({
-                type: "tabPress",
-                target: route.key,
-                canPreventDefault: true,
-              });
+              const onPress = () => {
+                const event = navigation.emit({
+                  type: "tabPress",
+                  target: route.key,
+                  canPreventDefault: true,
+                });
 
-              if (!isFocused && !event.defaultPrevented) {
-                navigation.navigate(route.name, route.params);
-              }
-            };
+                if (!isFocused && !event.defaultPrevented) {
+                  navigation.navigate(route.name, route.params);
+                }
+              };
 
-            const onLongPress = () => {
-              navigation.emit({
-                type: "tabLongPress",
-                target: route.key,
-              });
-            };
+              const onLongPress = () => {
+                navigation.emit({
+                  type: "tabLongPress",
+                  target: route.key,
+                });
+              };
 
-            return (
-              <TabBarItem
-                key={route.key}
-                label={label}
-                icon={config.icon}
-                isFocused={isFocused}
-                badge={badges[route.name]}
-                onPress={onPress}
-                onLongPress={onLongPress}
-                accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
-                testID={descriptor.options.tabBarButtonTestID}
-              />
-            );
-          })}
-        </Animated.View>
+              return (
+                <TabBarItem
+                  key={route.key}
+                  label={label}
+                  icon={config.icon}
+                  isFocused={isFocused}
+                  badge={badges[route.name]}
+                  onPress={onPress}
+                  onLongPress={onLongPress}
+                  accessibilityLabel={descriptor.options.tabBarAccessibilityLabel}
+                  testID={descriptor.options.tabBarButtonTestID}
+                />
+              );
+            })}
+          </Animated.View>
 
-        <Animated.View layout={TAB_LAYOUT_TRANSITION}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={t("homeNewRecipe")}
-            onPress={importSheet.open}
-            style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
-          >
-            <Feather name="plus" size={26} color="#FFFFFF" />
-          </Pressable>
-        </Animated.View>
+          <Animated.View layout={TAB_LAYOUT_TRANSITION}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={t("homeNewRecipe")}
+              onPress={importSheet.open}
+              style={({ pressed }) => [styles.addButton, pressed && styles.addButtonPressed]}
+            >
+              <Feather name="plus" size={26} color="#FFFFFF" />
+            </Pressable>
+          </Animated.View>
+        </View>
       </View>
     </View>
   );
@@ -225,6 +229,10 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     alignItems: "center",
+  },
+  // As wide as the row; the hint sits at its end, over the add button.
+  column: {
+    alignItems: "flex-end",
   },
   row: {
     flexDirection: "row",
