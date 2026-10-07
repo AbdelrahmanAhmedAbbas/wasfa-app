@@ -1,12 +1,20 @@
 import { useConvexAuth, useQueries } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { convex } from "@/lib/convex/client";
-import { normalizeLocalizedRecipeText, type LocalizedRecipeText, type RecipeDetail } from "@/lib/recipes/client";
+import {
+  localizeRecipe,
+  normalizeLocalizedRecipeText,
+  type LocalizedRecipeText,
+  type RecipeDetail,
+} from "@/lib/recipes/client";
 import { assessRecipeIngredients, type RecipePreferenceInput } from "@/lib/recipes/ingredient-warnings";
+import { hasLocalizedContent } from "@/lib/recipes/localization";
+
+import { formatShoppingLine, localizeShoppingLine } from "./lines";
 
 export type ShoppingListItem = {
   id: string;
@@ -21,16 +29,6 @@ export type ShoppingListItem = {
     source_thumbnail_url: string | null;
   } | null;
 };
-
-function formatIngredient(item: {
-  name: string;
-  quantity?: string;
-  unit?: string;
-  notes?: string;
-}) {
-  const base = [item.quantity, item.unit, item.name].filter(Boolean).join(" ").trim();
-  return item.notes ? `${base} (${item.notes})` : base;
-}
 
 type ShoppingListRows = FunctionReturnType<typeof api.shopping.list>;
 
@@ -75,6 +73,79 @@ export function useShoppingList(): { items: ShoppingListItem[] | undefined; fail
       })),
     };
   }, [rows]);
+}
+
+type ShoppingRecipe = FunctionReturnType<typeof api.recipes.get>;
+
+/**
+ * The shopping list with every line written in `language`. Lines are saved in
+ * the recipe's own language, so each is matched back to its recipe's
+ * ingredients and their translation; `items` stays undefined until those
+ * recipes have arrived too. A recipe with no version in `language` yet gets
+ * one written when `translateMissing` is set, and its lines follow.
+ */
+export function useLocalizedShoppingList(
+  language: "en" | "ar",
+  options: { translateMissing?: boolean } = {}
+): { items: ShoppingListItem[] | undefined; failed: boolean } {
+  const { items, failed } = useShoppingList();
+
+  const recipeIdsKey = Array.from(new Set((items ?? []).map((item) => item.recipe_id)))
+    .sort()
+    .join(",");
+  const subscriptions = useMemo(
+    () =>
+      Object.fromEntries(
+        (recipeIdsKey ? recipeIdsKey.split(",") : []).map((recipeId) => [
+          recipeId,
+          { query: api.recipes.get, args: { recipeId } },
+        ])
+      ),
+    [recipeIdsKey]
+  );
+  const answers = useQueries(subscriptions) as Record<string, ShoppingRecipe | Error | undefined>;
+
+  // A recipe that could not be read leaves its lines as they were written.
+  const recipes = useMemo(() => {
+    const ready = new Map<string, (NonNullable<ShoppingRecipe> & Pick<RecipeDetail, "localized">) | null>();
+    for (const recipeId of Object.keys(subscriptions)) {
+      const answer = answers[recipeId];
+      if (answer === undefined) return undefined;
+      ready.set(
+        recipeId,
+        answer && !(answer instanceof Error)
+          ? { ...answer, localized: normalizeLocalizedRecipeText(answer.localized_json) }
+          : null
+      );
+    }
+    return ready;
+  }, [answers, subscriptions]);
+
+  const translateMissing = options.translateMissing === true;
+  const translationAttempts = useRef(new Set<string>());
+  useEffect(() => {
+    if (!translateMissing || !recipes) return;
+    recipes.forEach((recipe, recipeId) => {
+      if (!recipe || hasLocalizedContent(recipe, language)) return;
+      const attemptKey = `${recipeId}:${language}`;
+      if (translationAttempts.current.has(attemptKey)) return;
+      translationAttempts.current.add(attemptKey);
+      void localizeRecipe(recipeId).catch(() => {
+        // The lines stay readable in the recipe's own language.
+      });
+    });
+  }, [translateMissing, recipes, language]);
+
+  return useMemo(() => {
+    if (!items || !recipes) return { items: undefined, failed };
+    return {
+      failed,
+      items: items.map((item) => ({
+        ...item,
+        ingredient_text: localizeShoppingLine(item.ingredient_text, recipes.get(item.recipe_id), language),
+      })),
+    };
+  }, [items, recipes, failed, language]);
 }
 
 // Checking and removing show at once: the list every screen is reading is
@@ -134,7 +205,7 @@ export async function addRecipeIngredientsToShoppingList(
   const lines = recipe.ingredients_json
     .map((ingredient, index) => {
       const halal = assessments[index]?.halal;
-      return formatIngredient(
+      return formatShoppingLine(
         halal?.swapped && halal.alternative ? { ...ingredient, name: halal.alternative } : ingredient
       );
     })

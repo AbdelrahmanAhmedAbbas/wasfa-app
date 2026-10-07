@@ -23,7 +23,7 @@ import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import {
   deleteShoppingListItem,
   toggleShoppingListItemChecked,
-  useShoppingList,
+  useLocalizedShoppingList,
   type ShoppingListItem,
 } from "@/lib/shopping/client";
 import { mergeShoppingItems } from "@/lib/shopping/merge";
@@ -71,7 +71,7 @@ export default function GroceryScreen() {
   const { t, language } = useLanguage();
   // The list is live: a recipe planned a moment ago shows up as soon as its
   // lines are saved, without leaving and reopening this screen.
-  const { items: liveItems, failed: loadFailed } = useShoppingList();
+  const { items: liveItems, failed: loadFailed } = useLocalizedShoppingList(language, { translateMissing: true });
   const items = liveItems ?? NO_ITEMS;
   const loading = liveItems === undefined && !loadFailed;
   const [actionError, setActionError] = useState<string | null>(null);
@@ -79,7 +79,7 @@ export default function GroceryScreen() {
   const error = loadFailed ? t("groceryLoadError") : actionError;
 
   const localizeDigits = (value: string) => (language === "ar" ? toArabicIndicDigits(value) : value);
-  // Ingredient text stays in the recipe's own language, so only Arabic text gets Arabic digits.
+  // A line with no translation stays in the recipe's own language, so only Arabic text gets Arabic digits.
   const localizeIngredient = (value: string) =>
     /[\u0600-\u06FF]/.test(value) ? localizeDigits(value) : value;
 
