@@ -48,7 +48,8 @@ export const onboardingImages = {
   // a blank clipboard, and the pen it holds.
   mascotTypingBase: require("../../assets/images/mascot-typing-base.png"),
   mascotTypingPen: require("../../assets/images/mascot-typing-pen.png"),
-  demoKabsaSocial: require("../../assets/images/demo-kabsa-social.png"),
+  // A real photo (Pexels, free to use); it stands in for a recipe video and its picture.
+  demoKabsaSocial: require("../../assets/images/demo-kabsa.jpg"),
   googleLogo: require("../../assets/images/google-g.png"),
 };
 
