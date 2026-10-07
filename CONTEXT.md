@@ -25,7 +25,7 @@ The onboarding step with the reviews and the sign-in buttons, shown after the de
 _Avoid_: Reviews screen, login screen, auth screen
 
 **Login screen**:
-The standalone sign-in screen for a **Returning account**. It is where a signed-out device opens once setup has been finished on it, and where "I already have an account" leads.
+The standalone sign-in screen for a **Returning account**. It is where a signed-out device opens once setup has been finished on it (after signing out, deleting the account, or an expired session), and where "I already have an account" leads.
 _Avoid_: Sign-in screen, sign-up screen
 
 **New account**:
