@@ -7,17 +7,16 @@ import { wasfaColors } from "@/lib/theme/wasfa";
 type GlyphProps = {
   name: GlyphName;
   size?: number;
-  color?: string;
   style?: StyleProp<ImageStyle>;
 };
 
-/** One pictogram from the app's set, drawn in a single colour. */
-export function Glyph({ name, size = 20, color = wasfaColors.primaryDark, style }: GlyphProps) {
+/** One full-colour pictogram from the app's set. */
+export function Glyph({ name, size = 20, style }: GlyphProps) {
   return (
     <Image
       source={glyphSources[name]}
       resizeMode="contain"
-      style={[{ width: size, height: size, tintColor: color }, style]}
+      style={[{ width: size, height: size }, style]}
     />
   );
 }
@@ -32,7 +31,7 @@ type FoodIconTileProps = {
 export function FoodIconTile({ name, size = 46 }: FoodIconTileProps) {
   return (
     <View style={[styles.tile, { width: size, height: size, borderRadius: Math.round(size * 0.3) }]}>
-      <Glyph name={getFoodGlyph(name)} size={Math.round(size * 0.54)} />
+      <Glyph name={getFoodGlyph(name)} size={Math.round(size * 0.6)} />
     </View>
   );
 }

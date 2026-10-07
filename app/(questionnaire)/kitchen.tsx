@@ -153,7 +153,7 @@ export default function KitchenQuestionnaireScreen() {
                 {allergies.length > 0 ? (
                   allergies.map((allergy) => (
                     <View key={allergy.id} style={styles.avoidPill}>
-                      <Glyph name={allergy.icon} size={17} color="#FFFFFF" />
+                      <Glyph name={allergy.icon} size={17} />
                       <Text style={styles.avoidPillText}>{t(allergy.labelKey)}</Text>
                     </View>
                   ))
@@ -171,7 +171,7 @@ export default function KitchenQuestionnaireScreen() {
                 <View style={styles.pillWrap}>
                   {dislikes.map((dislike) => (
                     <View key={dislike.id} style={styles.avoidPill}>
-                      <Glyph name={dislike.icon} size={17} color="#FFFFFF" />
+                      <Glyph name={dislike.icon} size={17} />
                       <Text style={styles.avoidPillText}>{t(dislike.labelKey)}</Text>
                     </View>
                   ))}

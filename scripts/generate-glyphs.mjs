@@ -1,11 +1,11 @@
 // Renders the glyphs listed in lib/theme/glyphs.ts to PNGs in
 // assets/images/glyphs and rewrites lib/theme/glyph-sources.ts.
 //
-// The source art (Fluent Emoji High Contrast) and the SVG renderer are not app
-// dependencies, so install them somewhere temporary and point the script at it:
+// The source art (Noto Emoji) and the SVG renderer are not app dependencies, so
+// install them somewhere temporary and point the script at it:
 //
 //   mkdir -p /tmp/glyphs && npm i --prefix /tmp/glyphs \
-//     @iconify-json/fluent-emoji-high-contrast @resvg/resvg-js
+//     @iconify-json/noto @resvg/resvg-js
 //   GLYPH_MODULES=/tmp/glyphs node scripts/generate-glyphs.mjs
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -15,10 +15,10 @@ import { fileURLToPath } from "node:url";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const requireFrom = createRequire(join(process.env.GLYPH_MODULES ?? process.cwd(), "package.json"));
 const { Resvg } = requireFrom("@resvg/resvg-js");
-const iconSet = requireFrom("@iconify-json/fluent-emoji-high-contrast/icons.json");
+const iconSet = requireFrom("@iconify-json/noto/icons.json");
 
-// 96px covers the largest tile (about 32pt) on a 3x screen.
-const SIZE = 96;
+// 144px keeps the largest glyph (about 32pt) sharp on a 3x screen with room to spare.
+const SIZE = 144;
 const outDir = join(root, "assets/images/glyphs");
 
 const listSource = readFileSync(join(root, "lib/theme/glyphs.ts"), "utf8");
@@ -30,11 +30,10 @@ mkdirSync(outDir, { recursive: true });
 
 for (const name of names) {
   const icon = iconSet.icons[name];
-  if (!icon) throw new Error(`"${name}" is not in the Fluent Emoji High Contrast set`);
+  if (!icon) throw new Error(`"${name}" is not in the Noto Emoji set`);
   const width = icon.width ?? iconSet.width;
   const height = icon.height ?? iconSet.height;
-  // Drawn in black; the app colours each glyph with `tintColor`.
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" color="#000">${icon.body}</svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${icon.body}</svg>`;
   const png = new Resvg(svg, { fitTo: { mode: "width", value: SIZE } }).render().asPng();
   writeFileSync(join(outDir, `${name}.png`), png);
 }

@@ -263,7 +263,7 @@ export default function GroceryScreen() {
                       onPress={() => void toggleGroup(group)}
                       onLongPress={() => confirmRemoveGroup(group)}
                     >
-                      <Glyph name={getFoodGlyph(group.name)} size={16} color={wasfaColors.muted} />
+                      <Glyph name={getFoodGlyph(group.name)} size={16} style={styles.basketChipGlyph} />
                       <Text numberOfLines={1} style={styles.basketChipText}>
                         {group.name}
                       </Text>
@@ -447,6 +447,9 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 6,
+  },
+  basketChipGlyph: {
+    opacity: 0.7,
   },
   basketChipText: {
     flexShrink: 1,
