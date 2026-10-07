@@ -13,6 +13,7 @@ import {
 import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { BottomDrawer } from "@/components/ui/BottomDrawer";
@@ -166,7 +167,7 @@ export default function PlannerScreen() {
   const handleAddMeal = async (dayKey: string, recipeId: string) => {
     setPickerDayKey(null);
     setOpenDayKey(dayKey);
-    const result = await planRecipe(updatePlan, dayKey, recipeId);
+    const result = await planRecipe(updatePlan, dayKey, recipeId, "picker");
     setNotice(result.grocerySynced ? null : t("plannerGroceryNotSynced"));
   };
 
@@ -182,11 +183,12 @@ export default function PlannerScreen() {
     const { recipeId, fromDayKey } = item;
     if (fromDayKey === null) {
       if (getPlanDay(plan, dayKey).includes(recipeId)) return;
-      const result = await planRecipe(updatePlan, dayKey, recipeId);
+      const result = await planRecipe(updatePlan, dayKey, recipeId, "drag");
       setNotice(result.grocerySynced ? null : t("plannerGroceryNotSynced"));
       return;
     }
     await updatePlan((current) => moveRecipeInPlan(current, fromDayKey, dayKey, recipeId));
+    if (fromDayKey !== dayKey) track("planned_recipe_moved");
   };
 
   const drag = useRecipeDrag({

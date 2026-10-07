@@ -1,3 +1,4 @@
+import { track } from "@/lib/analytics/posthog";
 import { getCurrentUserId } from "@/lib/auth/session";
 import { getRecipeById } from "@/lib/recipes/client";
 import { loadRecipePreferences } from "@/lib/recipes/preferences";
@@ -9,6 +10,7 @@ import {
 import {
   addRecipeToPlan,
   getWeekDates,
+  ANY_DAY,
   isRecipePlanned,
   removeRecipeFromPlan,
   toDateKey,
@@ -16,6 +18,9 @@ import {
 } from "./plan";
 
 type UpdatePlan = (update: (current: MealPlan) => MealPlan) => Promise<MealPlan>;
+
+/** Where a recipe was planned from: its own screen, the planner's picker, or a drag onto a day. */
+export type PlanSource = "recipe" | "picker" | "drag";
 
 export type PlanChangeResult = {
   plan: MealPlan;
@@ -31,9 +36,11 @@ export type PlanChangeResult = {
 export async function planRecipe(
   updatePlan: UpdatePlan,
   dayKey: string,
-  recipeId: string
+  recipeId: string,
+  source: PlanSource
 ): Promise<PlanChangeResult> {
   const plan = await updatePlan((current) => addRecipeToPlan(current, dayKey, recipeId));
+  track("recipe_planned", { source, any_day: dayKey === ANY_DAY });
 
   try {
     const recipe = await getRecipeById(recipeId);
@@ -58,6 +65,7 @@ export async function unplanRecipe(
   recipeId: string
 ): Promise<PlanChangeResult> {
   const plan = await updatePlan((current) => removeRecipeFromPlan(current, dayKey, recipeId));
+  track("recipe_unplanned", { any_day: dayKey === ANY_DAY });
   const weekKeys = getWeekDates(new Date()).map(toDateKey);
   if (isRecipePlanned(plan, recipeId, weekKeys)) return { plan, grocerySynced: true };
 

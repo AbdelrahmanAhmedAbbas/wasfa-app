@@ -2,6 +2,7 @@ import Feather from "@expo/vector-icons/Feather";
 import { useMemo, useState } from "react";
 import { ActivityIndicator, Image, Pressable, StyleSheet, View } from "react-native";
 
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 import { FoodIconTile } from "@/components/wasfa/Glyph";
@@ -55,14 +56,30 @@ export function PriceEstimate({ lines }: Props) {
   const estimate = async () => {
     setLoading(true);
     setFailed(false);
+    const startedAt = Date.now();
+    track("price_comparison_started", { items: lines.length });
     try {
       setPriced(await estimateGroceryPrices(lines));
       setOpen(null);
+      track("price_comparison_completed", {
+        items: lines.length,
+        seconds: Math.round((Date.now() - startedAt) / 1000),
+      });
     } catch {
       setFailed(true);
+      track("price_comparison_failed", { items: lines.length });
     } finally {
       setLoading(false);
     }
+  };
+
+  const showProducts = (target: StoreId | "split") => {
+    if (open === target) {
+      setOpen(null);
+      return;
+    }
+    setOpen(target);
+    track("price_comparison_products_opened", { store: target });
   };
 
   const renderLine = (line: StoreLine) => (
@@ -126,7 +143,7 @@ export function PriceEstimate({ lines }: Props) {
             accessibilityRole="button"
             accessibilityState={{ expanded: open === store.store }}
             style={[styles.storeRow, !store.ranked && styles.unranked]}
-            onPress={() => setOpen(open === store.store ? null : store.store)}
+            onPress={() => showProducts(store.store)}
           >
             {storeBadge(store.store)}
             <View style={styles.storeBody}>
@@ -151,7 +168,7 @@ export function PriceEstimate({ lines }: Props) {
             accessibilityRole="button"
             accessibilityState={{ expanded: open === "split" }}
             style={styles.splitHeader}
-            onPress={() => setOpen(open === "split" ? null : "split")}
+            onPress={() => showProducts("split")}
           >
             <View style={styles.storeBody}>
               <Text style={styles.splitTitle}>{`${t("priceSplitSave")} ${money(summary.split.saving, true)}`}</Text>

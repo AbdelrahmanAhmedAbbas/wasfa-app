@@ -1,3 +1,4 @@
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import Feather from "@expo/vector-icons/Feather";
 import MaterialCommunityIcons from "@expo/vector-icons/MaterialCommunityIcons";
@@ -285,6 +286,7 @@ export default function RecipeDetailsScreen() {
           const updated = await recalculateRecipeServings(recipe.id, normalizedServings);
           if (recalculationRequestRef.current !== requestId) return;
           setRecipe(updated);
+          track("recipe_servings_changed", { servings: normalizedServings });
           setServingInput(updated.servings ? String(updated.servings) : "");
           setCheckedIngredients(new Set());
           setRecalculationMessage(t("recipeUpdatedIngredients"));
@@ -313,6 +315,7 @@ export default function RecipeDetailsScreen() {
             try {
               setWorking(true);
               await deleteRecipeById(recipe.id);
+              track("recipe_deleted");
               // Its meals and grocery lines go with it, so the tab badges drop too.
               await updatePlan((current) => removeRecipeFromWholePlan(current, recipe.id));
               router.dismissTo("/(tabs)");
@@ -334,11 +337,12 @@ export default function RecipeDetailsScreen() {
       .filter(Boolean)
       .join("\n\n");
     try {
-      await Share.share({
+      const result = await Share.share({
         title: shareText.title,
         message,
         url: recipe.source_url ?? recipe.source_reel_url ?? undefined,
       });
+      if (result.action !== Share.dismissedAction) track("recipe_shared");
     } catch {
       setError(t("couldNotShareRecipe"));
     }
@@ -350,7 +354,7 @@ export default function RecipeDetailsScreen() {
     setPlanNotice(null);
     try {
       // Planning a recipe also puts its ingredients on the grocery list.
-      const result = await planRecipe(updatePlan, ANY_DAY, recipe.id);
+      const result = await planRecipe(updatePlan, ANY_DAY, recipe.id, "recipe");
       if (!result.grocerySynced) setPlanNotice(t("recipePlanGroceryNotice"));
     } catch {
       setPlanNotice(t("recipePlanFailed"));
@@ -389,6 +393,7 @@ export default function RecipeDetailsScreen() {
       ),
     });
 
+    track("halal_swap_changed", { use_original: useOriginal });
     void setIngredientUseOriginal(recipe, index, useOriginal).catch(() => {
       setRecipe((current) =>
         current && current.id === recipe.id ? { ...current, ingredients_json: previous } : current
@@ -630,7 +635,10 @@ export default function RecipeDetailsScreen() {
             <SegmentButton
               label={t("recipeCookMode")}
               active={activeView === "cook"}
-              onPress={() => setActiveView("cook")}
+              onPress={() => {
+                if (activeView !== "cook") track("cook_mode_opened", { steps: localizedSteps.length });
+                setActiveView("cook");
+              }}
               renderIcon={(color) => <MaterialCommunityIcons name="chef-hat" size={18} color={color} />}
             />
           </View>
@@ -777,6 +785,7 @@ export default function RecipeDetailsScreen() {
                 onBack={() => setCookStep(activeStepIndex - 1)}
                 onNext={() => setCookStep(activeStepIndex + 1)}
                 onDone={() => {
+                  track("cooking_finished", { steps: localizedSteps.length });
                   setCookStep(0);
                   setActiveView("ingredients");
                 }}

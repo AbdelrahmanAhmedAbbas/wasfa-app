@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 import { Image, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { MASCOT_ASPECT } from "@/components/onboarding/MascotBadge";
 import { headingStyle } from "@/components/onboarding/text-styles";
@@ -39,7 +40,10 @@ export default function PaywallOfferScreen() {
   const { isRTL, t } = useLanguage();
   const insets = useSafeAreaInsets();
 
-  const continueToSetup = async () => {
+  // Every way out leads to the same place while nothing is for sale; which one
+  // was taken shows how many people wanted the offer.
+  const continueToSetup = async (via: "cta" | "skip" | "close") => {
+    track("paywall_closed", { via });
     await setPaywallSeen(true);
     router.replace("/(questionnaire)/ready");
   };
@@ -65,7 +69,7 @@ export default function PaywallOfferScreen() {
             accessibilityLabel={t("obPaywallClose")}
             hitSlop={8}
             style={styles.close}
-            onPress={() => void continueToSetup()}
+            onPress={() => void continueToSetup("close")}
           >
             <Feather name="x" size={16} color="#FFFFFF" />
           </Pressable>
@@ -111,14 +115,14 @@ export default function PaywallOfferScreen() {
 
         <CtaButton
           label={t("obPaywallCta")}
-          onPress={() => void continueToSetup()}
+          onPress={() => void continueToSetup("cta")}
           style={styles.cta}
         />
         <Text style={styles.price}>{t("obPaywallPrice")}</Text>
         <Pressable
           accessibilityRole="button"
           style={styles.skip}
-          onPress={() => void continueToSetup()}
+          onPress={() => void continueToSetup("skip")}
         >
           <Text style={styles.skipText}>{t("obPaywallSkip")}</Text>
         </Pressable>

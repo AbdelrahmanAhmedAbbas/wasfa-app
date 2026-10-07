@@ -2,6 +2,7 @@ import * as AppleAuthentication from "expo-apple-authentication";
 import { useEffect, useState } from "react";
 import { Alert, Platform } from "react-native";
 
+import { track } from "@/lib/analytics/posthog";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isConvexConfigured } from "@/lib/convex/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
@@ -25,9 +26,11 @@ export function useSignInActions() {
   const run = async (method: SignInMethod, errorMessage: string, action: () => Promise<void>) => {
     try {
       setPending(method);
+      track("sign_in_started", { method });
       await action();
     } catch (error) {
       console.error(`Failed to sign in with ${method}:`, error);
+      track("sign_in_failed", { method });
       Alert.alert(t("authErrorTitle"), errorMessage);
     } finally {
       setPending(null);

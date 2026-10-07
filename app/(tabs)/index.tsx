@@ -1,3 +1,4 @@
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { useImportSheet } from "@/components/import/ImportSheetContext";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
@@ -271,9 +272,11 @@ export default function HomeScreen() {
   const handleSaveFolder = async (name: string) => {
     if (folderToEdit) {
       const updated = await updateRecipeFolder(folderToEdit.id, name);
+      track("folder_renamed");
       setFolders((curr) => curr.map((f) => (f.id === updated.id ? updated : f)));
     } else {
       const folder = await createRecipeFolder(name);
+      track("folder_created");
       setFolders((current) => [...current, folder]);
     }
   };
@@ -290,6 +293,7 @@ export default function HomeScreen() {
           onPress: async () => {
             try {
               await deleteRecipeFolder(folder.id);
+              track("folder_deleted");
               setFolders((curr) => curr.filter((f) => f.id !== folder.id));
               setAllRecipes((curr) =>
                 curr.map((recipe) =>
@@ -316,6 +320,7 @@ export default function HomeScreen() {
 
   const handleAssignRecipe = async (recipeId: string, targetFolderId: string | null) => {
     await assignRecipeToFolder(recipeId, targetFolderId);
+    track("recipe_moved_to_folder", { into_folder: targetFolderId !== null });
     setAllRecipes((curr) =>
       curr.map((recipe) => (recipe.id === recipeId ? { ...recipe, folder_id: targetFolderId } : recipe))
     );
@@ -506,6 +511,10 @@ export default function HomeScreen() {
                   placeholderTextColor={wasfaColors.muted}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
+                  onEndEditing={() => {
+                    // The words searched for are not recorded, only that a search was made.
+                    if (searchQuery.trim()) track("recipes_searched", { results: filteredRecipes.length });
+                  }}
                   autoCorrect={false}
                   returnKeyType="search"
                   style={[
@@ -673,7 +682,12 @@ export default function HomeScreen() {
 
         <RecipeFilterSheet
           visible={filterSheetVisible}
-          onClose={() => setFilterSheetVisible(false)}
+          onClose={() => {
+            setFilterSheetVisible(false);
+            if (activeFilterCount > 0) {
+              track("recipes_filtered", { filters: activeFilterCount, results: filteredRecipes.length });
+            }
+          }}
           filters={filters}
           onChange={setFilters}
           options={filterOptions}

@@ -3,6 +3,7 @@ import { AppState } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as Localization from "expo-localization";
 
+import { track } from "@/lib/analytics/posthog";
 import { AppLanguage, isLanguageRTL, t as translate } from "@/lib/i18n/translations";
 
 type LanguageContextValue = {
@@ -64,6 +65,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const setLanguage = async (lang: AppLanguage) => {
+    if (lang !== language) track("language_changed", { language: lang });
     await AsyncStorage.setItem("@wasfa/language", lang);
     setLanguageState(lang);
   };

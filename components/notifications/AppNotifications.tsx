@@ -2,6 +2,7 @@ import { useRouter, useSegments } from "expo-router";
 import { useEffect, useState } from "react";
 import { AppState } from "react-native";
 
+import { track } from "@/lib/analytics/posthog";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { announceFinishedImport, isWatchedImportJob } from "@/lib/notifications/importEvents";
@@ -46,8 +47,12 @@ export function AppNotifications() {
     const received = module.addNotificationReceivedListener((notification) => {
       if (getFinishedImportJobId(notification.request.content.data)) announceFinishedImport();
     });
+    const opened = (data: Record<string, unknown> | undefined) => {
+      track("notification_opened", { type: typeof data?.type === "string" ? data.type : null });
+      setTarget(getNotificationTarget(data));
+    };
     const tapped = module.addNotificationResponseReceivedListener((response) => {
-      setTarget(getNotificationTarget(response.notification.request.content.data));
+      opened(response.notification.request.content.data);
       module.clearLastNotificationResponse();
     });
     // The tap that opened the app, which arrived before anything was listening. It is
@@ -56,7 +61,7 @@ export function AppNotifications() {
       .getLastNotificationResponseAsync()
       .then((response) => {
         if (!response) return;
-        setTarget(getNotificationTarget(response.notification.request.content.data));
+        opened(response.notification.request.content.data);
         module.clearLastNotificationResponse();
       })
       .catch(() => {});

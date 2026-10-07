@@ -13,6 +13,7 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { Glyph } from "@/components/wasfa/Glyph";
@@ -122,6 +123,7 @@ export default function ProfileScreen() {
       }
     }
     setDailyReminder(enabled);
+    track("daily_reminder_toggled", { enabled });
     await setDailyReminderEnabled(enabled);
     await syncNotifications(language);
   };
@@ -129,6 +131,7 @@ export default function ProfileScreen() {
   const updatePreferences = (partial: Partial<RecipePreferences>) => {
     const userId = user?.id;
     applyPreferences({ ...latestPreferences.current, ...partial });
+    track("preference_changed", { field: Object.keys(partial).join(",") });
     setPendingSaves((count) => count + 1);
 
     saveQueue.current = saveQueue.current.then(async () => {
@@ -204,6 +207,7 @@ export default function ProfileScreen() {
       setIsLoading(true);
       // The signed-in screens are guarded in app/_layout.tsx, so a successful
       // sign-out leaves the tabs on its own.
+      track("signed_out");
       await signOut();
     } catch (error) {
       console.error("Failed to sign out:", error);
@@ -232,6 +236,7 @@ export default function ProfileScreen() {
             try {
               setIsLoading(true);
               await convex.mutation(api.users.deleteAccount, {});
+              track("account_deleted");
               await clearOnboardingStep();
               await clearOnboardingAnswers();
               await clearCachedProfile();

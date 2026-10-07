@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Image, ScrollView, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { MASCOT_ASPECT } from "@/components/onboarding/MascotBadge";
 import { OnboardingFooter } from "@/components/onboarding/OnboardingFooter";
@@ -80,6 +81,7 @@ export default function ReadyQuestionnaireScreen() {
       await wait(STEP_DELAY);
       await clearOnboardingAnswers();
       await completeOnboarding();
+      track("onboarding_completed", { answered_questions: hasQuestionnaireAnswers(answers) });
       if (isMounted.current) setDoneCount(3);
     } catch (err) {
       console.error("Questionnaire setup error:", err);

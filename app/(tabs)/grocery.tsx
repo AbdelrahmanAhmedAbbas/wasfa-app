@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
+import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { PriceEstimate } from "@/components/grocery/PriceEstimate";
@@ -113,6 +114,7 @@ export default function GroceryScreen() {
     setActionError(null);
     try {
       await Promise.all(group.relatedItems.map((item) => toggleShoppingListItemChecked(item.id, next)));
+      track("grocery_item_checked", { checked: next });
     } catch {
       setActionError(t("groceryUpdateError"));
     }
@@ -122,6 +124,7 @@ export default function GroceryScreen() {
     setActionError(null);
     try {
       await Promise.all(group.relatedItems.map((item) => deleteShoppingListItem(item.id)));
+      track("grocery_item_removed");
     } catch {
       setActionError(t("groceryRemoveError"));
     }

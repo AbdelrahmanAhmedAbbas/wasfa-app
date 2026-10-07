@@ -1,3 +1,5 @@
+import { track } from "@/lib/analytics/posthog";
+
 import { clearOnboardingAnswers } from "./answers";
 import { getStepIndex } from "./flow";
 import { getOnboardingProfile } from "./profile";
@@ -32,6 +34,7 @@ export async function getSignedInStart(
   userId: string
 ): Promise<"/" | "/(questionnaire)/language"> {
   const profile = await getOnboardingProfile(userId);
+  track("signed_in", { new_account: profile === null, screen: "login" });
 
   if (profile === null) {
     await restartOnboarding();
@@ -56,6 +59,7 @@ export async function getSignedUpStart(
   userId: string
 ): Promise<{ returning: boolean; start: "/" | "/(paywall)/offer" }> {
   const profile = await getOnboardingProfile(userId);
+  track("signed_in", { new_account: profile === null, screen: "signup" });
   if (profile === null) return { returning: false, start: "/(paywall)/offer" };
 
   await clearOnboardingAnswers();
