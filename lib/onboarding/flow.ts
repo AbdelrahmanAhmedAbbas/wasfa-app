@@ -43,8 +43,10 @@ export type LaunchState = {
 export type LaunchRoute = QuestionnaireRoute | "login" | "paywall" | "app";
 
 /**
- * The screen the app opens on, from what is saved on the device. Sign up is
- * never one of them: it is only reached by walking on from the demo.
+ * The screen the app opens on, from what is saved on the device. Without an
+ * account that is the login screen, unless an onboarding run is under way.
+ * Sign up is never the opening screen: it is only reached by walking on from
+ * the demo.
  */
 export function getLaunchRoute(state: LaunchState): LaunchRoute {
   const resume = getResumeRoute(state.questionnaireStep);
@@ -61,8 +63,10 @@ export function getLaunchRoute(state: LaunchState): LaunchRoute {
   // coming back (signed out, or an expired session), not signing up.
   if (state.onboardingDone) return "login";
   if (state.questionnaireDone) return "demo";
-  // Setup needs an account, so without one it is never resumed.
-  return resume === null || resume === "ready" ? "language" : resume;
+  // Onboarding starts from the login screen ("Create an account", or signing
+  // in with a new account), so a device that has not got past its first
+  // screen opens there. Setup needs an account, so it is never resumed.
+  return resume === null || resume === "ready" ? "login" : resume;
 }
 
 type ChatOption<Id extends string> = {

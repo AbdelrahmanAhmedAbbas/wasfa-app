@@ -17,7 +17,7 @@ _Avoid_: YouTube video, clip, YouTube reel
 ### Onboarding and sign-in
 
 **Onboarding**:
-The run of screens a new person walks through before using the app: language, intro, chat questions, kitchen card, demo, sign-up, offer, setup.
+The run of screens a new person walks through before using the app: language, intro, chat questions, kitchen card, demo, sign-up, offer, setup. It is started from the **Login screen**, never shown by itself on first launch.
 _Avoid_: Questionnaire (that is only the chat questions), signup flow
 
 **Sign-up screen**:
@@ -25,7 +25,7 @@ The onboarding step with the reviews and the sign-in buttons, shown after the de
 _Avoid_: Reviews screen, login screen, auth screen
 
 **Login screen**:
-The standalone sign-in screen for a **Returning account**. It is where a signed-out device opens once setup has been finished on it (after signing out, deleting the account, or an expired session), and where "I already have an account" leads.
+The standalone sign-in screen, and the first screen of the app without an account: a fresh install, after signing out or deleting the account, or an expired session. Only a device partway through **Onboarding** opens elsewhere. A **Returning account** logs in here; "Create an account", or signing in with a **New account**, starts **Onboarding** from here.
 _Avoid_: Sign-in screen, sign-up screen
 
 **New account**:
