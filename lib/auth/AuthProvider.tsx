@@ -9,6 +9,7 @@ import { Platform } from "react-native";
 
 import { api } from "@/convex/_generated/api";
 import { forgetUser, identifyUser } from "@/lib/analytics/posthog";
+import { forgetErrorUser, identifyErrorUser } from "@/lib/monitoring/sentry";
 import { convex } from "@/lib/convex/client";
 import { stopNotifications } from "@/lib/notifications/sync";
 import { getOnboardingDone, setOnboardingDone } from "@/lib/onboarding/storage";
@@ -80,6 +81,7 @@ function AuthStateProvider({ children }: { children: React.ReactNode }) {
     if (confirmedUser) {
       void AsyncStorage.setItem(LAST_USER_KEY, JSON.stringify(confirmedUser));
       identifyUser(confirmedUser);
+      identifyErrorUser(confirmedUser.id);
     } else {
       void AsyncStorage.removeItem(LAST_USER_KEY);
     }
@@ -128,6 +130,7 @@ function AuthStateProvider({ children }: { children: React.ReactNode }) {
       await stopNotifications();
       await endSession();
       forgetUser();
+      forgetErrorUser();
       setLastUser(null);
       await AsyncStorage.removeItem(LAST_USER_KEY);
     } catch (error) {

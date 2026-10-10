@@ -2,7 +2,13 @@ import FontAwesome from '@expo/vector-icons/FontAwesome';
 import { DarkTheme, DefaultTheme, LocaleDirContext, ThemeProvider } from '@react-navigation/native';
 import * as ExpoFont from 'expo-font';
 import { useFonts } from 'expo-font';
-import { Stack, useNavigationContainerRef, useRouter } from 'expo-router';
+import {
+  ErrorBoundary as RouterErrorBoundary,
+  Stack,
+  useNavigationContainerRef,
+  useRouter,
+  type ErrorBoundaryProps,
+} from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { ShareIntentProvider, useShareIntentContext } from 'expo-share-intent';
 import { useEffect, useRef, useState } from 'react';
@@ -15,12 +21,17 @@ import { AnalyticsProvider } from '@/lib/analytics/AnalyticsProvider';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { LanguageProvider, useLanguage } from '@/lib/i18n/LanguageProvider';
 import { getShareIntentKey, shouldRedirectShareIntent } from '@/lib/import/navigation';
+import { navigationIntegration, reportError, wrapRoot } from '@/lib/monitoring/sentry';
 import { brandFontSources } from '@/lib/theme/fonts';
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+/** Expo Router's error screen, after sending the error that brought it up to Sentry. */
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  useEffect(() => {
+    reportError(props.error, { feature: 'screen_render' });
+  }, [props.error]);
+
+  return <RouterErrorBoundary {...props} />;
+}
 
 export const unstable_settings = {
   // Ensure that reloading on `/modal` keeps a back button present.
@@ -30,7 +41,7 @@ export const unstable_settings = {
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+function RootLayout() {
   const [brandFontsAttempted, setBrandFontsAttempted] = useState(false);
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
@@ -87,6 +98,8 @@ export default function RootLayout() {
   );
 }
 
+export default wrapRoot(RootLayout);
+
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
   const { isRTL } = useLanguage();
@@ -97,6 +110,10 @@ function RootLayoutNav() {
   const isSignedIn = !!user;
   const { isReady, hasShareIntent, shareIntent, resetShareIntent } = useShareIntentContext();
   const lastShareKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    navigationIntegration.registerNavigationContainer(navigationRef);
+  }, [navigationRef]);
 
   useEffect(() => {
     const currentKey = getShareIntentKey(shareIntent);

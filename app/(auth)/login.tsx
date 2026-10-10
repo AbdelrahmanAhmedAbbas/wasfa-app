@@ -28,6 +28,7 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { useSignInActions } from "@/lib/auth/useSignInActions";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { t as translate, type AppLanguage } from "@/lib/i18n/translations";
+import { reportError } from "@/lib/monitoring/sentry";
 import {
   getSignedInStart,
   getSignedUpStart,
@@ -109,6 +110,7 @@ export default function LoginScreen() {
     void check
       .catch((error): "/" => {
         console.error("Failed to check the account after sign-in:", error);
+        reportError(error, { feature: "sign_in_account_check" });
         return "/";
       })
       .then((start) => {

@@ -26,6 +26,7 @@ import { useAuth } from "@/lib/auth/AuthProvider";
 import { useSignInActions } from "@/lib/auth/useSignInActions";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
+import { reportError } from "@/lib/monitoring/sentry";
 import { getOnboardingAnswers, type OnboardingAnswers } from "@/lib/onboarding/answers";
 import { DIET_OPTIONS, getHouseholdOption } from "@/lib/onboarding/flow";
 import { getSignedUpStart } from "@/lib/onboarding/sign-in-start";
@@ -90,6 +91,7 @@ export default function SignupAuthScreen() {
     void getSignedUpStart(signedInId)
       .catch((error) => {
         console.error("Failed to check the account after sign-up:", error);
+        reportError(error, { feature: "sign_up_account_check" });
         return { returning: false, start: "/(paywall)/offer" as const };
       })
       .then(async ({ returning, start }) => {

@@ -6,6 +6,7 @@ import { ImportLoader } from "@/components/import/ImportLoader";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 
+import { getServerError } from "@/lib/convex/client";
 import { createShareImport } from "@/lib/import/client";
 import {
   fillImportLimitMessage,
@@ -14,6 +15,7 @@ import {
   getImportErrorTranslationKey,
 } from "@/lib/import/errors";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import { onboardingImages } from "@/lib/theme/onboarding";
 import { wasfaColors, wasfaRadius } from "@/lib/theme/wasfa";
 
@@ -85,6 +87,8 @@ export default function ShareImportEntryScreen() {
         });
       } catch (e) {
         if (!active) return;
+        // Links the server turns down on purpose (unsupported, over the limit) are not failures.
+        if (!getServerError(e)) reportError(e, { feature: "recipe_import", entrypoint: "share" });
         setError(describeImportError(e, "Failed to create share import job."));
       } finally {
         if (active) setLoading(false);
@@ -117,6 +121,7 @@ export default function ShareImportEntryScreen() {
         },
       });
     } catch (e) {
+      if (!getServerError(e)) reportError(e, { feature: "recipe_import", entrypoint: "manual" });
       setError(describeImportError(e, "Failed to create import job."));
     } finally {
       setSubmittingManual(false);

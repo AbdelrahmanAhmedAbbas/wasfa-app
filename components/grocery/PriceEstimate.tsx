@@ -16,6 +16,7 @@ import {
 } from "@/lib/grocery-prices/estimate";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
+import { reportError } from "@/lib/monitoring/sentry";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import { wasfaColors } from "@/lib/theme/wasfa";
 
@@ -69,7 +70,7 @@ export function PriceEstimate({ lines }: Props) {
     } catch (error) {
       setFailed(true);
       const reason = getServerError(error)?.code ?? (error instanceof Error ? error.message : String(error));
-      console.warn("[grocery] price estimate failed", reason);
+      reportError(error, { feature: "price_estimate", items: lines.length });
       track("price_comparison_failed", { items: lines.length, reason: reason.slice(0, 200) });
     } finally {
       setLoading(false);

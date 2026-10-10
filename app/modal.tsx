@@ -4,9 +4,11 @@ import { StatusBar } from "expo-status-bar";
 import { useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, TextInput, View } from "react-native";
 
+import { getServerError } from "@/lib/convex/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { createImportJob } from "@/lib/import/client";
 import { getImportErrorCode, getImportErrorTranslationKey } from "@/lib/import/errors";
+import { reportError } from "@/lib/monitoring/sentry";
 import { onboardingColors } from "@/lib/theme/onboarding";
 
 export default function ImportModalScreen() {
@@ -37,6 +39,8 @@ export default function ImportModalScreen() {
         },
       });
     } catch (error) {
+      // Links the server turns down on purpose (unsupported, over the limit) are not failures.
+      if (!getServerError(error)) reportError(error, { feature: "recipe_import" });
       const localizedKey = getImportErrorTranslationKey(getImportErrorCode(error));
       setMessage(
         localizedKey ? t(localizedKey) : error instanceof Error ? error.message : "Failed to import."

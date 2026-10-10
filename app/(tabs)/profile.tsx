@@ -22,6 +22,7 @@ import { api } from "@/convex/_generated/api";
 import { convex, getServerError } from "@/lib/convex/client";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import {
   Notifications,
   getNotificationPermission,
@@ -137,7 +138,8 @@ export default function ProfileScreen() {
     saveQueue.current = saveQueue.current.then(async () => {
       try {
         await saveRecipePreferences(partial, userId);
-      } catch {
+      } catch (error) {
+        reportError(error, { feature: "preferences_save" });
         Alert.alert(t("profileSaveFailedTitle"), t("profileSaveFailedMessage"));
         // Show what is actually saved rather than the change that failed.
         applyPreferences(await loadRecipePreferences(userId).catch(() => latestPreferences.current));
@@ -211,6 +213,7 @@ export default function ProfileScreen() {
       await signOut();
     } catch (error) {
       console.error("Failed to sign out:", error);
+      reportError(error, { feature: "sign_out" });
       Alert.alert(t("profileSignOutFailedTitle"), t("profileSaveFailedMessage"));
     } finally {
       setIsLoading(false);

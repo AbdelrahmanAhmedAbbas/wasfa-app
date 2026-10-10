@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import { onboardingColors } from "@/lib/theme/onboarding";
 import { RecipeFolder, RecipeSummary } from "@/lib/recipes/client";
 
@@ -44,6 +45,7 @@ export function AddToFolderSheet({
       await onAssign(recipe.id, folderId);
       onClose();
     } catch (e) {
+      reportError(e, { feature: "folder_assign" });
       setError(e instanceof Error ? e.message : t("homeAssignFolderError"));
     } finally {
       setLoading(false);

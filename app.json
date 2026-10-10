@@ -114,7 +114,15 @@
                 }
             ],
             "expo-video",
-            "expo-apple-authentication"
+            "expo-apple-authentication",
+            [
+                "@sentry/react-native/expo",
+                {
+                    "url": "https://sentry.io/",
+                    "organization": "itqan-tech",
+                    "project": "wasfa"
+                }
+            ]
         ],
         "extra": {
             "supportsRTL": true,

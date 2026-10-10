@@ -6,6 +6,7 @@ import { LocalizedText as Text } from "@/components/LocalizedText";
 import { OnboardingScaffold } from "@/components/onboarding/OnboardingScaffold";
 import { SetupChecklist } from "@/components/onboarding/SetupChecklist";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import { onboardingColors } from "@/lib/theme/onboarding";
 import { getOnboardingAnswers, clearOnboardingAnswers } from "@/lib/onboarding/answers";
 import { saveOnboardingProfile } from "@/lib/onboarding/profile";
@@ -68,6 +69,7 @@ export default function SetupOnboardingScreen() {
       router.replace("/(tabs)");
     } catch (err) {
       console.error("Setup error:", err);
+      reportError(err, { feature: "onboarding_setup" });
       setError(err instanceof Error ? err.message : "Setup failed");
     }
   };

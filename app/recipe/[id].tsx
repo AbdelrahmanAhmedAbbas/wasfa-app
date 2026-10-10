@@ -23,6 +23,7 @@ import { CtaButton } from "@/components/wasfa/CtaButton";
 import { FoodIconTile } from "@/components/wasfa/Glyph";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import { planRecipe } from "@/lib/planner/actions";
 import {
   ANY_DAY,
@@ -223,6 +224,7 @@ export default function RecipeDetailsScreen() {
         setCookStep(0);
       }
     } catch (e) {
+      reportError(e, { feature: "recipe_load" });
       setError(e instanceof Error ? e.message : t("recipeNotFound"));
     } finally {
       setLoading(false);
@@ -261,7 +263,8 @@ export default function RecipeDetailsScreen() {
           current && current.id === updated.id ? { ...current, localized: updated.localized } : current
         );
       })
-      .catch(() => {
+      .catch((error) => {
+        reportError(error, { feature: "recipe_translate", language });
         // The recipe stays readable in its original language.
       })
       .finally(() => setTranslating(false));
@@ -296,6 +299,7 @@ export default function RecipeDetailsScreen() {
           }, 1400);
         } catch (e) {
           if (recalculationRequestRef.current !== requestId) return;
+          reportError(e, { feature: "recipe_servings" });
           setRecalculationMessage(e instanceof Error ? e.message : t("recipeUpdateAmountsFailed"));
         }
       })();
@@ -321,6 +325,7 @@ export default function RecipeDetailsScreen() {
               await updatePlan((current) => removeRecipeFromWholePlan(current, recipe.id));
               router.dismissTo("/(tabs)");
             } catch (e) {
+              reportError(e, { feature: "recipe_delete" });
               setError(e instanceof Error ? e.message : t("recipeNotFound"));
             } finally {
               setWorking(false);
@@ -344,7 +349,8 @@ export default function RecipeDetailsScreen() {
         url: recipe.source_url ?? recipe.source_reel_url ?? undefined,
       });
       if (result.action !== Share.dismissedAction) track("recipe_shared");
-    } catch {
+    } catch (error) {
+      reportError(error, { feature: "recipe_share" });
       setError(t("couldNotShareRecipe"));
     }
   };
@@ -357,7 +363,8 @@ export default function RecipeDetailsScreen() {
       // Planning a recipe also puts its ingredients on the grocery list.
       const result = await planRecipe(updatePlan, ANY_DAY, recipe.id, "recipe");
       if (!result.grocerySynced) setPlanNotice(t("recipePlanGroceryNotice"));
-    } catch {
+    } catch (error) {
+      reportError(error, { feature: "recipe_plan" });
       setPlanNotice(t("recipePlanFailed"));
     } finally {
       setPlanning(false);
@@ -395,7 +402,8 @@ export default function RecipeDetailsScreen() {
     });
 
     track("halal_swap_changed", { use_original: useOriginal });
-    void setIngredientUseOriginal(recipe, index, useOriginal).catch(() => {
+    void setIngredientUseOriginal(recipe, index, useOriginal).catch((error) => {
+      reportError(error, { feature: "halal_swap_save" });
       setRecipe((current) =>
         current && current.id === recipe.id ? { ...current, ingredients_json: previous } : current
       );
