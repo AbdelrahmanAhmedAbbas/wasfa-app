@@ -10,12 +10,14 @@
 
 import type * as auth from "../auth.js";
 import type * as authz from "../authz.js";
+import type * as feedback from "../feedback.js";
 import type * as grocery from "../grocery.js";
 import type * as http from "../http.js";
 import type * as importPipeline from "../importPipeline.js";
 import type * as imports from "../imports.js";
 import type * as lib_ai from "../lib/ai.js";
 import type * as lib_cache from "../lib/cache.js";
+import type * as lib_feedback from "../lib/feedback.js";
 import type * as lib_groceryPrices from "../lib/groceryPrices.js";
 import type * as lib_ingredientDetails from "../lib/ingredientDetails.js";
 import type * as lib_mp4Audio from "../lib/mp4Audio.js";
@@ -27,6 +29,7 @@ import type * as lib_sanityCheck from "../lib/sanityCheck.js";
 import type * as lib_stepRewriter from "../lib/stepRewriter.js";
 import type * as lib_types from "../lib/types.js";
 import type * as lib_validation from "../lib/validation.js";
+import type * as lib_welcomeEmail from "../lib/welcomeEmail.js";
 import type * as lib_youtube from "../lib/youtube.js";
 import type * as notifications from "../notifications.js";
 import type * as profiles from "../profiles.js";
@@ -34,6 +37,7 @@ import type * as recipeAi from "../recipeAi.js";
 import type * as recipes from "../recipes.js";
 import type * as shopping from "../shopping.js";
 import type * as users from "../users.js";
+import type * as welcomeEmail from "../welcomeEmail.js";
 
 import type {
   ApiFromModules,
@@ -44,12 +48,14 @@ import type {
 declare const fullApi: ApiFromModules<{
   auth: typeof auth;
   authz: typeof authz;
+  feedback: typeof feedback;
   grocery: typeof grocery;
   http: typeof http;
   importPipeline: typeof importPipeline;
   imports: typeof imports;
   "lib/ai": typeof lib_ai;
   "lib/cache": typeof lib_cache;
+  "lib/feedback": typeof lib_feedback;
   "lib/groceryPrices": typeof lib_groceryPrices;
   "lib/ingredientDetails": typeof lib_ingredientDetails;
   "lib/mp4Audio": typeof lib_mp4Audio;
@@ -61,6 +67,7 @@ declare const fullApi: ApiFromModules<{
   "lib/stepRewriter": typeof lib_stepRewriter;
   "lib/types": typeof lib_types;
   "lib/validation": typeof lib_validation;
+  "lib/welcomeEmail": typeof lib_welcomeEmail;
   "lib/youtube": typeof lib_youtube;
   notifications: typeof notifications;
   profiles: typeof profiles;
@@ -68,6 +75,7 @@ declare const fullApi: ApiFromModules<{
   recipes: typeof recipes;
   shopping: typeof shopping;
   users: typeof users;
+  welcomeEmail: typeof welcomeEmail;
 }>;
 
 /**

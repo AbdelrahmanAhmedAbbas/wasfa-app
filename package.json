@@ -7,7 +7,7 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "node --test \"lib/**/*.test.mjs\" \"convex/**/*.test.mjs\"",
+    "test": "node --test \"lib/**/*.test.mjs\" \"convex/**/*.test.mjs\" && vitest run convex/feedback.test.ts",
     "lint": "tsc --noEmit",
     "postinstall": "patch-package"
   },
@@ -18,6 +18,7 @@
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "@react-navigation/native": "^7.1.8",
+    "@sentry/react-native": "~7.2.0",
     "ai": "^4.1.56",
     "convex": "^1.46.0",
     "expo": "~54.0.33",
@@ -53,10 +54,13 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
     "@types/react": "~19.1.0",
+    "convex-test": "^0.0.60",
     "patch-package": "^8.0.0",
     "react-test-renderer": "19.1.0",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^5.0.3"
   },
   "private": true
 }

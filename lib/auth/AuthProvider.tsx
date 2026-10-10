@@ -12,6 +12,7 @@ import { forgetUser, identifyUser } from "@/lib/analytics/posthog";
 import { convex } from "@/lib/convex/client";
 import { stopNotifications } from "@/lib/notifications/sync";
 import { getOnboardingDone, setOnboardingDone } from "@/lib/onboarding/storage";
+import { setCrashUser } from "@/lib/observability/sentry";
 
 import { setCurrentUserId } from "./session";
 import { AuthContextValue, AuthUser } from "./types";
@@ -80,8 +81,10 @@ function AuthStateProvider({ children }: { children: React.ReactNode }) {
     if (confirmedUser) {
       void AsyncStorage.setItem(LAST_USER_KEY, JSON.stringify(confirmedUser));
       identifyUser(confirmedUser);
+      setCrashUser(confirmedUser.id);
     } else {
       void AsyncStorage.removeItem(LAST_USER_KEY);
+      setCrashUser(null);
     }
   }, [sessionPending, lastUserLoaded, confirmedUser]);
 

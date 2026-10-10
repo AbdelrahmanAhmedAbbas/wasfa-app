@@ -135,6 +135,23 @@ export default defineSchema({
     ...profileFields,
   }).index("by_user_id", ["user_id"]),
 
+  feedback_posts: defineTable({
+    user_id: v.id("users"),
+    kind: v.union(v.literal("bug"), v.literal("feature")),
+    title: v.string(),
+    detail: v.string(),
+    status: v.union(v.literal("open"), v.literal("planned"), v.literal("done")),
+    vote_count: v.number(),
+  }).index("by_user_id", ["user_id"]),
+
+  feedback_votes: defineTable({
+    user_id: v.id("users"),
+    post_id: v.id("feedback_posts"),
+  })
+    .index("by_user_id", ["user_id"])
+    .index("by_post_id", ["post_id"])
+    .index("by_user_id_and_post_id", ["user_id", "post_id"]),
+
   recipe_folders: defineTable({
     user_id: v.id("users"),
     name: v.string(),

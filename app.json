@@ -114,7 +114,14 @@
                 }
             ],
             "expo-video",
-            "expo-apple-authentication"
+            "expo-apple-authentication",
+            [
+                "@sentry/react-native",
+                {
+                    "organization": "itqan-tech",
+                    "project": "react-native"
+                }
+            ]
         ],
         "extra": {
             "supportsRTL": true,

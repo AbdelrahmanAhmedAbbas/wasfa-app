@@ -15,6 +15,7 @@ import { AnalyticsProvider } from '@/lib/analytics/AnalyticsProvider';
 import { AuthProvider, useAuth } from '@/lib/auth/AuthProvider';
 import { LanguageProvider, useLanguage } from '@/lib/i18n/LanguageProvider';
 import { getShareIntentKey, shouldRedirectShareIntent } from '@/lib/import/navigation';
+import { withCrashReporting } from '@/lib/observability/sentry';
 import { brandFontSources } from '@/lib/theme/fonts';
 
 export {
@@ -30,7 +31,7 @@ export const unstable_settings = {
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+function RootLayout() {
   const [brandFontsAttempted, setBrandFontsAttempted] = useState(false);
   const [loaded, error] = useFonts({
     SpaceMono: require('../assets/fonts/SpaceMono-Regular.ttf'),
@@ -86,6 +87,8 @@ export default function RootLayout() {
     </ShareIntentProvider>
   );
 }
+
+export default withCrashReporting(RootLayout);
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
@@ -152,6 +155,7 @@ function RootLayoutNav() {
               <Stack.Screen name="import/index" options={{ headerShown: false, gestureEnabled: false }} />
               <Stack.Screen name="import/[jobId]" options={{ headerShown: false, gestureEnabled: false }} />
               <Stack.Screen name="recipe/[id]" options={{ headerShown: false }} />
+              <Stack.Screen name="feedback" options={{ headerShown: false }} />
               <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
             </Stack.Protected>
           </Stack>

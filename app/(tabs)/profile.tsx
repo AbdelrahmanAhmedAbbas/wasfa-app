@@ -1,4 +1,5 @@
 import Feather from "@expo/vector-icons/Feather";
+import { router } from "expo-router";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ActivityIndicator,
@@ -476,6 +477,21 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        <View style={styles.feedbackBlock}>
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [styles.feedbackButton, pressed && styles.pressed]}
+            onPress={() => router.push("/feedback")}
+          >
+            <Feather name="message-circle" size={22} color={wasfaColors.primary} />
+            <View style={styles.feedbackText}>
+              <Text style={styles.feedbackTitle}>{t("feedbackEntry")}</Text>
+              <Text style={styles.feedbackHint}>{t("feedbackEntryHint")}</Text>
+            </View>
+            <Feather name="chevron-right" size={20} color={wasfaColors.muted} />
+          </Pressable>
+        </View>
+
         {/* Actions */}
         <View style={styles.actions}>
           <Pressable
@@ -629,6 +645,18 @@ function PreferenceChip({
 }
 
 const styles = StyleSheet.create({
+  feedbackBlock: { marginTop: 24, paddingHorizontal: 20 },
+  feedbackButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: "#FFFFFF",
+  },
+  feedbackText: { flex: 1, gap: 2 },
+  feedbackTitle: { color: wasfaColors.ink, fontSize: 16, fontWeight: "700" },
+  feedbackHint: { color: wasfaColors.muted, fontSize: 13 },
   container: {
     flex: 1,
     backgroundColor: wasfaColors.background,

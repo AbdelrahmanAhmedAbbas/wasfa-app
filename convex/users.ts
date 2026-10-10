@@ -170,6 +170,31 @@ export const purgeUserData = internalMutation({
       .take(PURGE_BATCH);
     for (const device of devices) await ctx.db.delete("push_devices", device._id);
 
+    const votes = await ctx.db
+      .query("feedback_votes")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(PURGE_BATCH);
+    for (const vote of votes) {
+      const post = await ctx.db.get("feedback_posts", vote.post_id);
+      if (post) await ctx.db.patch("feedback_posts", post._id, { vote_count: Math.max(0, post.vote_count - 1) });
+      await ctx.db.delete("feedback_votes", vote._id);
+    }
+    if (votes.length > 0) return await again();
+
+    const post = await ctx.db
+      .query("feedback_posts")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .first();
+    if (post) {
+      const postVotes = await ctx.db
+        .query("feedback_votes")
+        .withIndex("by_post_id", (q) => q.eq("post_id", post._id))
+        .take(PURGE_BATCH);
+      for (const vote of postVotes) await ctx.db.delete("feedback_votes", vote._id);
+      if (postVotes.length < PURGE_BATCH) await ctx.db.delete("feedback_posts", post._id);
+      return await again();
+    }
+
     const profiles = await ctx.db
       .query("onboarding_profiles")
       .withIndex("by_user_id", (q) => q.eq("user_id", userId))

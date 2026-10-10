@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 
+import { internal } from "./_generated/api";
 import { mutation, query } from "./_generated/server";
 import { requireUserId } from "./authz";
 import { profileFields } from "./schema";
@@ -32,6 +33,7 @@ export const save = mutation({
       await ctx.db.patch("onboarding_profiles", existing._id, fields);
     } else {
       await ctx.db.insert("onboarding_profiles", { user_id: userId, ...fields });
+      await ctx.scheduler.runAfter(0, internal.welcomeEmail.send, { userId });
     }
     return null;
   },
