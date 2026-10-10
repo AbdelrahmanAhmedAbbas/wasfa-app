@@ -6,6 +6,7 @@ import { track } from "@/lib/analytics/posthog";
 import { LocalizedText as Text } from "@/components/LocalizedText";
 import { CtaButton } from "@/components/wasfa/CtaButton";
 import { FoodIconTile } from "@/components/wasfa/Glyph";
+import { getServerError } from "@/lib/convex/client";
 import { estimateGroceryPrices, type GroceryLine } from "@/lib/grocery-prices/client";
 import {
   summarizeEstimate,
@@ -65,9 +66,11 @@ export function PriceEstimate({ lines }: Props) {
         items: lines.length,
         seconds: Math.round((Date.now() - startedAt) / 1000),
       });
-    } catch {
+    } catch (error) {
       setFailed(true);
-      track("price_comparison_failed", { items: lines.length });
+      const reason = getServerError(error)?.code ?? (error instanceof Error ? error.message : String(error));
+      console.warn("[grocery] price estimate failed", reason);
+      track("price_comparison_failed", { items: lines.length, reason: reason.slice(0, 200) });
     } finally {
       setLoading(false);
     }

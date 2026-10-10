@@ -287,6 +287,13 @@ export async function estimateGroceryPrices(
       candidates: candidates.slice(index, index + ITEMS_PER_MODEL_CALL),
     });
   }
-  const priced = await Promise.all(batches.map((batch) => matchBatch(batch.items, batch.candidates)));
-  return priced.flat();
+  // A batch the models could not match leaves its lines unpriced instead of failing the
+  // whole list; the estimate fails only when no batch was matched.
+  const settled = await Promise.allSettled(batches.map((batch) => matchBatch(batch.items, batch.candidates)));
+  if (settled.every((result) => result.status === "rejected")) throw new Error("GROCERY_MATCH_FAILED");
+  return settled.flatMap((result, index) =>
+    result.status === "fulfilled"
+      ? result.value
+      : batches[index].items.map((item) => ({ key: item.key, name: item.name, matches: {} }))
+  );
 }
