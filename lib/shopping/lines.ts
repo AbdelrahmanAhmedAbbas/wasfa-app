@@ -32,9 +32,12 @@ function isInLanguage(text: string | undefined, language: Language): text is str
   return language === "ar" ? ARABIC_SCRIPT.test(text) : !ARABIC_SCRIPT.test(text);
 }
 
-export function formatShoppingLine(item: { name: string; quantity?: string; unit?: string; notes?: string }): string {
-  const base = [item.quantity, item.unit, item.name].filter(Boolean).join(" ").trim();
-  return item.notes ? `${base} (${item.notes})` : base;
+/**
+ * What to buy for one ingredient: amount, unit and name. An ingredient's notes
+ * and preparation are for cooking, so they stay on the recipe.
+ */
+export function formatShoppingLine(item: { name: string; quantity?: string; unit?: string }): string {
+  return [item.quantity, item.unit, item.name].filter(Boolean).join(" ").trim();
 }
 
 /**
@@ -63,11 +66,16 @@ export function localizeShoppingLine(
 
   const ingredients = recipe.ingredients_json;
   const sameName = (ingredient: LineIngredient, name: string) =>
-    parseShoppingText(formatShoppingLine({ ...ingredient, name, notes: undefined })).key === line.key;
+    parseShoppingText(formatShoppingLine({ ...ingredient, name })).key === line.key;
 
   // The exact line first: a recipe can list one ingredient twice with different amounts.
+  // Lines saved before notes were left out carry them in brackets at the end.
   // A changed amount (new servings) still matches by name.
-  let index = ingredients.findIndex((ingredient) => formatShoppingLine(ingredient) === text);
+  const withNotes = (ingredient: LineIngredient) =>
+    ingredient.notes ? `${formatShoppingLine(ingredient)} (${ingredient.notes})` : formatShoppingLine(ingredient);
+  let index = ingredients.findIndex(
+    (ingredient) => formatShoppingLine(ingredient) === text || withNotes(ingredient) === text
+  );
   if (index < 0) index = ingredients.findIndex((ingredient) => sameName(ingredient, ingredient.name));
 
   let name: string | undefined;
@@ -96,11 +104,9 @@ export function localizeShoppingLine(
   if (!isInLanguage(name, language)) return text;
 
   const ingredient = ingredients[index];
-  const notes = translated[index].notes;
   return formatShoppingLine({
     quantity: ingredient.quantity,
     unit: getLocalizedUnitLabel(ingredient.unit, language),
     name: cleanLocalizedIngredientName(name, ingredient.quantity),
-    notes: isInLanguage(notes, language) ? notes : undefined,
   });
 }

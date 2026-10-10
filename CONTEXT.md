@@ -35,3 +35,13 @@ _Avoid_: New user, first-time user
 **Returning account**:
 A signed-in account that already has a saved profile. It goes straight into the app and keeps that profile, wherever it signed in.
 _Avoid_: Existing user, old user
+
+### Grocery list
+
+**Grocery line**:
+One ingredient of a planned recipe as it goes on the list: its amount, unit and name, and nothing else. The ingredient's notes, preparation and any description or cooking step stay on the recipe.
+_Avoid_: Shopping item, grocery item, ingredient
+
+**Grocery row**:
+What the list shows: every **Grocery line** for the same ingredient, from any recipe, added up into one name and one amount. Sizes and cuts ("large", "chopped") do not make a different ingredient; minced meat does. Amounts that convert (g and kg, ml and l) are added into one; amounts that do not ("2 cups" and "500 g" of rice) stand side by side. A recipe planned on two days of this week, or on a day and in "Any day", counts twice. A row does not name its recipes; the recipe chips above the list filter by recipe.
+_Avoid_: Merged item, group

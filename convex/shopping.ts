@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx } from "./_generated/server";
 import { requireUserId } from "./authz";
+import { linesToAdd } from "./lib/shoppingLines";
 
 const MAX_LISTED_ITEMS = 1000;
 const MAX_LINES_PER_RECIPE = 200;
@@ -89,12 +90,11 @@ export const addForRecipe = mutation({
       .query("shopping_list_items")
       .withIndex("by_user_id_and_recipe_id", (q) => q.eq("user_id", userId).eq("recipe_id", recipeId))
       .take(MAX_LISTED_ITEMS);
-    const seen = new Set(existing.map((item) => item.ingredient_text));
-
-    for (const line of lines.slice(0, MAX_LINES_PER_RECIPE)) {
-      const text = line.trim();
-      if (!text || seen.has(text)) continue;
-      seen.add(text);
+    const toAdd = linesToAdd(
+      existing.map((item) => item.ingredient_text),
+      lines.slice(0, MAX_LINES_PER_RECIPE)
+    );
+    for (const text of toAdd) {
       await ctx.db.insert("shopping_list_items", {
         user_id: userId,
         recipe_id: recipeId,

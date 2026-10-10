@@ -20,6 +20,8 @@ import Feather from "@expo/vector-icons/Feather";
 import { isPriceComparisonAvailable } from "@/lib/grocery-prices/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { reportError } from "@/lib/monitoring/sentry";
+import { countPlannedTimes, getWeekDates, toDateKey } from "@/lib/planner/plan";
+import { useMealPlan } from "@/lib/planner/storage";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import {
   deleteShoppingListItem,
@@ -34,12 +36,14 @@ import { getTabBarClearance, wasfaColors } from "@/lib/theme/wasfa";
 
 type GroupedItem = {
   id: string;
+  /** The amount and the name as one line, for the price estimate and the remove prompt. */
   ingredient_text: string;
-  /** Ingredient name without amount/unit, used for the icon tile and basket chip. */
+  /** What to buy, without amounts or notes. */
   name: string;
+  /** The added-up amounts, or "" when no recipe gave one. */
+  amount: string;
   checked: boolean;
   relatedItems: ShoppingListItem[];
-  recipes: Set<string>;
 };
 
 function getShoppingRecipeTitle(item: ShoppingListItem, language: "en" | "ar") {
@@ -48,23 +52,17 @@ function getShoppingRecipeTitle(item: ShoppingListItem, language: "en" | "ar") {
 
 const NO_ITEMS: ShoppingListItem[] = [];
 
-function groupItems(items: ShoppingListItem[], language: "en" | "ar"): GroupedItem[] {
-  return mergeShoppingItems(items).map((group) => {
-    // A recipe is named once on the row, however many of its lines merged into it.
-    const recipeTitles = new Map<string, string>();
-    group.items.forEach((item) => {
-      recipeTitles.set(item.recipe?.id ?? item.recipe_id, getShoppingRecipeTitle(item, language));
-    });
-
-    return {
+function groupItems(items: ShoppingListItem[], timesPlanned: Map<string, number>): GroupedItem[] {
+  return mergeShoppingItems(items, { timesPlanned: (item) => timesPlanned.get(item.recipe_id) ?? 1 }).map(
+    (group) => ({
       id: `group-${group.key}`,
       ingredient_text: group.text,
       name: group.name,
+      amount: group.amount,
       checked: group.items.every((item) => item.checked),
       relatedItems: group.items,
-      recipes: new Set(recipeTitles.values()),
-    };
-  });
+    })
+  );
 }
 
 export default function GroceryScreen() {
@@ -79,10 +77,17 @@ export default function GroceryScreen() {
   const [recipeFilter, setRecipeFilter] = useState<string | null>(null);
   const error = loadFailed ? t("groceryLoadError") : actionError;
 
+  const { plan, loaded: planLoaded } = useMealPlan();
+  // A recipe planned on two days this week is cooked twice, so its amounts count twice.
+  const timesPlanned = useMemo(
+    () => (planLoaded ? countPlannedTimes(plan, getWeekDates(new Date()).map(toDateKey)) : new Map<string, number>()),
+    [plan, planLoaded]
+  );
+
   const localizeDigits = (value: string) => (language === "ar" ? toArabicIndicDigits(value) : value);
-  // A line with no translation stays in the recipe's own language, so only Arabic text gets Arabic digits.
-  const localizeIngredient = (value: string) =>
-    /[\u0600-\u06FF]/.test(value) ? localizeDigits(value) : value;
+  // A line with no translation stays in the recipe's own language, so only Arabic rows get Arabic digits.
+  const localizeAmount = (group: GroupedItem) =>
+    /[\u0600-\u06FF]/.test(group.name) ? localizeDigits(group.amount) : group.amount;
 
   const recipeChips = useMemo(() => {
     const recipeTitles = new Map<string, string>();
@@ -101,9 +106,9 @@ export default function GroceryScreen() {
         activeFilter
           ? items.filter((item) => (item.recipe?.id ?? item.recipe_id) === activeFilter)
           : items,
-        language
+        timesPlanned
       ),
-    [activeFilter, items, language]
+    [activeFilter, items, timesPlanned]
   );
   const priceComparisonAvailable = isPriceComparisonAvailable();
   const toBuy = groupedItems.filter((group) => !group.checked);
@@ -134,7 +139,7 @@ export default function GroceryScreen() {
   };
 
   const confirmRemoveGroup = (group: GroupedItem) => {
-    Alert.alert(t("groceryRemoveTitle"), group.ingredient_text, [
+    Alert.alert(t("groceryRemoveTitle"), group.amount ? `${group.name} · ${localizeAmount(group)}` : group.name, [
       { text: t("cancel"), style: "cancel" },
       { text: t("delete"), style: "destructive", onPress: () => void removeGroup(group) },
     ]);
@@ -239,10 +244,14 @@ export default function GroceryScreen() {
               >
                 <FoodIconTile name={group.name} size={48} />
                 <View style={styles.itemBody}>
-                  <Text style={styles.itemText}>{localizeIngredient(group.ingredient_text)}</Text>
-                  <Text style={styles.itemMeta} numberOfLines={1}>
-                    {Array.from(group.recipes).join(" · ")}
+                  <Text style={styles.itemName} numberOfLines={2}>
+                    {group.name}
                   </Text>
+                  {group.amount ? (
+                    <Text style={styles.itemAmount} numberOfLines={1}>
+                      {localizeAmount(group)}
+                    </Text>
+                  ) : null}
                 </View>
                 <CheckBox checked={false} />
               </Pressable>
@@ -408,17 +417,18 @@ const styles = StyleSheet.create({
   },
   itemBody: {
     flex: 1,
-    gap: 1,
+    gap: 2,
   },
-  itemText: {
+  itemName: {
     fontSize: 16,
     fontWeight: "700",
     color: wasfaColors.ink,
     textAlign: "left",
   },
-  itemMeta: {
-    fontSize: 12,
-    color: wasfaColors.muted,
+  itemAmount: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: wasfaColors.primaryDark,
     textAlign: "left",
   },
   basketCard: {

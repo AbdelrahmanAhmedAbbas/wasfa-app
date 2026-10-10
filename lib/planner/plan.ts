@@ -99,6 +99,18 @@ export function getPlannedRecipeIds(plan: MealPlan, dayKeys: string[]): string[]
   return Array.from(new Set([ANY_DAY, ...dayKeys].flatMap((dayKey) => getPlanDay(plan, dayKey))));
 }
 
+/**
+ * How many times each recipe is planned on `dayKeys` and in "Any day": a recipe
+ * cooked on two days needs its ingredients twice.
+ */
+export function countPlannedTimes(plan: MealPlan, dayKeys: string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const dayKey of [ANY_DAY, ...new Set(dayKeys)]) {
+    for (const recipeId of getPlanDay(plan, dayKey)) counts.set(recipeId, (counts.get(recipeId) ?? 0) + 1);
+  }
+  return counts;
+}
+
 /** True when the recipe appears in any bucket of the plan, past weeks included. */
 export function isRecipeInPlan(plan: MealPlan, recipeId: string): boolean {
   return plan.any.includes(recipeId) || Object.values(plan.days).some((ids) => ids.includes(recipeId));
