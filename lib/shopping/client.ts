@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { convex } from "@/lib/convex/client";
+import { reportError } from "@/lib/monitoring/sentry";
 import {
   localizeRecipe,
   normalizeLocalizedRecipeText,
@@ -130,7 +131,8 @@ export function useLocalizedShoppingList(
       const attemptKey = `${recipeId}:${language}`;
       if (translationAttempts.current.has(attemptKey)) return;
       translationAttempts.current.add(attemptKey);
-      void localizeRecipe(recipeId).catch(() => {
+      void localizeRecipe(recipeId).catch((error) => {
+        reportError(error, { feature: "grocery_translate", language });
         // The lines stay readable in the recipe's own language.
       });
     });

@@ -19,6 +19,7 @@ import { FoodIconTile, Glyph } from "@/components/wasfa/Glyph";
 import Feather from "@expo/vector-icons/Feather";
 import { isPriceComparisonAvailable } from "@/lib/grocery-prices/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import { toArabicIndicDigits } from "@/lib/recipes/numerals";
 import {
   deleteShoppingListItem,
@@ -115,7 +116,8 @@ export default function GroceryScreen() {
     try {
       await Promise.all(group.relatedItems.map((item) => toggleShoppingListItemChecked(item.id, next)));
       track("grocery_item_checked", { checked: next });
-    } catch {
+    } catch (error) {
+      reportError(error, { feature: "grocery_check" });
       setActionError(t("groceryUpdateError"));
     }
   };
@@ -125,7 +127,8 @@ export default function GroceryScreen() {
     try {
       await Promise.all(group.relatedItems.map((item) => deleteShoppingListItem(item.id)));
       track("grocery_item_removed");
-    } catch {
+    } catch (error) {
+      reportError(error, { feature: "grocery_remove" });
       setActionError(t("groceryRemoveError"));
     }
   };

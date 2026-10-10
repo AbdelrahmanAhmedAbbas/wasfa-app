@@ -6,6 +6,7 @@ import { track } from "@/lib/analytics/posthog";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { isConvexConfigured } from "@/lib/convex/client";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 
 export type SignInMethod = "apple" | "google" | "email";
 
@@ -30,6 +31,7 @@ export function useSignInActions() {
       await action();
     } catch (error) {
       console.error(`Failed to sign in with ${method}:`, error);
+      reportError(error, { feature: "sign_in", method });
       track("sign_in_failed", { method });
       Alert.alert(t("authErrorTitle"), errorMessage);
     } finally {

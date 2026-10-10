@@ -2,7 +2,7 @@
     "expo": {
         "name": "wasfa",
         "slug": "meal-planner",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "orientation": "portrait",
         "icon": "./assets/images/app-icon-logo.png",
         "scheme": "mealplanner",
@@ -116,10 +116,11 @@
             "expo-video",
             "expo-apple-authentication",
             [
-                "@sentry/react-native",
+                "@sentry/react-native/expo",
                 {
+                    "url": "https://sentry.io/",
                     "organization": "itqan-tech",
-                    "project": "react-native"
+                    "project": "wasfa"
                 }
             ]
         ],

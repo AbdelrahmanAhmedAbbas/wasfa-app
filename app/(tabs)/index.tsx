@@ -40,6 +40,7 @@ import {
 } from "@/lib/home/recipe-filters";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import { useImportAllowance } from "@/lib/import/useImportAllowance";
+import { reportError } from "@/lib/monitoring/sentry";
 import { subscribeToFinishedImports } from "@/lib/notifications/importEvents";
 import {
   assignRecipeToFolder,
@@ -135,6 +136,7 @@ export default function HomeScreen() {
       setRecipes(selectedRecipesData);
       setError(null);
     } catch (e) {
+      reportError(e, { feature: "home_load" });
       setError(e instanceof Error ? e.message : t("homeLoadFoldersError"));
     } finally {
       if (showSpinner) setLoading(false);
@@ -326,6 +328,7 @@ export default function HomeScreen() {
                 setAllRecipes(recipesData);
               }
             } catch (e) {
+              reportError(e, { feature: "folder_delete" });
               Alert.alert(t("homeSomethingWentWrong"), t("homeDeleteFolderError"));
             }
           },

@@ -19,6 +19,7 @@ import { ScreenTransition } from "@/components/navigation/ScreenTransition";
 import { BottomDrawer } from "@/components/ui/BottomDrawer";
 import { getLocalizedRecipeSummary } from "@/lib/home/home-screen";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import { planRecipe, unplanRecipe } from "@/lib/planner/actions";
 import {
   formatDayOfMonth,
@@ -97,7 +98,8 @@ export default function PlannerScreen() {
           setRecipesLoaded(true);
           setNotice(null);
         })
-        .catch(() => {
+        .catch((error) => {
+          reportError(error, { feature: "planner_load" });
           if (isActive) setNotice(t("plannerLoadError"));
         });
 

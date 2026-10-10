@@ -1,3 +1,8 @@
+"use node";
+
+// Node, like every other action here that calls outside services. The pricing code was
+// ported from a Deno function and relies on its web APIs, such as AbortSignal.timeout.
+
 import { ConvexError, v } from "convex/values";
 
 import { action } from "./_generated/server";

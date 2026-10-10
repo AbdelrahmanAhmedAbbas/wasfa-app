@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
+import { reportError } from "@/lib/monitoring/sentry";
 import { onboardingColors } from "@/lib/theme/onboarding";
 
 interface FolderNameDrawerProps {
@@ -58,6 +59,7 @@ export function FolderNameDrawer({
       await onConfirm(trimmed);
       onClose();
     } catch (e) {
+      reportError(e, { feature: "folder_save" });
       setError(e instanceof Error ? e.message : t("homeFolderGenericError"));
     } finally {
       setLoading(false);

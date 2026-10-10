@@ -14,6 +14,7 @@ import { CtaButton } from "@/components/wasfa/CtaButton";
 import { useAuth } from "@/lib/auth/AuthProvider";
 import { useLanguage } from "@/lib/i18n/LanguageProvider";
 import type { TranslationKey } from "@/lib/i18n/translations";
+import { reportError } from "@/lib/monitoring/sentry";
 import { clearOnboardingAnswers, getOnboardingAnswers } from "@/lib/onboarding/answers";
 import { hasQuestionnaireAnswers, pickChatAnswers } from "@/lib/onboarding/flow";
 import { getOnboardingProfile, saveOnboardingProfile } from "@/lib/onboarding/profile";
@@ -85,6 +86,7 @@ export default function ReadyQuestionnaireScreen() {
       if (isMounted.current) setDoneCount(3);
     } catch (err) {
       console.error("Questionnaire setup error:", err);
+      reportError(err, { feature: "onboarding_setup" });
       if (isMounted.current) {
         setError(err instanceof Error ? err.message : "Setup failed");
       }
