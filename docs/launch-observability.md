@@ -19,11 +19,11 @@ Before launch, use a preview build and a test account to check each event and it
 
 ## Sentry: crashes
 
-1. The Sentry project is `itqan-tech/react-native`. The Expo Sentry plugin has these slugs in `app.json`, and `EXPO_PUBLIC_SENTRY_DSN` is set in the EAS preview and production environments.
+1. The Sentry project is `itqan-tech/wasfa`. The Expo Sentry plugin has these slugs in `app.json`, and `EXPO_PUBLIC_SENTRY_DSN` is set in the EAS preview and production environments. The SDK is set up in `lib/monitoring/sentry.ts`.
 2. Create a Sentry organization auth token with Source Map Upload and Release Creation permissions, then store it as the **sensitive** `SENTRY_AUTH_TOKEN` in EAS preview and production. Never put it in `EXPO_PUBLIC_` or commit it. Sensitive visibility also lets local `eas env:exec` use the token to upload source maps for EAS updates.
 3. Make a new native build because the Sentry SDK has native code. Verify a test exception from a preview build appears in Sentry with a readable stack trace and release.
 
-The SDK is disabled in development and associates errors with the account ID only. It does not send name or email as Sentry user fields.
+The SDK is disabled in development and associates errors with the account ID only. It does not send name or email as Sentry user fields. Besides crashes, it receives every failure the app catches and shows to the person, through `reportError`, tagged with a `feature` (for example `price_estimate`, `recipe_import`).
 
 ## Resend: welcome email
 

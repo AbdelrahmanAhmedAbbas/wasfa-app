@@ -20,7 +20,8 @@ export const navigationIntegration = Sentry.reactNavigationIntegration({
  */
 Sentry.init({
   dsn,
-  enabled: dsn !== "",
+  // Development runs stay out of the reports even with the DSN set.
+  enabled: dsn !== "" && !__DEV__,
   // The EAS build channel: production, preview or development.
   environment: Updates.channel || "development",
   // Account ids are attached by identifyErrorUser; emails and IP addresses are not sent.
