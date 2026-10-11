@@ -51,13 +51,17 @@ export const recalculateServings = action({
     const recipe = await ctx.runQuery(internal.recipes.getOwned, { userId, recipeId: args.recipeId });
     if (!recipe) throw recipeNotFound();
 
+    // Every scaling starts from the amounts as imported, so rounding never builds up.
+    const baseServings = recipe.base_servings ?? recipe.servings;
     const recalculated = await recalculateRecipeServings(
       toDraft(recipe, { requireMeasurements: true }),
-      Math.trunc(args.servings)
+      Math.trunc(args.servings),
+      baseServings
     );
     return await ctx.runMutation(internal.recipes.applyServings, {
       recipeId: recipe._id,
       servings: recalculated.servings,
+      baseServings,
       ingredients: recalculated.ingredients,
       steps: recalculated.steps,
       localized: recalculated.localized ?? {},

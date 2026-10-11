@@ -36,6 +36,16 @@ _Avoid_: New user, first-time user
 A signed-in account that already has a saved profile. It goes straight into the app and keeps that profile, wherever it signed in.
 _Avoid_: Existing user, old user
 
+### Recipes
+
+**Step**:
+One action of the method a home cook follows, in the order they would do it: "Dice the onions", then "Fry the onions until soft, about 5 minutes". Preparation (washing, cutting, soaking, marinating, preheating) comes first, each as its own step, and no step uses an ingredient in a state an earlier step did not produce. Steps are worked out from the whole video, not cut from its transcript.
+_Avoid_: Instruction, scene, transcript segment
+
+**Scaling**:
+Changing a recipe's servings. Amounts are worked out from the amounts as imported and rounded the way a cook measures: half an onion rather than 0.35, whole eggs and cloves, quarter teaspoons, grams to the nearest 5 or 25, and a small amount moves to the spoon that measures it (0.1 cup is 1½ tbsp). Going back to the imported servings gives the imported amounts exactly.
+_Avoid_: Resizing, recalculating
+
 ### Grocery list
 
 **Grocery line**:

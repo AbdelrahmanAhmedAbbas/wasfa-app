@@ -23,6 +23,9 @@ export type IngredientItem = {
   suggested_alternative?: string;
   /** Set when the user keeps a non-halal ingredient instead of its halal swap. */
   use_original?: boolean;
+  /** The amount as imported, kept once the recipe is scaled; every scaling starts from it. */
+  base_quantity?: string;
+  base_unit?: string;
   source?: "caption" | "transcript" | "web_research" | "ai_estimate" | "user_edit";
   confidence?: number;
   evidence_text?: string;

@@ -244,6 +244,7 @@ export const applyServings = internalMutation({
   args: {
     recipeId: v.id("recipes"),
     servings: v.optional(v.number()),
+    baseServings: v.optional(v.number()),
     ingredients: v.array(ingredient),
     steps: v.array(step),
     localized,
@@ -251,6 +252,7 @@ export const applyServings = internalMutation({
   handler: async (ctx, args) => {
     await ctx.db.patch("recipes", args.recipeId, {
       servings: args.servings,
+      base_servings: args.baseServings,
       ingredients_json: args.ingredients,
       steps_json: args.steps,
       localized_json: args.localized,

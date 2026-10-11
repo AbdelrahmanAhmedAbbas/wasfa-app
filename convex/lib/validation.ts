@@ -269,6 +269,12 @@ function sanitizeIngredient(input: unknown): IngredientItem | null {
   if (halalConcern) result.halal_concern = halalConcern;
   if (suggestedAlternative) result.suggested_alternative = suggestedAlternative;
   if (item.use_original === true) result.use_original = true;
+  // An amount such as "2" onions has no unit, so its base has none either.
+  if (typeof item.base_quantity === "string" && item.base_quantity.trim()) {
+    result.base_quantity = item.base_quantity.trim();
+    const baseUnit = optionalString(item.base_unit);
+    if (baseUnit) result.base_unit = baseUnit;
+  }
   if (source) result.source = source;
   if (typeof confidence === "number") result.confidence = confidence;
   if (evidenceText) result.evidence_text = evidenceText;

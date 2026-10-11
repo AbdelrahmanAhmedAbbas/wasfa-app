@@ -64,6 +64,7 @@ import {
 import {
   cleanLocalizedIngredientName,
   convertIngredientAmount,
+  displayAmount,
   getLocalizedUnitLabel,
   type MeasurementSystem,
 } from "@/lib/recipes/units";
@@ -164,10 +165,8 @@ function getLocalizedRecipeText(recipe: RecipeDetail, language: "en" | "ar", tra
 function getIngredientAmount(item: RecipeIngredient, measurementSystem: MeasurementSystem | null, language: "en" | "ar") {
   const converted = convertIngredientAmount(item, measurementSystem);
   const unit = getLocalizedUnitLabel(converted.unit || item.size, language);
-  const quantity =
-    language === "ar" && converted.quantity
-      ? toArabicIndicDigits(converted.quantity)
-      : converted.quantity;
+  const shown = displayAmount(converted.quantity);
+  const quantity = language === "ar" && shown ? toArabicIndicDigits(shown) : shown;
   return [quantity, unit].filter(Boolean).join(" ").trim();
 }
 

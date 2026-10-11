@@ -46,6 +46,10 @@ export const ingredient = v.object({
   suggested_alternative: v.optional(v.string()),
   // Set when the user keeps a non-halal ingredient instead of its halal swap.
   use_original: v.optional(v.boolean()),
+  // The amount as imported, kept once the recipe is scaled so every new serving
+  // count is worked out from it rather than from an already rounded amount.
+  base_quantity: v.optional(v.string()),
+  base_unit: v.optional(v.string()),
   source: v.optional(
     v.union(
       v.literal("caption"),
@@ -171,6 +175,8 @@ export default defineSchema({
     cuisine: v.string(),
     meal_type: v.string(),
     servings: v.optional(v.number()),
+    // The serving count the base amounts of the ingredients are for; set once scaled.
+    base_servings: v.optional(v.number()),
     prep_minutes: v.optional(v.number()),
     cook_minutes: v.optional(v.number()),
     ingredients_json: v.array(ingredient),

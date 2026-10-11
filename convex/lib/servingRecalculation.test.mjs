@@ -9,7 +9,7 @@ test("serving recalculation scales ingredients locally and persists localized st
   const client = readFileSync(new URL("../../lib/recipes/client.ts", import.meta.url), "utf8");
 
   assert.match(ai, /function scaleIngredientQuantities/);
-  assert.match(ai, /function scaleQuantityString/);
+  assert.match(ai, /scaleAmount\(/);
   assert.match(ai, /function rewriteLocalizedStepsForServings/);
   assert.match(ai, /localizedStepRewriteSchema/);
   assert.doesNotMatch(ai, /schema:\s*servingRecalculationSchema/);

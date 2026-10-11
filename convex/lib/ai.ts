@@ -21,6 +21,7 @@ import {
   normalizeQuantity,
   normalizeUnit,
 } from "./ingredientDetails.ts";
+import { scaleAmount } from "./kitchenAmounts.ts";
 import { getArabicTextIssues } from "./sanityCheck.ts";
 import { linkStepIngredients } from "./stepRewriter.ts";
 import { validateRecipeDraft } from "./validation.ts";
@@ -280,7 +281,7 @@ Rules:
 - When the source states the ingredients but not the method, write the steps a home cook would follow using only those ingredients.
 - Write the title, description, ingredient names, preparation, notes and steps in the language the recipe is told in. An Arabic recipe stays Arabic, keeping the creator's own ingredient words (for example "حبهان", "كزبرة ناشفة"); never translate it to English. Set source.language to "ar" or "en".
 - Include cuisine and meal_type in that same language. Use cuisine="General" and meal_type="Meal" only when the source is unclear.
-- Infer servings and the order of steps from transcript + caption + metadata.
+- Infer servings from transcript + caption + metadata.
 - Ingredient names alone are incomplete. For each ingredient, preserve the exact quantity/unit/size the source gives, such as 150 g, 2 tbsp, 3 slices, 1 piece, 1 whole, 500 ml, 1 can, 2 cloves.
 - quantity uses Western digits only (2, 0.5, 1/4), whatever the language. Convert Arabic digits and spoken amounts: "٢" is 2, "نص" or "نصف" is 0.5, "ربع" is 0.25, "تلت" is 1/3, "ملعقتين" is 2, "كوبين" is 2.
 - unit is always one of these English words, whatever the language: ${ALLOWED_UNITS_FOR_PROMPT.join(", ")}. For example "ملعقة كبيرة" or "معلقة أكل" is tbsp, "ملعقة صغيرة" or "معلقة شاي" is tsp, "كوب" or "كوباية" is cup, "جرام" is g, "كيلو" is kg, "فص" is clove, "حبة" is whole, "رشة" is pinch. Leave quantity and unit null when the source gives no amount ("شوية", "حسب الرغبة", "to taste").
@@ -291,7 +292,14 @@ Rules:
 - For every is_halal=false ingredient, set suggested_alternative to the closest halal ingredient that keeps the dish working, as a short ingredient name only (for example "beef bacon" or "grape juice with a splash of vinegar"). Leave suggested_alternative null for halal ingredients.
 - Use source="caption" for caption text, source="transcript" for speech, and source="ai_estimate" only when nothing in the source text supports the amount.
 - Include evidence_text when the source text explicitly contains the amount or visible overlay line.
-- Each step must include a short imperative title (3-6 words, e.g. "Sear the chicken") plus a procedural text body. Optionally include duration_minutes, temperature, equipment, ingredients_used (names from the ingredient list), and tips.
+- Steps are the method a home cook follows at the stove, not the video cut into pieces. First work out the whole method from everything the source shows and says, then write it in the order a cook would do it, so someone who never watched the video can cook the dish by reading one step at a time.
+- Start with the preparation. Every wash, peel, chop, slice, grate, mince, soak, marinate, measure, mix of a sauce or spice blend, preheat of the oven and boil of water that the cooking needs is a step of its own, before the step that uses it. Say how to cut ("dice the onions", "slice the peppers into thin strips").
+- Never mention an ingredient in a state no earlier step produced. If a step adds "the chopped onions and peppers", an earlier step chops them. When the video shows an ingredient already cut, cooked, soaked or mixed, add the step that does it.
+- One action per step: what a cook does before looking back at the recipe ("Dice the onions", "Heat the oil in a large pot over medium heat", "Add the onions and stir until soft, about 5 minutes"). Split a step that chains several actions; never split one action across steps.
+- For every cooking step say the pan or pot, the heat, and how to tell it is done: a time and something the cook can see, smell or feel ("until golden, about 5 minutes").
+- When an ingredient goes in at more than one point, say how much each time. A wait (marinate, rest, rise, cool) is its own step with its time.
+- Leave out what the cook does not need: greetings, tasting comments, plating chatter, repeated actions and anything said only to the camera.
+- Each step has a short imperative title (2-5 words, e.g. "Dice the onions") and a text of one or two short sentences. Optionally include duration_minutes, temperature, equipment, ingredients_used (names from the ingredient list), and tips.
 - Use exactly one language per field. Never mix scripts inside a single string.
 - If unknown, use null.
 Source URL: ${input.sourceUrl}
@@ -376,7 +384,7 @@ Rules:
 - Notes, step tips, and equipment may be descriptive but must stay faithful to the recipe.
 - Ingredients marked "not halal" list a halal alternative. For each of them, return suggested_alternative: that alternative written in ${targetLabel} as a short ingredient name. Return null for every other ingredient.
 - Use ingredient names in ingredients_used that match the localized ingredient list when possible.
-- Each step needs a short imperative title plus natural procedural text suitable for a home cook.
+- Each step needs a short imperative title plus natural procedural text suitable for a home cook. Keep each step to the one action it describes; do not merge or split steps.
 ${languageRules.map((rule) => `- ${rule}`).join("\n")}
 
 Current draft:
@@ -1165,30 +1173,34 @@ export async function estimateNutrition(
   }
 }
 
-function scaleQuantityString(quantity: string | undefined, factor: number): string | undefined {
-  if (!quantity || !Number.isFinite(factor) || factor <= 0) return quantity;
-  const trimmed = quantity.trim();
-  const match = trimmed.match(/^\d+(?:\.\d+)?(?:\/\d+(?:\.\d+)?)?$/);
-  if (!match) return quantity;
-  let numeric: number;
-  if (trimmed.includes("/")) {
-    const [numerator, denominator] = trimmed.split("/").map(Number);
-    if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return quantity;
-    numeric = numerator / denominator;
-  } else {
-    numeric = Number(trimmed);
-  }
-  const scaled = numeric * factor;
-  const rounded = scaled >= 10 ? Math.round(scaled) : Math.round(scaled * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, "").replace(/\.$/, "");
-}
+/**
+ * The ingredients for `servings`, worked out from the amounts as imported (or as
+ * first scaled from) and rounded the way a cook measures: half an onion, whole eggs,
+ * quarter teaspoons, round grams. Going back to the base serving count gives back
+ * the imported amounts exactly.
+ */
+export function scaleIngredientQuantities(
+  ingredients: IngredientItem[],
+  baseServings: number | undefined,
+  servings: number
+): IngredientItem[] {
+  const factor = baseServings && baseServings > 0 ? servings / baseServings : 1;
+  return ingredients.map((ingredient) => {
+    const hasBase = ingredient.base_quantity !== undefined;
+    const baseQuantity = hasBase ? ingredient.base_quantity : ingredient.quantity;
+    const baseUnit = hasBase ? ingredient.base_unit : ingredient.unit;
+    if (baseQuantity === undefined) return ingredient;
 
-function scaleIngredientQuantities(draft: RecipeDraft, servings: number): IngredientItem[] {
-  const factor = draft.servings && draft.servings > 0 ? servings / draft.servings : 1;
-  return draft.ingredients.map((ingredient) => ({
-    ...ingredient,
-    quantity: scaleQuantityString(ingredient.quantity, factor),
-  }));
+    const scaled =
+      factor === 1 ? { quantity: baseQuantity, unit: baseUnit } : scaleAmount({ ...ingredient, quantity: baseQuantity, unit: baseUnit }, factor);
+    const result: IngredientItem = { ...ingredient, base_quantity: baseQuantity };
+    if (baseUnit) result.base_unit = baseUnit;
+    else delete result.base_unit;
+    if (scaled.quantity) result.quantity = scaled.quantity;
+    if (scaled.unit) result.unit = scaled.unit;
+    else delete result.unit;
+    return result;
+  });
 }
 
 function buildStepRewritePrompt(draft: RecipeDraft, servings: number): string {
@@ -1197,11 +1209,14 @@ Rules:
 - Return both English and Arabic localized step arrays.
 - Keep step order and count unchanged.
 - Preserve duration, temperature, equipment, ingredients_used, and tips unless the serving change makes them misleading.
+- When a step names an amount, use the amount from the scaled ingredient list below, written as a cook writes it ("½ onion", "1½ cups"). Never write decimals such as 0.35 or 1.67.
 - Do not return ingredients or nutrition.
 
 Recipe title: ${draft.title}
 Current servings: ${draft.servings ?? "unknown"}
 Target servings: ${servings}
+Scaled ingredients:
+${draft.ingredients.map((ingredient) => `- ${ingredient.quantity ?? ""} ${ingredient.unit ?? ""} ${ingredient.name}`.trim()).join("\n")}
 English steps:
 ${(draft.localized?.en?.steps ?? draft.steps).map((step) => `${step.order}. ${step.text}`).join("\n")}
 Arabic steps:
@@ -1277,9 +1292,11 @@ function normalizeLocalizedSteps(
 
 export async function recalculateRecipeServings(
   draft: RecipeDraft,
-  servings: number
+  servings: number,
+  /** The serving count the ingredients' base amounts are for; the current count when never scaled. */
+  baseServings: number | undefined = draft.servings
 ): Promise<Pick<RecipeDraft, "servings" | "ingredients" | "steps" | "localized">> {
-  const scaledIngredients = scaleIngredientQuantities(draft, servings);
+  const scaledIngredients = scaleIngredientQuantities(draft.ingredients, baseServings, servings);
   const draftWithScaledIngredients = {
     ...draft,
     servings,

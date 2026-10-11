@@ -1,3 +1,8 @@
+import { formatAmount, parseAmount, roundForKitchen } from "../../convex/lib/kitchenAmounts.ts";
+
+// Amounts read as a cook writes them: "½", "1½".
+export { displayAmount } from "../../convex/lib/kitchenAmounts.ts";
+
 export type MeasurementSystem = "metric" | "imperial";
 
 type IngredientAmountInput = {
@@ -152,29 +157,6 @@ const TO_METRIC: Record<string, { unit: string; factor: number }> = {
   "fl oz": { unit: "ml", factor: 29.5735 },
 };
 
-function parseQuantity(value?: string) {
-  if (!value) return null;
-  const parts = value.trim().split(/\s+/);
-  let total = 0;
-  for (const part of parts) {
-    if (part.includes("/")) {
-      const [numerator, denominator] = part.split("/").map(Number);
-      if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator === 0) return null;
-      total += numerator / denominator;
-      continue;
-    }
-    const parsed = Number(part);
-    if (!Number.isFinite(parsed)) return null;
-    total += parsed;
-  }
-  return total > 0 ? total : null;
-}
-
-function formatQuantity(value: number) {
-  const rounded = value >= 10 ? Math.round(value) : Math.round(value * 100) / 100;
-  return Number.isInteger(rounded) ? String(rounded) : String(rounded).replace(/0+$/, "").replace(/\.$/, "");
-}
-
 function normalizeUnit(unit?: string) {
   return unit?.trim().toLowerCase();
 }
@@ -195,16 +177,15 @@ export function convertIngredientAmount(
     return { quantity, unit: unit || item.size };
   }
 
-  const numericQuantity = parseQuantity(quantity);
+  const numericQuantity = parseAmount(quantity);
   if (!numericQuantity) return { quantity, unit };
 
   const conversion = system === "imperial" ? TO_IMPERIAL[normalizedUnit] : TO_METRIC[normalizedUnit];
   if (!conversion) return { quantity, unit };
 
-  return {
-    quantity: formatQuantity(numericQuantity * conversion.factor),
-    unit: conversion.unit,
-  };
+  // Converted amounts are rounded the way a cook measures: 79.2 ml reads 80 ml.
+  const rounded = roundForKitchen(numericQuantity * conversion.factor, conversion.unit, "");
+  return { quantity: formatAmount(rounded.quantity), unit: rounded.unit };
 }
 
 export function convertTemperature(
